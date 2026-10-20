@@ -10,7 +10,7 @@
 
 ## Current Status
 
-M1.1 complete. Next: M1.2 inline touch frame and codec. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
+M1.2 complete. Next: M1.3 control messages. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
 
 - [2026-10-20]: P0.2 — Packages and CI
   - *Details*: Added both shared packages, placeholder package and app-hosted tests, and empty tgreplay/tgaccel targets. CI exited 0, including simulator tests and both signed app builds.
@@ -23,3 +23,7 @@ M1.1 complete. Next: M1.2 inline touch frame and codec. Preserve the owner's exi
 - [2026-10-20]: M1.1 — Message header
   - *Details*: Added the 16-byte little-endian header, all message type values, typed decoding errors and a monotonic nanosecond clock. Six package tests pass with zero warnings.
   - *Tech Notes*: Unknown type bytes are retained; magic is compared byte-wise; unaligned buffers are supported. Clock converts mach_absolute_time with full-width arithmetic. No new dependencies.
+
+- [2026-10-20]: M1.2 — Touch frame codec
+  - *Details*: Added inline ten-contact frame storage and bounded little-endian encoding/decoding, including both flags and enum values. Eleven tests pass in Debug and Release; 10,000 deterministic fuzz cases do not trap.
+  - *Tech Notes*: No array-backed contact storage or per-frame allocations. Release measure batches averaged about 48 ns per ten-contact encoding; the 300 ns assertion passed. Malformed sizes, reserved bits and contact enums are rejected. No new dependencies.
