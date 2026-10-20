@@ -1,0 +1,12 @@
+.DS_Store
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+*.xcuserstate
+.build/
+.swiftpm/
+DerivedData/
+Config/Local.xcconfig
+*.tgrec
+!Tests/Fixtures/**/*.tgrec
+!Tests/Fixtures/*.tgrec

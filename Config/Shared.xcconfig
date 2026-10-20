@@ -1,0 +1,11 @@
+TG_PRODUCT_NAME = Trackglass
+TG_BUNDLE_PREFIX = app.trackglass
+TG_WEBSITE_URL = https:/$()/simo-hue.github.io/TrackGlass
+TG_APPCAST_URL = $(TG_WEBSITE_URL)/updates/appcast.xml
+MARKETING_VERSION = 1.0.0
+CURRENT_PROJECT_VERSION = 1
+SWIFT_VERSION = 6.0
+SWIFT_STRICT_CONCURRENCY = complete
+CODE_SIGN_STYLE = Automatic
+
+#include? "Local.xcconfig"

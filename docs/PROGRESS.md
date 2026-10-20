@@ -7,7 +7,7 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 | Step | Done | Notes (gate outcome / tunable value / blocker) |
 |---|---|---|
 | P0.0 entitlement request filed (owner) | ☐ | date filed: |
-| P0.1 scaffold project | ☐ |  |
+| P0.1 scaffold project | ☑ | Both AUTO builds and owner Mac menu check passed 2026-10-20; mobile installation deferred by owner until device testing is needed. |
 | P0.2 add packages and ci script | ☐ |  |
 | P0.3 docs: build instructions | ☐ |  |
 | M1.1 kit: message header | ☐ |  |
@@ -94,7 +94,7 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 
 ## Blockers
 
-(none yet)
+None for the current step. Mobile devices were unavailable (CoreDevice error 4016); recheck when a device test is required.
 
 ## Decisions taken during implementation
 
