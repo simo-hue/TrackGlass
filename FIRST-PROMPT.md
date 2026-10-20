@@ -1,9 +1,3 @@
-# First prompt for the coding agent
-
-Copy everything between the lines into Claude Code (or an equivalent agent) opened in the repository root. Before pasting, the repo must contain: `README.md`, `CLAUDE.md`, and the `docs/` folder (`SPEC.md`, `PLAN.md`, `PROGRESS.md`, `APPSTORE.md`), committed as the initial commit.
-
----
-
 You are implementing Trackglass, an iOS/iPadOS app plus a macOS companion that turns an iPhone or iPad into a trackpad for a Mac that behaves exactly like an Apple Magic Trackpad. The repository currently contains only documentation. The product, architecture, protocol and every technical decision are already final and written down; your job is to implement them in Swift, one step at a time.
 
 Start by reading, in this order, without writing any code:
@@ -28,5 +22,3 @@ Working agreement:
 My environment: this Mac has Xcode 27.1 installed, with my Apple Developer account signed in and automatic signing available for development. My iPhone (120 Hz display) and my iPad are connected by cable and trusted for development. The built-in trackpad of this MacBook is the calibration reference. Step P0.0 (the DriverKit entitlement request) is mine, not yours; never wait for it. When P0.1 needs my Team ID, ask me for it.
 
 Begin with the reading, then the ten-line confirmation, then P0.1.
-
----

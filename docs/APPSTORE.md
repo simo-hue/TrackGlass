@@ -40,7 +40,7 @@ Everything to paste into App Store Connect for the iOS/iPadOS app. English (U.S.
 
 | Field | Value |
 |---|---|
-| Privacy Policy URL | `https://trackglass.app/privacy` (until the domain exists: the GitHub Pages URL of `Website/privacy.html`) |
+| Privacy Policy URL | `https://<owner>.github.io/trackglass/privacy.html` (the website's privacy page, published from the repo's `website/` folder) |
 | Data collection | **"No, we do not collect data from this app"** → label shows *Data Not Collected* |
 
 The privacy page must state: Trackglass sends touch input only to the Mac you paired, over your local network, encrypted; it has no accounts, no analytics, no advertising, and makes no other network connections; crash reports reach the developer only if you opted into Apple's sharing.
@@ -89,7 +89,7 @@ MADE TO BE YOURS
 • Works on iPhone and iPad, in any orientation.
 
 REQUIRES THE FREE MAC APP
-Trackglass needs the free companion app "Trackglass for Mac" (macOS 14 Sonoma or later) running on your Mac. Download it at trackglass.app/mac. The Mac app asks for Accessibility permission once, which macOS requires to move the pointer.
+Trackglass needs the free companion app "Trackglass for Mac" (macOS 14 Sonoma or later) running on your Mac. Download it from <owner>.github.io/trackglass (open source). The Mac app asks for Accessibility permission once, which macOS requires to move the pointer.
 
 iPhone and iPad are trademarks of Apple Inc. Trackglass is an independent product and is not affiliated with or endorsed by Apple.
 ```
@@ -101,8 +101,8 @@ iPhone and iPad are trademarks of Apple Inc. Trackglass is an independent produc
 
 | Field | Value |
 |---|---|
-| Support URL | `https://trackglass.app/support` (must show a contact e-mail and the setup steps) |
-| Marketing URL | `https://trackglass.app` |
+| Support URL | `https://<owner>.github.io/trackglass/support.html` (shows the contact e-mail and the setup steps) |
+| Marketing URL | `https://<owner>.github.io/trackglass/` |
 
 ### Version information
 
@@ -134,7 +134,7 @@ None. Do not create any IAP records.
 Trackglass turns an iPhone/iPad into a trackpad for a Mac. It requires our free macOS companion app, which is distributed outside the Mac App Store because it must post pointer events (Accessibility API).
 
 To test:
-1. On a Mac running macOS 14 or later, download Trackglass for Mac: <download URL>  (notarized DMG, Developer ID signed). Open it, grant Accessibility when prompted.
+1. On a Mac running macOS 14 or later, download Trackglass for Mac from the latest GitHub release: https://github.com/<owner>/trackglass/releases/latest (notarized DMG, Developer ID signed; the project is open source). Open it, grant Accessibility when prompted.
 2. In the Mac's menu bar icon choose "Pair a device…". A QR code appears.
 3. Open Trackglass on the iPhone/iPad, go through onboarding, scan the QR code (or tap "Use a code" and type the 6-digit code shown on the Mac). Both devices must be on the same Wi-Fi network, or close to each other (peer-to-peer Wi-Fi works with no network).
 4. The phone screen becomes the trackpad: one finger moves the pointer, tap clicks, two fingers scroll, pinch zooms, three/four-finger swipes follow the Mac's Trackpad settings.
@@ -151,12 +151,12 @@ The attached video shows the full flow. Privacy: no accounts, no analytics; the 
 - [ ] Build uploaded and processed; selected on the version page.
 - [ ] Screenshots for iPhone 6.9" and iPad 13" present (6 each).
 - [ ] Privacy label = Data Not Collected; privacy policy URL loads.
-- [ ] Support URL loads and shows a contact e-mail.
-- [ ] Mac app download link in the review notes works on a clean Mac and passes Gatekeeper.
+- [ ] The website is live on GitHub Pages; the privacy and support URLs load and the support page shows a contact e-mail.
+- [ ] The `releases/latest` link in the review notes resolves to a release with the DMG attached; the DMG passes Gatekeeper on a clean Mac.
 - [ ] Demo video attached.
 - [ ] Age rating 4+, category Utilities/Productivity, price Free.
 - [ ] Version 1.0.0 and copyright set.
-- [ ] Release option: "Manually release this version" (so the Mac download page is live first).
+- [ ] Release option: "Manually release this version" (so the GitHub release of the Mac app is live first).
 
 ## 8. After 1.0
 

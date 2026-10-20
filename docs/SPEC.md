@@ -74,11 +74,16 @@ macOS 27 is Apple-silicon-only; Intel support therefore ends with macOS 26 and t
 | Custom URL scheme (pairing QR) | `trackglass` |
 | Bonjour service types | `_trackglass._tcp` (control) · `_trackglass._udp` (input) |
 | Keychain service names | `app.trackglass.pairing` |
-| Website base URL | xcconfig `TG_WEBSITE_URL` = `https://trackglass.app` (owner registers the domain; until then the GitHub Pages URL). Every in-app link derives from it: `/mac` (download page), `/privacy`, `/support` |
-| Sparkle appcast URL | xcconfig `TG_APPCAST_URL` = `$(TG_WEBSITE_URL)/updates/appcast.xml` |
-| Mac download page | `$(TG_WEBSITE_URL)/mac` |
+| GitHub repository (public, open source) | xcconfig `TG_REPO_URL` = `https://github.com/<owner>/trackglass` (the owner fills in `<owner>` in P0.1) |
+| Website (GitHub Pages, served from the repo's `website/` folder by `.github/workflows/pages.yml`) | xcconfig `TG_WEBSITE_URL` = `https://<owner>.github.io/trackglass` (a custom domain can replace it later; only this value changes) |
+| Mac download page | `$(TG_REPO_URL)/releases/latest` — the newest GitHub release; its DMG asset is named `Trackglass-for-Mac-<version>.dmg`. The website's download button points there |
+| Sparkle appcast URL | xcconfig `TG_APPCAST_URL` = `https://raw.githubusercontent.com/<owner>/trackglass/main/Releases/appcast.xml`; enclosure URLs inside it point at the release assets |
+| Privacy policy page | `$(TG_WEBSITE_URL)/privacy.html` (used by the App Store listing and the in-app About link) |
+| Support page | `$(TG_WEBSITE_URL)/support.html` (contact e-mail + setup steps; issues at `$(TG_REPO_URL)/issues`) |
 
-Renaming later: all identifiers derive from three xcconfig variables `TG_PRODUCT_NAME = Trackglass`, `TG_BUNDLE_PREFIX = app.trackglass` and `TG_WEBSITE_URL`, exposed to code through Info.plist keys. Nothing else in the codebase hard-codes the name or a URL.
+Renaming later: all identifiers derive from four xcconfig variables `TG_PRODUCT_NAME = Trackglass`, `TG_BUNDLE_PREFIX = app.trackglass`, `TG_REPO_URL` and `TG_WEBSITE_URL`, exposed to code through Info.plist keys. Nothing else in the codebase hard-codes the name or a URL. No custom domain is needed for 1.0; if one is registered later, only `TG_WEBSITE_URL` changes.
+
+**Distribution of the Mac app (Decision):** the source repository is public (open source) and GitHub Releases is the only download channel. The marketing site lives in the repo's `website/` folder (already written: `index.html`, `privacy.html`, `support.html`, `styles.css`, `main.js`, `assets/`) and is published to GitHub Pages by the workflow; its download button points at `releases/latest`. The repository `README.md` stays short (pitch, download link, link to the site, Developers section). The DMG is still Developer ID–signed and notarized, so Gatekeeper treats it like any other download. Because the code is public, the no-copying rule of §0.4 is also a licensing obligation: the repository carries its own license file (owner's choice, recorded in P0.3) and nothing from the GPL/MMF-licensed references.
 
 ### 1.6 Pricing
 
@@ -122,7 +127,7 @@ Free. No StoreKit, no receipts, no feature gating, no "pro" flags anywhere in th
 Trackglass/
 ├── project.yml                     # XcodeGen definition (single source of truth for the Xcode project)
 ├── Config/
-│   ├── Shared.xcconfig             # TG_PRODUCT_NAME, TG_BUNDLE_PREFIX, TG_APPCAST_URL, versions
+│   ├── Shared.xcconfig             # TG_PRODUCT_NAME, TG_BUNDLE_PREFIX, TG_REPO_URL, TG_APPCAST_URL, versions
 │   ├── iOS.xcconfig
 │   ├── Mac.xcconfig
 │   └── Driver.xcconfig             # Phase 2
@@ -176,7 +181,10 @@ Trackglass/
 │   ├── TrackglassMacTests/         # unit tests hosted by TrackglassMac.app (PairingStore, preferences, pipeline, security) + InjectorTests/ (CGEventTap capture; skipped when AXIsProcessTrusted() is false)
 │   ├── TrackglassiOSTests/         # unit tests hosted by the iOS app on the simulator (PairingStore, geometry glue, frame emission)
 │   └── Fixtures/                   # <name>.tgrec + <name>.settings.json + <name>.expected.json triplets (EngineTests and tgreplay read them from here)
-├── Website/                        # Static download page + appcast (GitHub Pages)
+├── Releases/                       # appcast.xml (Sparkle feed, committed by the release script) + release-notes/<version>.md
+├── website/                        # GitHub Pages site (provided; index.html, privacy.html, support.html, styles.css, main.js, assets/)
+├── .github/workflows/pages.yml     # deploys website/ to GitHub Pages (provided)
+├── README.md, LICENSE
 └── docs/                           # SPEC.md, PLAN.md, PROGRESS.md, APPSTORE.md (includes the App Review notes), THIRD-PARTY.md, Calibration.md, Latency.md, QA-Robustness.md, Phase2-Spike.md, Install.md
 ```
 
@@ -735,8 +743,8 @@ Primary: a private `FluidTouchGesture` (type 27) with `GestureMotion = FromRight
 ### 6.11 Updates, packaging, notarization
 
 - Sparkle 2 via SPM (`https://github.com/sparkle-project/Sparkle`, 2.x), EdDSA-signed appcast, `SUFeedURL = $(TG_APPCAST_URL)`, `SUEnableAutomaticChecks = YES`, check interval 24 h. Generate keys with `generate_keys` and store the private key only in the owner's Keychain (never in the repo).
-- Release script `Scripts/release-mac.sh`: `xcodebuild archive` → `xcodebuild -exportArchive` with Developer ID method → `create-dmg`-free DMG via `hdiutil` (background image with "drag to Applications") → `xcrun notarytool submit --wait` → `xcrun stapler staple` → `generate_appcast`. Outputs `Trackglass-for-Mac-<version>.dmg` and `appcast.xml`.
-- Website (`Website/`): static page with the DMG link, a 30-second looping demo video, the Mac requirements, and the privacy statement. Hosted on GitHub Pages until the domain exists.
+- Release script `Scripts/release-mac.sh <version>`: `xcodebuild archive` → `xcodebuild -exportArchive` with Developer ID method → DMG via `hdiutil` (background image with "drag to Applications") → `xcrun notarytool submit --wait` → `xcrun stapler staple` → `gh release create v<version> Trackglass-for-Mac-<version>.dmg --notes-file Releases/release-notes/<version>.md` → `generate_appcast` with `--download-url-prefix "$(TG_REPO_URL)/releases/download/v<version>/"` → commit `Releases/appcast.xml` and push. Sparkle then finds the new version at the raw URL of §1.5 (raw.githubusercontent.com caches for up to five minutes; acceptable). The script refuses to run if the working tree is dirty or the tag already exists.
+- Landing page: the GitHub Pages site built from `website/` (§1.5). The site's three placeholders (`OWNER/trackglass`, `APPSTORE_URL`, `SUPPORT_EMAIL`) are filled in M11.3; the repository `README.md` links to it and carries the same download button.
 
 ---
 
@@ -799,7 +807,7 @@ The authoritative, step-by-step build order lives in **`docs/PLAN.md`** (one fea
 | M8 | Full preferences mirroring, haptics, themes, HUD, iPad, onboarding, Mac Welcome | §5.1, §5.6–5.9, §6.1–6.2, §6.4 | every §6.4 key verified; UI matches §5/§6.1 |
 | M9 | Robustness list, loss/latency conditioning, 24 h soak | §8 | `docs/QA-Robustness.md` fully checked; 24 h soak clean |
 | M10 | Diagnostics, latency measurement, polish, accessibility | §6.10, §7 | §7 budget met and documented in `docs/Latency.md`; VoiceOver operates every control |
-| M11 | Sparkle, notarization, DMG, website, App Store submission | §6.11, §11, `docs/APPSTORE.md` | App Store approval; Sparkle update verified |
+| M11 | Sparkle, notarization, DMG, GitHub release + README landing page, App Store submission | §6.11, §11, `docs/APPSTORE.md` | App Store approval; Sparkle update verified |
 | Phase 2 | DriverKit spike and (if all gates pass) the native driver backend | §12 | G-DRV-1…5 recorded; if all pass and the entitlement is granted, §10.4 matrix passes with the driver active |
 
 ---
@@ -839,10 +847,10 @@ Rows: macOS 14 and macOS 27 Macs × iPhone (120 Hz) × iPad. Columns: every gest
 
 ## 11. Release checklist (owner)
 
-1. Trademark search for "Trackglass" in the relevant classes; register `trackglass.app`.
+1. Trademark search for "Trackglass" in the relevant classes. Decide the open-source license for the public repo (MIT or Apache-2.0 are the usual choices; nothing copyleft, so the iOS binary on the App Store is unaffected). A custom domain is optional and can be added later.
 2. Developer ID Application certificate on the release machine; Sparkle EdDSA private key in Keychain.
 3. App Store Connect: app record, privacy label, age rating, review notes, TestFlight group.
-4. Website live with the DMG, appcast, privacy statement, support e-mail.
+4. Public GitHub repo with the `website/` site live on GitHub Pages (placeholders filled, contact e-mail set), the first release, and the appcast.
 5. Demo video (60 s) for App Review: install Mac app → Accessibility → pairing QR → pointer, click, scroll, pinch, Mission Control.
 6. Keep two test Macs (macOS 14 and current) and one 120 Hz iPhone and one iPad for the QA matrix.
 

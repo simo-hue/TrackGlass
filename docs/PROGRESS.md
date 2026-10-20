@@ -7,13 +7,13 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 | Step | Done | Notes (gate outcome / tunable value / blocker) |
 |---|---|---|
 | P0.0 entitlement request filed (owner) | ☐ | date filed: |
-| P0.1 scaffold project | ☑ | Both AUTO builds and owner Mac menu check passed 2026-10-20; mobile installation deferred by owner until device testing is needed. |
-| P0.2 add packages and ci script | ☑ | CI exited 0; package and hosted tests passed; injector placeholder skipped without Accessibility; both apps and CLI targets built. |
-| P0.3 docs: build instructions | ☑ | Documentation exists; all 84 agent step IDs plus P0.0 checked; CI exited 0. |
-| M1.1 kit: message header | ☑ | 6 package tests passed; all types round-trip, wire layout and malformed headers checked; zero warnings. |
-| M1.2 kit: touch frame codec | ☑ | 11 tests pass in Debug/Release; 10,000 fuzz inputs; release 10-contact encode ~48 ns average (limit 300 ns); zero warnings. |
-| M1.3 kit: control messages | ☑ | All TCP payloads round-trip; every truncation rejected; unknown types preserved; 16 package tests pass, zero warnings. |
-| M1.4 kit: control framer | ☑ | 1,000 mixed-size loopback messages (including 64 KiB) plus split-prefix/payload test pass; 18 package tests, zero warnings. |
+| P0.1 scaffold project | ☐ | TG_REPO_URL: |
+| P0.2 add packages and ci script | ☐ |  |
+| P0.3 docs: build instructions | ☐ | license chosen: |
+| M1.1 kit: message header | ☐ |  |
+| M1.2 kit: touch frame codec | ☐ |  |
+| M1.3 kit: control messages | ☐ |  |
+| M1.4 kit: control framer | ☐ |  |
 | M1.5 kit: pairing crypto | ☐ |  |
 | M1.6 kit: surface geometry | ☐ |  |
 | M1.7 kit: tgrec format | ☐ |  |
@@ -82,7 +82,7 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 | M10.5 ios: thermal and power | ☐ |  |
 | M11.1 mac: sparkle updates | ☐ |  |
 | M11.2 mac: release script | ☐ |  |
-| M11.3 website | ☐ | URL:  |
+| M11.3 website and readme | ☐ | site URL: |
 | M11.4 appstore: assets and metadata | ☐ |  |
 | M11.5 testflight: beta fixes | ☐ | blockers found/fixed:  |
 | M11.6 release 1.0.0 | ☐ | approval date:  |
@@ -94,7 +94,7 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 
 ## Blockers
 
-None for the current step. Mobile devices were unavailable (CoreDevice error 4016); recheck when a device test is required.
+(none yet)
 
 ## Decisions taken during implementation
 

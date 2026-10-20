@@ -24,7 +24,7 @@ Notation: `§x.y` = section of `docs/SPEC.md`. "Gate" steps branch; record the o
 **P0.0 (owner, not the agent):** file the DriverKit entitlement request with the text in §12.2 and tick P0.0 in `docs/PROGRESS.md` with the date. Nothing else depends on it until Phase 2.
 
 ### P0.1 Project scaffold
-- Do: `.gitignore` (Xcode, SPM, DerivedData, `Config/Local.xcconfig`, `*.tgrec` except under `Tests/Fixtures`), `Config/Shared.xcconfig` (`TG_PRODUCT_NAME = Trackglass`, `TG_BUNDLE_PREFIX = app.trackglass`, `TG_WEBSITE_URL` (GitHub Pages URL for now), `TG_APPCAST_URL = $(TG_WEBSITE_URL)/updates/appcast.xml`, `MARKETING_VERSION = 1.0.0`, `CURRENT_PROJECT_VERSION = 1`, `#include? "Local.xcconfig"`; the three TG_ values are also written into both Info.plists as `TGProductName`, `TGBundlePrefix`, `TGWebsiteURL`), `Config/Local.xcconfig.example` (`DEVELOPMENT_TEAM = `) — ask the owner for the team ID or read it from `security find-identity -p codesigning -v` and write the real `Config/Local.xcconfig` (untracked); `Config/iOS.xcconfig` (iOS 17.0, universal), `Config/Mac.xcconfig` (macOS 14.0, Hardened Runtime, sandbox off, `LSUIElement = YES`); `project.yml` with targets `TrackglassiOS` (one empty UIKit `SceneDelegate` showing a black view; Info.plist already carries `ITSAppUsesNonExemptEncryption = NO`) and `TrackglassMac` (one `MenuBarExtra` with a "Quit" item), Swift 6 language mode, strict concurrency complete. `xcodegen generate`.
+- Do: `.gitignore` (Xcode, SPM, DerivedData, `Config/Local.xcconfig`, `*.tgrec` except under `Tests/Fixtures`), `Config/Shared.xcconfig` (`TG_PRODUCT_NAME = Trackglass`, `TG_BUNDLE_PREFIX = app.trackglass`, `TG_REPO_URL = https://github.com/<owner>/trackglass` (ask the owner for the GitHub owner/repo name), `TG_WEBSITE_URL = https://<owner>.github.io/trackglass`, `TG_APPCAST_URL = https://raw.githubusercontent.com/<owner>/trackglass/main/Releases/appcast.xml`, `MARKETING_VERSION = 1.0.0`, `CURRENT_PROJECT_VERSION = 1`, `#include? "Local.xcconfig"`; the four TG_ values are also written into both Info.plists as `TGProductName`, `TGBundlePrefix`, `TGRepoURL`, `TGWebsiteURL`). The `website/` folder and `.github/workflows/pages.yml` are already in the repo: do not modify them in this step, `Config/Local.xcconfig.example` (`DEVELOPMENT_TEAM = `) — ask the owner for the team ID or read it from `security find-identity -p codesigning -v` and write the real `Config/Local.xcconfig` (untracked); `Config/iOS.xcconfig` (iOS 17.0, universal), `Config/Mac.xcconfig` (macOS 14.0, Hardened Runtime, sandbox off, `LSUIElement = YES`); `project.yml` with targets `TrackglassiOS` (one empty UIKit `SceneDelegate` showing a black view; Info.plist already carries `ITSAppUsesNonExemptEncryption = NO`) and `TrackglassMac` (one `MenuBarExtra` with a "Quit" item), Swift 6 language mode, strict concurrency complete. `xcodegen generate`.
 - Test (AUTO+MANUAL): `xcodebuild -project Trackglass.xcodeproj -scheme TrackglassiOS -destination 'generic/platform=iOS' build` and `xcodebuild -project Trackglass.xcodeproj -scheme TrackglassMac build` succeed; the owner opens the Mac app and sees a menu bar item with "Quit".
 - Commit: `scaffold project`
 
@@ -34,7 +34,7 @@ Notation: `§x.y` = section of `docs/SPEC.md`. "Gate" steps branch; record the o
 - Commit: `add packages and ci script`
 
 ### P0.3 Documentation files
-- Do: `README.md` build commands (§2.5), `docs/THIRD-PARTY.md` (Apple IOHIDFamily APSL-2.0 notice, Sparkle MIT notice, statement that no code from MMF/VoodooInput/Touch is included), confirm `docs/PROGRESS.md` lists every step ID of this plan.
+- Do: `README.md` with a "Developers" section holding the build commands (§2.5) — the user-facing landing content is added in M11.3; `LICENSE` (the license the owner chose, ask if `docs/PROGRESS.md` P0.3 note is empty); `docs/THIRD-PARTY.md` (Apple IOHIDFamily APSL-2.0 notice, Sparkle MIT notice, statement that no code from MMF/VoodooInput/Touch is included); confirm `docs/PROGRESS.md` lists every step ID of this plan.
 - Test (AUTO): files exist; `Scripts/ci.sh` still exits 0.
 - Commit: `docs: build instructions`
 
@@ -437,15 +437,15 @@ Notation: `§x.y` = section of `docs/SPEC.md`. "Gate" steps branch; record the o
 - Test (MANUAL): with a local test appcast, an update from 0.9.0 to 1.0.0 installs and relaunches.
 - Commit: `mac: sparkle updates`
 
-### M11.2 Release script, notarization, DMG
-- Do: `Scripts/release-mac.sh` (archive → export Developer ID → DMG via `hdiutil` → `notarytool submit --wait` → `stapler` → `generate_appcast`), team-identifier assertion. Needs the owner's Developer ID certificate and notarytool credentials in the Keychain.
-- Test (MANUAL): the script produces a stapled DMG that passes `spctl -a -t open --context context:primary-signature -v` and opens without warnings on a clean Mac.
+### M11.2 Release script, notarization, DMG, GitHub release
+- Do: `Scripts/release-mac.sh <version>` per §6.11 (archive → export Developer ID → DMG via `hdiutil` → `notarytool submit --wait` → `stapler` → `gh release create` with the DMG and `Releases/release-notes/<version>.md` → `generate_appcast --download-url-prefix` → commit and push `Releases/appcast.xml`), clean-tree and existing-tag guards, team-identifier assertion. Needs the owner's Developer ID certificate, notarytool credentials in the Keychain, and `gh auth login`. Run it once for a `0.9.0` pre-release (marked as pre-release on GitHub).
+- Test (MANUAL): the script produces a stapled DMG that passes `spctl -a -t open --context context:primary-signature -v`, the `0.9.0` pre-release exists on GitHub with the DMG attached, `Releases/appcast.xml` lists it with a working enclosure URL, and the DMG opens without warnings on a clean Mac.
 - Commit: `mac: release script`
 
-### M11.3 Website
-- Do: `Website/` static pages (download, demo video placeholder, requirements, privacy policy page, support page with contact e-mail), appcast hosting, `docs/Install.md`.
-- Test (MANUAL): pages load from GitHub Pages; DMG downloads; Sparkle finds the appcast.
-- Commit: `website`
+### M11.3 Website placeholders, README, GitHub Pages
+- Do: in `website/` replace the three placeholders (`OWNER/trackglass` → the real owner/repo, including the `data-repo` attribute on each page's `<html>`; `APPSTORE_URL` → the App Store link, or `#download` until it exists; `SUPPORT_EMAIL` → the owner's support address) and verify every link resolves; the owner enables Settings → Pages → Source: GitHub Actions so `.github/workflows/pages.yml` publishes the site; rewrite `README.md` as a short page: title, one-line pitch, "Download for Mac" button → `releases/latest`, link to the website, requirements, setup steps, Developers section; `docs/Install.md` for the manual install path.
+- Test (MANUAL): the site is live at `TG_WEBSITE_URL` with the hero demo animating, `privacy.html` and `support.html` open from the iOS About screen, the download button leads to the `0.9.0` pre-release; on a clean Mac, following only the site's support page gets the Mac app installed and paired.
+- Commit: `website and readme`
 
 ### M11.4 App Store assets and metadata
 - Do: `iOS/Resources/PrivacyInfo.xcprivacy` per §5.10; confirm `ITSAppUsesNonExemptEncryption = NO`; screenshots for iPhone 6.9" and iPad 13" (plus optional sizes) showing only real UI, 1024 px icon, privacy label answers, review notes; everything per `docs/APPSTORE.md`.
@@ -458,8 +458,8 @@ Notation: `§x.y` = section of `docs/SPEC.md`. "Gate" steps branch; record the o
 - Commit: `testflight: beta fixes` (one commit that records the triage in PROGRESS, after the individual fix commits)
 
 ### M11.6 Tag and submit
-- Do: `MARKETING_VERSION = 1.0.0`, tag `v1.0.0`, publish DMG + appcast, submit for review.
-- Test (MANUAL): App Store approval; a Sparkle update from the release-candidate build to 1.0.0 works.
+- Do: `MARKETING_VERSION = 1.0.0`; run `Scripts/release-mac.sh 1.0.0` (creates the `v1.0.0` GitHub release and updates the appcast); submit the iOS build for review with the release page URL in the review notes.
+- Test (MANUAL): App Store approval; a Mac still running `0.9.0` receives the 1.0.0 update through Sparkle and relaunches.
 - Commit: `release 1.0.0`
 
 ---
