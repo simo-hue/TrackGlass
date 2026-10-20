@@ -9,7 +9,7 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 | P0.0 entitlement request filed (owner) | ☐ | date filed: |
 | P0.1 scaffold project | ☑ | Both AUTO builds and owner Mac menu check passed 2026-10-20; mobile installation deferred by owner until device testing is needed. |
 | P0.2 add packages and ci script | ☑ | CI exited 0; package and hosted tests passed; injector placeholder skipped without Accessibility; both apps and CLI targets built. |
-| P0.3 docs: build instructions | ☐ |  |
+| P0.3 docs: build instructions | ☑ | Documentation exists; all 84 agent step IDs plus P0.0 checked; CI exited 0. |
 | M1.1 kit: message header | ☐ |  |
 | M1.2 kit: touch frame codec | ☐ |  |
 | M1.3 kit: control messages | ☐ |  |

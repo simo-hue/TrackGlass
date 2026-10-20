@@ -10,8 +10,12 @@
 
 ## Current Status
 
-P0.2 complete. Next: P0.3 build instructions and attribution documents. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
+P0.3 complete. Next: M1.1 message header and monotonic clock. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
 
 - [2026-10-20]: P0.2 — Packages and CI
   - *Details*: Added both shared packages, placeholder package and app-hosted tests, and empty tgreplay/tgaccel targets. CI exited 0, including simulator tests and both signed app builds.
   - *Tech Notes*: Engine depends on Kit; both packages enforce Swift 6, complete strict concurrency and warnings as errors. Injector placeholder skips without Accessibility. CI supports an optional TG_IOS_TEST_DESTINATION override and also builds both command-line tools. No new third-party dependencies.
+
+- [2026-10-20]: P0.3 — Build documentation
+  - *Details*: Added README setup, signing, build, test and install commands, plus Apple APSL-2.0 attribution and Sparkle MIT/upstream notices. Confirmed the progress checklist covers all plan steps; CI exited 0.
+  - *Tech Notes*: No implementation or dependency changes. References are facts only; no MMF, VoodooInput or Touch code is included.
