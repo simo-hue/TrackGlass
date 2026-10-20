@@ -10,7 +10,7 @@
 
 ## Current Status
 
-M1.3 complete. Next: M1.4 Network.framework control framer. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
+M1.4 complete. Next: M1.5 pairing crypto and TLS-PSK. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
 
 - [2026-10-20]: P0.2 — Packages and CI
   - *Details*: Added both shared packages, placeholder package and app-hosted tests, and empty tgreplay/tgaccel targets. CI exited 0, including simulator tests and both signed app builds.
@@ -31,3 +31,7 @@ M1.3 complete. Next: M1.4 Network.framework control framer. Preserve the owner's
 - [2026-10-20]: M1.3 — Control messages
   - *Details*: Added every specified TCP payload, nested welcome settings, all STATUS fields, length-prefixed UTF-8 strings and unknown-type handling. Sixteen package tests pass, including exhaustive truncation checks for each payload.
   - *Tech Notes*: UUIDs use 16 wire bytes; LTK requires 32 bytes; numeric fields are little-endian. Invalid UTF-8, oversized strings and trailing payload bytes produce typed errors. No new dependencies.
+
+- [2026-10-20]: M1.4 — Control stream framer
+  - *Details*: Implemented the Network.framework length-prefix framer with bounded 64 KiB messages and partial-input state. Eighteen package tests pass, including 1,000 ordered loopback messages and fragmented prefix/payload delivery.
+  - *Tech Notes*: UInt32 little-endian framing; no-copy body delivery; invalid lengths fail the connection. Uses Network.framework only.

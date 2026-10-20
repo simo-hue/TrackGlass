@@ -13,7 +13,7 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 | M1.1 kit: message header | ☑ | 6 package tests passed; all types round-trip, wire layout and malformed headers checked; zero warnings. |
 | M1.2 kit: touch frame codec | ☑ | 11 tests pass in Debug/Release; 10,000 fuzz inputs; release 10-contact encode ~48 ns average (limit 300 ns); zero warnings. |
 | M1.3 kit: control messages | ☑ | All TCP payloads round-trip; every truncation rejected; unknown types preserved; 16 package tests pass, zero warnings. |
-| M1.4 kit: control framer | ☐ |  |
+| M1.4 kit: control framer | ☑ | 1,000 mixed-size loopback messages (including 64 KiB) plus split-prefix/payload test pass; 18 package tests, zero warnings. |
 | M1.5 kit: pairing crypto | ☐ |  |
 | M1.6 kit: surface geometry | ☐ |  |
 | M1.7 kit: tgrec format | ☐ |  |
