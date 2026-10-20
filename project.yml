@@ -7,12 +7,19 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete
+packages:
+  TrackglassKit:
+    path: Packages/TrackglassKit
+  TrackglassEngine:
+    path: Packages/TrackglassEngine
 targets:
   TrackglassiOS:
     type: application
     platform: iOS
     sources:
       - iOS/App
+    dependencies:
+      - package: TrackglassKit
     configFiles:
       Debug: Config/iOS.xcconfig
       Release: Config/iOS.xcconfig
@@ -35,11 +42,16 @@ targets:
                 UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).SceneDelegate
     scheme:
       gatherCoverageData: false
+      testTargets:
+        - TrackglassiOSTests
   TrackglassMac:
     type: application
     platform: macOS
     sources:
       - Mac/App
+    dependencies:
+      - package: TrackglassKit
+      - package: TrackglassEngine
     configFiles:
       Debug: Config/Mac.xcconfig
       Release: Config/Mac.xcconfig
@@ -55,3 +67,48 @@ targets:
         LSUIElement: true
     scheme:
       gatherCoverageData: false
+      testTargets:
+        - TrackglassMacTests
+  TrackglassiOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests/TrackglassiOSTests
+    configFiles:
+      Debug: Config/iOS.xcconfig
+      Release: Config/iOS.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TG_BUNDLE_PREFIX).ios.tests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: TrackglassiOS
+  TrackglassMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/TrackglassMacTests
+    configFiles:
+      Debug: Config/Mac.xcconfig
+      Release: Config/Mac.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TG_BUNDLE_PREFIX).mac.tests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: TrackglassMac
+  tgreplay:
+    type: tool
+    platform: macOS
+    sources:
+      - Tools/tgreplay
+    dependencies:
+      - package: TrackglassKit
+      - package: TrackglassEngine
+    scheme: {}
+  tgaccel:
+    type: tool
+    platform: macOS
+    sources:
+      - Tools/tgaccel
+    scheme: {}

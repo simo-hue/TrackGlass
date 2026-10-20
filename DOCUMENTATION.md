@@ -10,4 +10,8 @@
 
 ## Current Status
 
-P0.1 complete. Next: P0.2 packages, hosted tests, CLI scaffolds and CI. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
+P0.2 complete. Next: P0.3 build instructions and attribution documents. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
+
+- [2026-10-20]: P0.2 — Packages and CI
+  - *Details*: Added both shared packages, placeholder package and app-hosted tests, and empty tgreplay/tgaccel targets. CI exited 0, including simulator tests and both signed app builds.
+  - *Tech Notes*: Engine depends on Kit; both packages enforce Swift 6, complete strict concurrency and warnings as errors. Injector placeholder skips without Accessibility. CI supports an optional TG_IOS_TEST_DESTINATION override and also builds both command-line tools. No new third-party dependencies.
