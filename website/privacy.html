@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en" data-repo="OWNER/trackglass">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Privacy — Trackglass</title>
+  <meta name="description" content="Trackglass privacy policy: no accounts, no analytics, no cloud. Touch input goes only to the Mac you paired, encrypted, over your local network.">
+  <meta name="theme-color" content="#000000">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="nav is-solid" id="nav">
+  <div class="nav__inner">
+    <a class="brand" href="index.html" aria-label="Trackglass home">
+      <svg class="brand__mark" viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="7" width="26" height="18" rx="5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="16" r="3.2" fill="currentColor"/><circle cx="16" cy="16" r="7" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/></svg>
+      <span>Trackglass</span>
+    </a>
+    <nav class="nav__links" aria-label="Sections">
+      <a href="index.html#pair">Pairing</a>
+      <a href="index.html#gestures">Gestures</a>
+      <a href="index.html#privacy">Privacy</a>
+      <a href="support.html">Support</a>
+    </nav>
+    <a class="btn btn--small" href="https://github.com/OWNER/trackglass/releases/latest">Download for Mac</a>
+  </div>
+</header>
+
+<main id="main" class="page">
+  <div class="container">
+    <p class="eyebrow">Privacy policy</p>
+    <h1 class="headline">Nothing leaves your network.</h1>
+    <div class="prose">
+      <p>Last updated: <time datetime="2026-10-20">October 20, 2026</time></p>
+      <p>Trackglass is a free, open-source app that turns an iPad or iPhone into a trackpad for a Mac. This policy describes what the apps do with your data. The short version: they don't collect any.</p>
+
+      <h2>What Trackglass does with touch input</h2>
+      <p>When you use the trackpad surface, the iOS app sends your touch positions to the Mac you paired with, over your local Wi‑Fi network or a direct peer-to-peer Wi‑Fi link between the two devices. The Mac app turns them into pointer movement, clicks, scrolling and gestures. Touch data is used only for that purpose, is never stored, and is never sent anywhere else.</p>
+
+      <h2>Encryption and pairing</h2>
+      <p>Pairing happens once, by scanning a code shown on your Mac or typing a 6-digit code. During pairing, both devices exchange a random encryption key that is stored in each device's Keychain. Every later connection is authenticated and encrypted with that key. Keys never leave your devices and are deleted when you unpair.</p>
+
+      <h2>What we do not collect</h2>
+      <ul>
+        <li>No accounts, sign-ins or personal information.</li>
+        <li>No analytics, usage statistics or advertising identifiers.</li>
+        <li>No crash-reporting SDKs. If you opted into Apple's app analytics sharing, Apple may share anonymized crash reports with the developer; that choice is yours and is managed in your device settings.</li>
+        <li>No network connections other than the encrypted link between your iPad/iPhone and your Mac, and (on the Mac only) a periodic check for app updates that downloads a small update feed from this project's GitHub repository. That check sends no information about you.</li>
+      </ul>
+
+      <h2>Permissions</h2>
+      <p>On the iPad or iPhone, Trackglass asks for camera access only to scan the pairing code, and for local network access to find your Mac. On the Mac, Trackglass asks for Accessibility permission, which macOS requires for any app that moves the pointer or clicks on your behalf. Trackglass does not read what is on your screen and does not record what you type.</p>
+
+      <h2>Children</h2>
+      <p>Trackglass does not collect personal information from anyone, including children.</p>
+
+      <h2>Changes</h2>
+      <p>If this policy changes, the new version will be published on this page with a new date. Because the apps collect nothing, changes are expected to be rare.</p>
+
+      <h2>Contact</h2>
+      <p>Questions about privacy: <a href="mailto:SUPPORT_EMAIL">SUPPORT_EMAIL</a>, or open an issue on <a href="https://github.com/OWNER/trackglass/issues">GitHub</a>.</p>
+    </div>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="container footer__inner">
+    <div class="footer__brand"><span>Trackglass</span></div>
+    <nav class="footer__links" aria-label="Footer">
+      <a href="index.html">Home</a>
+      <a href="support.html">Support</a>
+      <a href="https://github.com/OWNER/trackglass">GitHub</a>
+    </nav>
+    <p class="footer__legal">Trackglass is an independent project and is not affiliated with or endorsed by Apple Inc. Mac, iPad and iPhone are trademarks of Apple Inc.</p>
+  </div>
+</footer>
+<script src="main.js" defer></script>
+</body>
+</html>
