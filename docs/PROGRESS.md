@@ -12,7 +12,7 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 | P0.3 docs: build instructions | ☑ | Documentation exists; all 84 agent step IDs plus P0.0 checked; CI exited 0. |
 | M1.1 kit: message header | ☑ | 6 package tests passed; all types round-trip, wire layout and malformed headers checked; zero warnings. |
 | M1.2 kit: touch frame codec | ☑ | 11 tests pass in Debug/Release; 10,000 fuzz inputs; release 10-contact encode ~48 ns average (limit 300 ns); zero warnings. |
-| M1.3 kit: control messages | ☐ |  |
+| M1.3 kit: control messages | ☑ | All TCP payloads round-trip; every truncation rejected; unknown types preserved; 16 package tests pass, zero warnings. |
 | M1.4 kit: control framer | ☐ |  |
 | M1.5 kit: pairing crypto | ☐ |  |
 | M1.6 kit: surface geometry | ☐ |  |

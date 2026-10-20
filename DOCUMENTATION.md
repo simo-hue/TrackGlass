@@ -10,7 +10,7 @@
 
 ## Current Status
 
-M1.2 complete. Next: M1.3 control messages. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
+M1.3 complete. Next: M1.4 Network.framework control framer. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
 
 - [2026-10-20]: P0.2 — Packages and CI
   - *Details*: Added both shared packages, placeholder package and app-hosted tests, and empty tgreplay/tgaccel targets. CI exited 0, including simulator tests and both signed app builds.
@@ -27,3 +27,7 @@ M1.2 complete. Next: M1.3 control messages. Preserve the owner's existing edit t
 - [2026-10-20]: M1.2 — Touch frame codec
   - *Details*: Added inline ten-contact frame storage and bounded little-endian encoding/decoding, including both flags and enum values. Eleven tests pass in Debug and Release; 10,000 deterministic fuzz cases do not trap.
   - *Tech Notes*: No array-backed contact storage or per-frame allocations. Release measure batches averaged about 48 ns per ten-contact encoding; the 300 ns assertion passed. Malformed sizes, reserved bits and contact enums are rejected. No new dependencies.
+
+- [2026-10-20]: M1.3 — Control messages
+  - *Details*: Added every specified TCP payload, nested welcome settings, all STATUS fields, length-prefixed UTF-8 strings and unknown-type handling. Sixteen package tests pass, including exhaustive truncation checks for each payload.
+  - *Tech Notes*: UUIDs use 16 wire bytes; LTK requires 32 bytes; numeric fields are little-endian. Invalid UTF-8, oversized strings and trailing payload bytes produce typed errors. No new dependencies.
