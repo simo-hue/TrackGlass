@@ -14,7 +14,7 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 | M1.2 kit: touch frame codec | ☐ |  |
 | M1.3 kit: control messages | ☐ |  |
 | M1.4 kit: control framer | ☐ |  |
-| M1.5 kit: pairing crypto | ☐ |  |
+| M1.5 kit: pairing crypto | ☑ | 24 package tests pass: QR URL, independent HKDF vector, matching-key TLS exchange and wrong-key TLS rejection; zero warnings. |
 | M1.6 kit: surface geometry | ☐ |  |
 | M1.7 kit: tgrec format | ☐ |  |
 | M2.1 ios: touch surface root | ☐ |  |

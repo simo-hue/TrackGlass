@@ -1,7 +1,6 @@
 import CryptoKit
 import Foundation
 import Network
-import os
 import XCTest
 @testable import TrackglassKit
 
@@ -58,7 +57,6 @@ private final class TLSHarness: @unchecked Sendable {
         listener.newConnectionHandler = { connection in
             self.server = connection
             connection.stateUpdateHandler = { state in
-                os_log(.error, "[DEBUG-tg-tls] server %{public}@", String(describing: state))
                 if case .failed(let error) = state, self.matchingKey { self.finish(error: error) }
             }
             connection.start(queue: self.queue)
@@ -81,7 +79,6 @@ private final class TLSHarness: @unchecked Sendable {
             let client = NWConnection(host: "127.0.0.1", port: port, using: parameters)
             self.client = client
             client.stateUpdateHandler = { state in
-                os_log(.error, "[DEBUG-tg-tls] client %{public}@", String(describing: state))
                 switch state {
                 case .ready:
                     guard self.matchingKey else {
@@ -94,7 +91,7 @@ private final class TLSHarness: @unchecked Sendable {
                     ])
                     client.send(content: self.message(), contentContext: context, isComplete: true,
                                 completion: .contentProcessed { if let error = $0 { self.finish(error: error) } })
-                case .failed(let error):
+                case .failed(let error), .waiting(let error):
                     if self.matchingKey { self.finish(error: error) }
                     else {
                         guard case .tls = error else { self.finish(error: error); return }

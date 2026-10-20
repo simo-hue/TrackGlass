@@ -10,7 +10,7 @@
 
 ## Current Status
 
-M1.4 complete. Next: M1.5 pairing crypto and TLS-PSK. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
+M1.5 complete. Next: M1.6 surface geometry, PPI and device names. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
 
 - [2026-10-20]: P0.2 — Packages and CI
   - *Details*: Added both shared packages, placeholder package and app-hosted tests, and empty tgreplay/tgaccel targets. CI exited 0, including simulator tests and both signed app builds.
@@ -35,3 +35,7 @@ M1.4 complete. Next: M1.5 pairing crypto and TLS-PSK. Preserve the owner's exist
 - [2026-10-20]: M1.4 — Control stream framer
   - *Details*: Implemented the Network.framework length-prefix framer with bounded 64 KiB messages and partial-input state. Eighteen package tests pass, including 1,000 ordered loopback messages and fragmented prefix/payload delivery.
   - *Tech Notes*: UInt32 little-endian framing; no-copy body delivery; invalid lengths fail the connection. Uses Network.framework only.
+
+- [2026-10-20 21:20 CEST]: M1.5 — Pairing crypto
+  - *Details*: Added peer identities, strict QR payload parsing, six-digit PIN HKDF and specified TLS/DTLS parameter factories. All 24 package tests pass, including a Python-derived HKDF vector and correct/wrong PSK loopback tests.
+  - *Tech Notes*: Server options register each supplied PSK; multi-key feasibility remains M3.4. Wrong-key TLS reports server failed/bad MAC and client waiting/bad MAC; the initial test timed out because it only handled failed. Corrected the test to observe both TLS rejection states, removed temporary logs and reran the complete suite. Production security configuration was unchanged. No new dependencies.
