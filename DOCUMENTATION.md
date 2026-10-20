@@ -10,7 +10,7 @@
 
 ## Current Status
 
-M1.6 complete. Next: M1.7 recording format. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
+M1.7 complete. Next: M2.1 touch surface root, then build/install and request its manual test. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
 
 - [2026-10-20]: P0.2 — Packages and CI
   - *Details*: Added both shared packages, placeholder package and app-hosted tests, and empty tgreplay/tgaccel targets. CI exited 0, including simulator tests and both signed app builds.
@@ -43,3 +43,7 @@ M1.6 complete. Next: M1.7 recording format. Preserve the owner's existing edit t
 - [2026-10-20]: M1.6 — Surface geometry
   - *Details*: Added physical-unit conversion with injected native scale, device pixel densities, marketing names and fallbacks. All 28 package tests pass, including the reference 393 × 852-point geometry and window resizing.
   - *Tech Notes*: Pure Swift point/size values avoid UIKit/CoreGraphics in the package. Apple pixel-density references are recorded in docs/DevicePPI.md; reference iPhone and iPad entries checked. No new dependencies.
+
+- [2026-10-20]: M1.7 — Recording format
+  - *Details*: Added TGREC version-1 headers, origin and hundredth-millimeter geometry, record writer/reader and file round-trips. Thirty-one package tests pass, including 500 frames for both recording origins and malformed/truncated input.
+  - *Tech Notes*: Capture timestamps and raw touch-frame bytes are preserved; integer fields are little-endian and frame sizes are bounded. File writing is atomic. No new dependencies.
