@@ -10,7 +10,7 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 | P0.1 scaffold project | ☑ | Both AUTO builds and owner Mac menu check passed 2026-10-20; mobile installation deferred by owner until device testing is needed. |
 | P0.2 add packages and ci script | ☑ | CI exited 0; package and hosted tests passed; injector placeholder skipped without Accessibility; both apps and CLI targets built. |
 | P0.3 docs: build instructions | ☑ | Documentation exists; all 84 agent step IDs plus P0.0 checked; CI exited 0. |
-| M1.1 kit: message header | ☐ |  |
+| M1.1 kit: message header | ☑ | 6 package tests passed; all types round-trip, wire layout and malformed headers checked; zero warnings. |
 | M1.2 kit: touch frame codec | ☐ |  |
 | M1.3 kit: control messages | ☐ |  |
 | M1.4 kit: control framer | ☐ |  |

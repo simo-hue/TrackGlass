@@ -10,7 +10,7 @@
 
 ## Current Status
 
-P0.3 complete. Next: M1.1 message header and monotonic clock. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
+M1.1 complete. Next: M1.2 inline touch frame and codec. Preserve the owner's existing edit to `FIRST-PROMPT.md`.
 
 - [2026-10-20]: P0.2 — Packages and CI
   - *Details*: Added both shared packages, placeholder package and app-hosted tests, and empty tgreplay/tgaccel targets. CI exited 0, including simulator tests and both signed app builds.
@@ -19,3 +19,7 @@ P0.3 complete. Next: M1.1 message header and monotonic clock. Preserve the owner
 - [2026-10-20]: P0.3 — Build documentation
   - *Details*: Added README setup, signing, build, test and install commands, plus Apple APSL-2.0 attribution and Sparkle MIT/upstream notices. Confirmed the progress checklist covers all plan steps; CI exited 0.
   - *Tech Notes*: No implementation or dependency changes. References are facts only; no MMF, VoodooInput or Touch code is included.
+
+- [2026-10-20]: M1.1 — Message header
+  - *Details*: Added the 16-byte little-endian header, all message type values, typed decoding errors and a monotonic nanosecond clock. Six package tests pass with zero warnings.
+  - *Tech Notes*: Unknown type bytes are retained; magic is compared byte-wise; unaligned buffers are supported. Clock converts mach_absolute_time with full-width arithmetic. No new dependencies.
