@@ -22,7 +22,9 @@ final class ControlMessageTests: XCTestCase {
             .surface(SurfaceMessage(surfaceWidthMM: 141, surfaceHeightMM: 65, ppi: 460, trackingOverride: 0.5)),
             .bye(ByeMessage(reason: 4)),
             .pairRequest(PairRequestMessage(peerID: peer, name: "iPad", modelIdentifier: "iPad8,1", protocolVersion: 1)),
-            .pairResponse(PairResponseMessage(peerID: peer, name: "Mac", ltk: Data(0..<32)))
+            .pairResponse(PairResponseMessage(peerID: peer, name: "Mac", ltk: Data(0..<32))),
+            .welcome(WelcomeMessage(status: 1, macPeerID: peer, macName: "Mac", macOSVersion: "27.0.1",
+                                    injectorMode: 1, settings: settings, activePhoneName: "Téléphone 📱"))
         ]
     }
 
@@ -45,6 +47,17 @@ final class ControlMessageTests: XCTestCase {
             XCTAssertThrowsError(try ControlMessage.decode(data + Data([0]))) {
                 XCTAssertEqual($0 as? ControlCodecError, .trailingBytes)
             }
+        }
+    }
+
+    func testWelcomeActivePhoneNameWireLayout() throws {
+        let empty = try messages[1].encode(sequence: 0, sentAt: 0)
+        XCTAssertEqual(Array(empty.suffix(2)), [0, 0])
+        let busy = try XCTUnwrap(messages.last).encode(sequence: 0, sentAt: 0)
+        let name = Array("Téléphone 📱".utf8)
+        XCTAssertEqual(Array(busy.suffix(name.count + 2)), [UInt8(name.count), 0] + name)
+        XCTAssertThrowsError(try ControlMessage.decode(Data(empty.dropLast(2)))) {
+            XCTAssertEqual($0 as? ProtocolError, .truncated)
         }
     }
 

@@ -47,3 +47,8 @@ M1.7 complete. Next: M2.1 touch surface root, then build/install and request its
 - [2026-10-20]: M1.7 — Recording format
   - *Details*: Added TGREC version-1 headers, origin and hundredth-millimeter geometry, record writer/reader and file round-trips. Thirty-one package tests pass, including 500 frames for both recording origins and malformed/truncated input.
   - *Tech Notes*: Capture timestamps and raw touch-frame bytes are preserved; integer fields are little-endian and frame sizes are bounded. File writing is atomic. No new dependencies.
+
+
+- [2026-10-22]: M1.3 correction — Active phone name in WELCOME
+  - *Details*: With owner approval, appended activePhoneName to WELCOME so a busy response can identify the active controller. The default is empty for other statuses. Updated SPEC §4.5.
+  - *Tech Notes*: Uses the existing u16-length UTF-8 encoding. All 32 Kit tests pass with zero compiler warnings, including busy/empty round trips, exact UTF-8 bytes and exhaustive truncation rejection. Both apps must use the corrected prerelease protocol layout. No dependencies added.

@@ -35,14 +35,16 @@ public struct WelcomeMessage: Equatable, Sendable {
     public var macOSVersion: String
     public var injectorMode: UInt8
     public var settings: SettingsMessage
+    public var activePhoneName: String
 
-    public init(status: UInt8, macPeerID: UUID, macName: String, macOSVersion: String, injectorMode: UInt8, settings: SettingsMessage) {
+    public init(status: UInt8, macPeerID: UUID, macName: String, macOSVersion: String, injectorMode: UInt8, settings: SettingsMessage, activePhoneName: String = "") {
         self.status = status
         self.macPeerID = macPeerID
         self.macName = macName
         self.macOSVersion = macOSVersion
         self.injectorMode = injectorMode
         self.settings = settings
+        self.activePhoneName = activePhoneName
     }
 }
 

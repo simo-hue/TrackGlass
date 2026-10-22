@@ -40,6 +40,7 @@ extension ControlMessage {
             try writer.write(value.macOSVersion)
             writer.write(value.injectorMode)
             writer.settings(value.settings)
+            try writer.write(value.activePhoneName)
         case .settings(let value):
             writer.write(value.naturalScrolling)
             writer.write(value.tapToClick)
@@ -110,7 +111,8 @@ extension ControlMessage {
                 macName: reader.string(),
                 macOSVersion: reader.string(),
                 injectorMode: reader.integer(UInt8.self),
-                settings: reader.settings()
+                settings: reader.settings(),
+                activePhoneName: reader.string()
             ))
         case .settings:
             message = .settings(try SettingsMessage(

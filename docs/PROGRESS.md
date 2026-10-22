@@ -99,3 +99,5 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 ## Decisions taken during implementation
 
 (record here anything the owner approved that is not already in SPEC, with the date)
+
+- 2026-10-22: Owner approved adding `activePhoneName str` after SETTINGS in WELCOME (§4.5), empty unless busy; codec and 32 package tests pass.

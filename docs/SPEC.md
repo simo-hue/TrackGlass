@@ -327,7 +327,7 @@ Rules: a frame contains **every** currently tracked contact (began/moved/station
 | Type | Name | Transport | Direction | Payload |
 |---|---|---|---|---|
 | 0x01 | HELLO | TCP | phone → Mac | `protocolVersion u8`, `peerID 16B`, `name str` (the user-confirmed phone name, §3.2), `modelIdentifier str` (e.g. `iPhone16,1`), `surfaceWidthMM f32`, `surfaceHeightMM f32`, `ppi f32`, `maxContacts u8`, `displayHz u16`, `caps u32` (bit0 haptics, bit1 coalescedSamples), `trackingOverride f32` (−1…+1, the phone's optional tracking-speed override, 0 = none; §6.4) |
-| 0x02 | WELCOME | TCP | Mac → phone | `status u8` (0 ok, 1 busy, 2 incompatible, 3 notPaired), `macPeerID 16B`, `macName str`, `macOSVersion str`, `injectorMode u8` (1 quartz, 2 driver), `settings` (see SETTINGS payload) |
+| 0x02 | WELCOME | TCP | Mac → phone | `status u8` (0 ok, 1 busy, 2 incompatible, 3 notPaired), `macPeerID 16B`, `macName str`, `macOSVersion str`, `injectorMode u8` (1 quartz, 2 driver), `settings` (see SETTINGS payload), `activePhoneName str` (empty unless busy; owner-approved addition, 2026-10-22) |
 | 0x03 | SETTINGS | TCP | Mac → phone | `naturalScrolling u8`, `tapToClick u8`, `forceClickEnabled u8`, `hapticsSuggested u8`, `trackingSpeed f32` (the Mac's `com.apple.trackpad.scaling`), `secondaryClickMode u8` (0 off, 1 two-finger, 2 bottom-right, 3 bottom-left) — informational, used only by the phone's HUD and onboarding tips |
 | 0x04 | PING | TCP | both | `nonce u32` |
 | 0x05 | PONG | TCP | both | `nonce u32`, `echoSentAt u64` |
