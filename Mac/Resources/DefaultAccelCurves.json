@@ -1,0 +1,157 @@
+{
+  "HIDAccelCurves" : [
+    {
+      "HIDAccelGainLinear" : 65536,
+      "HIDAccelIndex" : 0,
+      "HIDAccelTangentSpeedLinear" : 484966,
+      "HIDAccelTangentSpeedParabolicRoot" : 1376256
+    },
+    {
+      "HIDAccelGainCubic" : 5243,
+      "HIDAccelGainLinear" : 64881,
+      "HIDAccelGainParabolic" : 32768,
+      "HIDAccelIndex" : 8192,
+      "HIDAccelTangentSpeedLinear" : 478413,
+      "HIDAccelTangentSpeedParabolicRoot" : 1310720
+    },
+    {
+      "HIDAccelGainCubic" : 6554,
+      "HIDAccelGainLinear" : 64225,
+      "HIDAccelGainParabolic" : 43254,
+      "HIDAccelIndex" : 32768,
+      "HIDAccelTangentSpeedLinear" : 471859,
+      "HIDAccelTangentSpeedParabolicRoot" : 1245184
+    },
+    {
+      "HIDAccelGainCubic" : 7864,
+      "HIDAccelGainLinear" : 62915,
+      "HIDAccelGainParabolic" : 54395,
+      "HIDAccelIndex" : 45056,
+      "HIDAccelTangentSpeedLinear" : 465306,
+      "HIDAccelTangentSpeedParabolicRoot" : 1179648
+    },
+    {
+      "HIDAccelGainCubic" : 9830,
+      "HIDAccelGainLinear" : 61604,
+      "HIDAccelGainParabolic" : 65536,
+      "HIDAccelIndex" : 57344,
+      "HIDAccelTangentSpeedLinear" : 458752,
+      "HIDAccelTangentSpeedParabolicRoot" : 1114112
+    },
+    {
+      "HIDAccelGainCubic" : 11796,
+      "HIDAccelGainLinear" : 60293,
+      "HIDAccelGainParabolic" : 75366,
+      "HIDAccelIndex" : 65536,
+      "HIDAccelTangentSpeedLinear" : 458752,
+      "HIDAccelTangentSpeedParabolicRoot" : 1048576
+    },
+    {
+      "HIDAccelGainCubic" : 13763,
+      "HIDAccelGainLinear" : 58327,
+      "HIDAccelGainParabolic" : 85197,
+      "HIDAccelIndex" : 98304,
+      "HIDAccelTangentSpeedLinear" : 458752,
+      "HIDAccelTangentSpeedParabolicRoot" : 983040
+    },
+    {
+      "HIDAccelGainCubic" : 15729,
+      "HIDAccelGainLinear" : 56361,
+      "HIDAccelGainParabolic" : 95027,
+      "HIDAccelIndex" : 131072,
+      "HIDAccelTangentSpeedLinear" : 458752,
+      "HIDAccelTangentSpeedParabolicRoot" : 917504
+    },
+    {
+      "HIDAccelGainCubic" : 18350,
+      "HIDAccelGainLinear" : 54395,
+      "HIDAccelGainParabolic" : 108790,
+      "HIDAccelIndex" : 163840,
+      "HIDAccelTangentSpeedLinear" : 458752,
+      "HIDAccelTangentSpeedParabolicRoot" : 851968
+    },
+    {
+      "HIDAccelGainCubic" : 23593,
+      "HIDAccelGainLinear" : 65536,
+      "HIDAccelGainParabolic" : 123208,
+      "HIDAccelIndex" : 196608,
+      "HIDAccelTangentSpeedLinear" : 458752,
+      "HIDAccelTangentSpeedParabolicRoot" : 786432
+    }
+  ],
+  "HIDPointerAccelerationTable" : "000080005553422a00070000000000020004000000040000001000000010000000002000000d00008000000080000001400000018000000200000002e000000300000004e000000400000007400000050000000a000000060000000d40000008000000160000000ac00000230000000d0000002f0000000ec0000038c00000104000004100000011c0000048c00000005000000f0000800000008000000100000001400000018000000240000002000000038000000280000004e000000300000006600000040000000a000000050000000e4000000600000013400000080000001ec000000ac000002ec000000d0000003c8000000ec0000047000000104000004fc0000011c0000058800000008000000f00008000000080000001000000016000000180000002a00000020000000440000002800000060000000300000008000000040000000d0000000500000012c00000060000001900000008000000280000000ac000003bc000000d0000004b8000000ec0000057400000104000006040000011c000006900000000b000000f0000800000008000000100000001a000000180000003000000020000000500000002800000074000000300000009c0000004000000104000000500000017800000060000001fc0000008000000320000000ac000004a0000000d0000005c8000000ec00000690000001040000072c0000011c000007ac0000000e000000f000080000000a000000100000001c0000001800000036000000200000005e000000280000008a00000030000000bc000000400000013c00000050000001d4000000600000027c00000080000003dc000000ac00000590000000d0000006dc000000ec000007b400000104000008540000011c000008c400000010000000f000080000000c0000001000000020000000180000003e000000200000006c00000028000000a400000030000000e6000000400000018c000000500000024c000000600000032c00000080000004d4000000ac000006e8000000d000000830000000ec000008f400000104000009700000011c000009c40",
+  "HIDPointerAccelerationTableEncoding" : "lowercase hexadecimal bytes",
+  "HIDPointerReportRate" : 120,
+  "HIDPointerResolution" : 26214400,
+  "HIDScrollAccelCurves" : [
+    {
+      "HIDAccelGainLinear" : 65536,
+      "HIDAccelIndex" : 0,
+      "HIDAccelTangentSpeedLinear" : 393216,
+      "HIDAccelTangentSpeedParabolicRoot" : 786432
+    },
+    {
+      "HIDAccelGainLinear" : 62259,
+      "HIDAccelGainParabolic" : 39322,
+      "HIDAccelIndex" : 8192,
+      "HIDAccelTangentSpeedLinear" : 406323,
+      "HIDAccelTangentSpeedParabolicRoot" : 786432
+    },
+    {
+      "HIDAccelGainLinear" : 58982,
+      "HIDAccelGainParabolic" : 58982,
+      "HIDAccelIndex" : 32768,
+      "HIDAccelTangentSpeedLinear" : 419430,
+      "HIDAccelTangentSpeedParabolicRoot" : 786432
+    },
+    {
+      "HIDAccelGainLinear" : 55706,
+      "HIDAccelGainParabolic" : 78643,
+      "HIDAccelIndex" : 45056,
+      "HIDAccelTangentSpeedLinear" : 432538,
+      "HIDAccelTangentSpeedParabolicRoot" : 786432
+    },
+    {
+      "HIDAccelGainLinear" : 52429,
+      "HIDAccelGainParabolic" : 91750,
+      "HIDAccelIndex" : 57344,
+      "HIDAccelTangentSpeedLinear" : 445645,
+      "HIDAccelTangentSpeedParabolicRoot" : 786432
+    },
+    {
+      "HIDAccelGainLinear" : 49152,
+      "HIDAccelGainParabolic" : 104858,
+      "HIDAccelIndex" : 65536,
+      "HIDAccelTangentSpeedLinear" : 458752,
+      "HIDAccelTangentSpeedParabolicRoot" : 786432
+    },
+    {
+      "HIDAccelGainLinear" : 45875,
+      "HIDAccelGainParabolic" : 117965,
+      "HIDAccelIndex" : 98304,
+      "HIDAccelTangentSpeedLinear" : 471859,
+      "HIDAccelTangentSpeedParabolicRoot" : 786432
+    },
+    {
+      "HIDAccelGainLinear" : 42598,
+      "HIDAccelGainParabolic" : 131072,
+      "HIDAccelIndex" : 131072,
+      "HIDAccelTangentSpeedLinear" : 484966,
+      "HIDAccelTangentSpeedParabolicRoot" : 786432
+    },
+    {
+      "HIDAccelGainLinear" : 39322,
+      "HIDAccelGainParabolic" : 144179,
+      "HIDAccelIndex" : 163840,
+      "HIDAccelTangentSpeedLinear" : 498074,
+      "HIDAccelTangentSpeedParabolicRoot" : 786432
+    },
+    {
+      "HIDAccelGainLinear" : 36045,
+      "HIDAccelGainParabolic" : 157286,
+      "HIDAccelIndex" : 196608,
+      "HIDAccelTangentSpeedLinear" : 511181,
+      "HIDAccelTangentSpeedParabolicRoot" : 786432
+    }
+  ]
+}

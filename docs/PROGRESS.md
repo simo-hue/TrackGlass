@@ -40,7 +40,7 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 | M4.7 engine: three finger drag and lookup | ☐ |  |
 | M4.8 engine: liftoff safety | ☐ |  |
 | M4.9 tools: tgreplay | ☐ | Mac Instruments result:  |
-| M5.1 tools: tgaccel and default curves | ☐ | Gate G-ACC: parametric / table |
+| M5.1 tools: tgaccel and default curves | ☑ | Gate G-ACC: the reference Mac exposes 10 `HIDAccelCurves` entries and `HIDPointerAccelerationTable` (771 bytes); select parametric curves for M5.2 and retain both in `DefaultAccelCurves.json`. Pointer resolution 26,214,400; report rate 120. `tgaccel` exits 0 and its JSON parses with all required properties. |
 | M5.2 engine: acceleration curve | ☐ |  |
 | M5.3 engine: pointer acceleration | ☐ |  |
 | M5.4 calibrate pointer | ☐ | OUTPUT_SCALE = ; C1/C2/C3 results: ; A/B result:  |
