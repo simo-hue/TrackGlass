@@ -1,4 +1,5 @@
-#pragma once
+#ifndef TG_PRIVATE_API_H
+#define TG_PRIVATE_API_H
 #include <stdbool.h>
 #import <Foundation/Foundation.h>
 #import "TGPrivateFields.h"
@@ -25,3 +26,4 @@ typedef Class _Nullable (*TGClassLookup)(const char *name);
 FOUNDATION_EXPORT PrivateAPICapabilities TGPrivateAPIProbe(TGSymbolLookup symbols, TGClassLookup classes);
 
 NS_ASSUME_NONNULL_END
+#endif

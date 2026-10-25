@@ -61,3 +61,8 @@ M1.7 complete. Next: M2.1 touch surface root, then build/install and request its
 - [2026-10-25 19:23 CET]: M6.1 — Private Mac event support
   - *Details*: Centralized Appendix B event fields/types, added cached runtime API detection and missing-symbol/class fallbacks, and enforced the private-module source boundary. Owner approved deferring M5.4 calibration; OUTPUT_SCALE remains 1.0.
   - *Tech Notes*: Five new tests and all 34 Mac hosted tests pass. HIDEvent resolves; neither CGEventSetHIDEvent nor CGEventSetIOHIDEvent resolves on this Mac, so dockSwipe is false. Gesture event construction is available; fluid/force flags remain disabled pending their gates. No private framework linker dependency or new package dependency.
+
+
+- [2026-10-25 19:25 CET]: M6.1 — Bridging-header warning fix
+  - *Details*: Replaced pragma-once with a conventional header guard so direct Swift bridging-header compilation emits no main-file pragma warning.
+  - *Tech Notes*: Mac hosted regression passes all 36 tests, including the five private API checks.
