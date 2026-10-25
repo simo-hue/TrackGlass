@@ -42,12 +42,7 @@ extension ControlMessage {
             writer.settings(value.settings)
             try writer.write(value.activePhoneName)
         case .settings(let value):
-            writer.write(value.naturalScrolling)
-            writer.write(value.tapToClick)
-            writer.write(value.forceClickEnabled)
-            writer.write(value.hapticsSuggested)
-            writer.write(value.trackingSpeed)
-            writer.write(value.secondaryClickMode)
+            writer.settings(value)
         case .ping(let value):
             writer.write(value.nonce)
         case .pong(let value):
@@ -115,14 +110,7 @@ extension ControlMessage {
                 activePhoneName: reader.string()
             ))
         case .settings:
-            message = .settings(try SettingsMessage(
-                naturalScrolling: reader.integer(UInt8.self),
-                tapToClick: reader.integer(UInt8.self),
-                forceClickEnabled: reader.integer(UInt8.self),
-                hapticsSuggested: reader.integer(UInt8.self),
-                trackingSpeed: reader.float(),
-                secondaryClickMode: reader.integer(UInt8.self)
-            ))
+            message = .settings(try reader.settings())
         case .ping:
             message = .ping(try PingMessage(
                 nonce: reader.integer(UInt32.self)
@@ -207,6 +195,13 @@ private struct ControlWriter {
         write(value.hapticsSuggested)
         write(value.trackingSpeed)
         write(value.secondaryClickMode)
+        write(value.scrollEnabled)
+        write(value.horizontalScrollEnabled)
+        write(value.momentumScrollEnabled)
+        write(value.pinchEnabled)
+        write(value.rotateEnabled)
+        write(value.smartZoomEnabled)
+        write(value.swipeNavigationEnabled)
     }
 }
 
@@ -246,6 +241,13 @@ private struct ControlReader {
     mutating func settings() throws -> SettingsMessage {
         try SettingsMessage(naturalScrolling: integer(UInt8.self), tapToClick: integer(UInt8.self),
                             forceClickEnabled: integer(UInt8.self), hapticsSuggested: integer(UInt8.self),
-                            trackingSpeed: float(), secondaryClickMode: integer(UInt8.self))
+                            trackingSpeed: float(), secondaryClickMode: integer(UInt8.self),
+                            scrollEnabled: integer(UInt8.self),
+                            horizontalScrollEnabled: integer(UInt8.self),
+                            momentumScrollEnabled: integer(UInt8.self),
+                            pinchEnabled: integer(UInt8.self),
+                            rotateEnabled: integer(UInt8.self),
+                            smartZoomEnabled: integer(UInt8.self),
+                            swipeNavigationEnabled: integer(UInt8.self))
     }
 }

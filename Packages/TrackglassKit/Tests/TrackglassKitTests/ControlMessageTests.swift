@@ -66,6 +66,32 @@ final class ControlMessageTests: XCTestCase {
         XCTAssertEqual(try ControlMessage.decode(data).message, .unknown(type: 0xF0))
     }
 
+    func testScrollPreferenceWireLayoutInSettingsAndWelcome() throws {
+        for mask in UInt8(0)..<128 {
+            let bits = (0..<7).map { (mask >> $0) & 1 }
+            var value = settings
+            value.scrollEnabled = bits[0]
+            value.horizontalScrollEnabled = bits[1]
+            value.momentumScrollEnabled = bits[2]
+            value.pinchEnabled = bits[3]
+            value.rotateEnabled = bits[4]
+            value.smartZoomEnabled = bits[5]
+            value.swipeNavigationEnabled = bits[6]
+            let standalone = ControlMessage.settings(value)
+            let bytes = try standalone.encode(sequence: 0, sentAt: 0)
+            XCTAssertEqual(bytes.count, 32)
+            XCTAssertEqual(Array(bytes[25..<32]), bits)
+            XCTAssertEqual(try ControlMessage.decode(bytes).message, standalone)
+            let welcome = ControlMessage.welcome(WelcomeMessage(status: 1, macPeerID: peer,
+                macName: "Mac", macOSVersion: "27", injectorMode: 1, settings: value, activePhoneName: "Phone"))
+            XCTAssertEqual(try ControlMessage.decode(welcome.encode(sequence: 0, sentAt: 0)).message, welcome)
+            // An older nine-byte SETTINGS payload must be rejected, not defaulted.
+            XCTAssertThrowsError(try ControlMessage.decode(Data(bytes.prefix(25)))) {
+                XCTAssertEqual($0 as? ProtocolError, .truncated)
+            }
+        }
+    }
+
     func testWireLayout() throws {
         let ping = try ControlMessage.ping(PingMessage(nonce: 0x12345678)).encode(sequence: 0, sentAt: 0)
         XCTAssertEqual(Array(ping.suffix(4)), [0x78, 0x56, 0x34, 0x12])

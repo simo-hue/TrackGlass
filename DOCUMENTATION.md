@@ -66,3 +66,8 @@ M1.7 complete. Next: M2.1 touch surface root, then build/install and request its
 - [2026-10-25 19:25 CET]: M6.1 — Bridging-header warning fix
   - *Details*: Replaced pragma-once with a conventional header guard so direct Swift bridging-header compilation emits no main-file pragma warning.
   - *Tech Notes*: Mac hosted regression passes all 36 tests, including the five private API checks.
+
+
+- [2026-10-25 19:28 CET]: M1.3 correction — Scroll preferences in SETTINGS
+  - *Details*: With owner approval, appended seven Boolean preference bytes to SETTINGS and its WELCOME embedding. Both variants share one serializer/parser. Updated SPEC §4.5.
+  - *Tech Notes*: All 33 Kit tests, 36 Mac hosted tests and 17 iOS hosted tests pass; signed iPhone build succeeds. Wire-layout coverage exercises all 128 combinations and truncated old payloads. No protocol-version bump for this owner-approved prerelease change; install both apps together.

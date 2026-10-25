@@ -55,14 +55,29 @@ public struct SettingsMessage: Equatable, Sendable {
     public var hapticsSuggested: UInt8
     public var trackingSpeed: Float
     public var secondaryClickMode: UInt8
+    public var scrollEnabled: UInt8
+    public var horizontalScrollEnabled: UInt8
+    public var momentumScrollEnabled: UInt8
+    public var pinchEnabled: UInt8
+    public var rotateEnabled: UInt8
+    public var smartZoomEnabled: UInt8
+    public var swipeNavigationEnabled: UInt8
 
-    public init(naturalScrolling: UInt8, tapToClick: UInt8, forceClickEnabled: UInt8, hapticsSuggested: UInt8, trackingSpeed: Float, secondaryClickMode: UInt8) {
+    public init(naturalScrolling: UInt8, tapToClick: UInt8, forceClickEnabled: UInt8, hapticsSuggested: UInt8, trackingSpeed: Float, secondaryClickMode: UInt8,
+                scrollEnabled: UInt8 = 1, horizontalScrollEnabled: UInt8 = 1, momentumScrollEnabled: UInt8 = 1, pinchEnabled: UInt8 = 1, rotateEnabled: UInt8 = 1, smartZoomEnabled: UInt8 = 1, swipeNavigationEnabled: UInt8 = 1) {
         self.naturalScrolling = naturalScrolling
         self.tapToClick = tapToClick
         self.forceClickEnabled = forceClickEnabled
         self.hapticsSuggested = hapticsSuggested
         self.trackingSpeed = trackingSpeed
         self.secondaryClickMode = secondaryClickMode
+        self.scrollEnabled = scrollEnabled
+        self.horizontalScrollEnabled = horizontalScrollEnabled
+        self.momentumScrollEnabled = momentumScrollEnabled
+        self.pinchEnabled = pinchEnabled
+        self.rotateEnabled = rotateEnabled
+        self.smartZoomEnabled = smartZoomEnabled
+        self.swipeNavigationEnabled = swipeNavigationEnabled
     }
 }
 
