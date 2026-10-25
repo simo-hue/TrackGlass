@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct TrackglassMacApp: App {
+    private let privateAPICapabilities = TGPrivateAPIGetCapabilities()
     var body: some Scene {
         MenuBarExtra {
             Button("Quit") {

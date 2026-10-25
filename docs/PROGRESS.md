@@ -44,7 +44,7 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 | M5.2 engine: acceleration curve | ☐ |  |
 | M5.3 engine: pointer acceleration | ☐ |  |
 | M5.4 calibrate pointer | ☐ | OUTPUT_SCALE = ; C1/C2/C3 results: ; A/B result:  |
-| M6.1 mac: private fields | ☐ | symbols resolved on build machine:  |
+| M6.1 mac: private fields | ☑ | Five private API tests and all 34 Mac hosted tests pass. HIDEvent resolves; both attachment symbols absent, dockSwipe=false; gestureEvents=true. Commit: mac: private fields. |
 | M6.2 mac: scroll preferences | ☐ |  |
 | M6.3 scroll | ☐ | Gate G-DIR:  |
 | M6.4 scroll acceleration | ☐ | Gate G-SCR: Apple scroll curves / constant model |

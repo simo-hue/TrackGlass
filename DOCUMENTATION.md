@@ -56,3 +56,8 @@ M1.7 complete. Next: M2.1 touch surface root, then build/install and request its
 - [2026-10-22]: M1.3 correction — Active phone name in WELCOME
   - *Details*: With owner approval, appended activePhoneName to WELCOME so a busy response can identify the active controller. The default is empty for other statuses. Updated SPEC §4.5.
   - *Tech Notes*: Uses the existing u16-length UTF-8 encoding. All 32 Kit tests pass with zero compiler warnings, including busy/empty round trips, exact UTF-8 bytes and exhaustive truncation rejection. Both apps must use the corrected prerelease protocol layout. No dependencies added.
+
+
+- [2026-10-25 19:23 CET]: M6.1 — Private Mac event support
+  - *Details*: Centralized Appendix B event fields/types, added cached runtime API detection and missing-symbol/class fallbacks, and enforced the private-module source boundary. Owner approved deferring M5.4 calibration; OUTPUT_SCALE remains 1.0.
+  - *Tech Notes*: Five new tests and all 34 Mac hosted tests pass. HIDEvent resolves; neither CGEventSetHIDEvent nor CGEventSetIOHIDEvent resolves on this Mac, so dockSwipe is false. Gesture event construction is available; fluid/force flags remain disabled pending their gates. No private framework linker dependency or new package dependency.

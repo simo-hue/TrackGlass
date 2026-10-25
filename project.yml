@@ -47,7 +47,11 @@ targets:
   TrackglassMac:
     type: application
     platform: macOS
+    settings:
+      base:
+        SWIFT_OBJC_BRIDGING_HEADER: Mac/Injection/Quartz/PrivateAPI/TGPrivateAPI.h
     sources:
+      - Mac/Injection/Quartz/PrivateAPI
       - Mac/App
     dependencies:
       - package: TrackglassKit
@@ -93,6 +97,7 @@ targets:
       Release: Config/Mac.xcconfig
     settings:
       base:
+        SWIFT_OBJC_BRIDGING_HEADER: Mac/Injection/Quartz/PrivateAPI/TGPrivateAPI.h
         PRODUCT_BUNDLE_IDENTIFIER: $(TG_BUNDLE_PREFIX).mac.tests
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
