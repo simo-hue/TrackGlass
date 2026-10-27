@@ -78,7 +78,7 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 | M10.1 mac: latency stats | ☐ | p95:  — `LatencyStats` (1 000-sample ring + 4 096-bucket histogram, allocation-free) records receive→post per frame; p50/p95 in STATUS and Settings → Advanced; `LatencyStatsTests` added. Owner p95 reading pending. |
 | M10.2 docs: latency | ☐ | instrumented median/p95 at 120 Hz: ; at 60 Hz: ; camera delta vs trackpad:  |
 | M10.3 ios: coalesced samples | ☐ | kept enabled: yes / no, because:  |
-| M10.4 polish: accessibility and icons | ☐ |  |
+| M10.4 polish: accessibility and icons | ☐ | AUTO passed in full CI 2026-10-27 16:25 (zero warnings). Implemented: iOS/Mac AppIcon sets and 18 pt MenuBarIcon template generated from `Design/Brand/trackglass-logo-v1.png` by `Scripts/make-icons.py`; VoiceOver labels/traits (surface = direct-interaction element, PIN selection, camera view, grip, menu bar icon), Dynamic Type in the scanner and scrolling onboarding pages, Local-Network denial surfaced in the Macs list. `AccessibilityTests`, `MenuBarIconTests` added. VoiceOver end-to-end and iPhone SE largest-size checks deferred. |
 | M10.5 ios: thermal and power | ☐ | Thermal `.serious`/`.critical` suppresses halos (frames unaffected); Low Power unchanged; idle timer already restored on disconnect. `ThermalStateTests` added. Xcode thermal simulation check pending. |
 | M11.1 mac: sparkle updates | ☐ |  |
 | M11.2 mac: release script | ☐ |  |
@@ -96,7 +96,7 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 
 - 2026-10-27 (audit): five read-only audits (Kit, Engine, Mac, iOS, tooling) found 1 HIGH design issue needing an owner decision — SPEC §3.4 PIN pairing derives the TLS PSK from a 6-digit PIN with a pure-PSK suite, so a passive Wi-Fi capture of one PIN pairing can be brute-forced offline to recover the LTK (QR pairing is unaffected). Options are listed in `TO_SIMO_DO.md`; until decided, QR is the recommended pairing path. Code fixes from the audit are applied but, like everything since 2026-10-27 morning, uncompiled.
 
-- 2026-10-27 (afternoon session): the agent session ran in a Linux VM without Xcode, so M9.1–M10.5 changes from that session (plus the morning's M8.6a–M9.2 work) have not been compiled or tested. The owner must run `xcodegen generate && Scripts/ci.sh` and report failures before any of these steps are ticked or committed.
+- 2026-10-27 15:08: owner ran `xcodegen generate && Scripts/ci.sh` on the reference Mac after the audit fixes — full CI passed (package tests incl. `DragSafetyTests`, Mac and iOS hosted tests, both app builds, 37 fixtures, loss invariants). Work through M10.5 is committed as 5c1057f. AUTO parts of M8.6a–M10.5 are verified; their MANUAL parts remain deferred under the owner's policy and are listed in `TO_SIMO_DO.md`.
 - No other implementation blocker. Owner authorized routine implementation decisions and deferred non-crucial physical checks on 2026-10-25. Resting-thumb protection is implemented and all existing fixtures pass. Other prior deferrals remain valid. Owner approved deferring macOS 14 G-TLS validation on 2026-10-22; it remains required before release. Earlier phone/iPad manual tests are also deferred.
 
 ## Decisions taken during implementation

@@ -21,11 +21,15 @@ targets:
       - iOS/Surface
       - iOS/Networking
       - iOS/Pairing
+      - iOS/Resources/Assets.xcassets
     dependencies:
       - package: TrackglassKit
     configFiles:
       Debug: Config/iOS.xcconfig
       Release: Config/iOS.xcconfig
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: iOS/Resources/Info.plist
       properties:
@@ -74,12 +78,14 @@ targets:
     settings:
       base:
         SWIFT_OBJC_BRIDGING_HEADER: Mac/Injection/Quartz/PrivateAPI/TGPrivateAPI.h
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     sources:
       - Mac/App
       - Mac/Networking
       - Mac/Pairing
       - Mac/Settings
       - Mac/Injection
+      - Mac/Resources/Assets.xcassets
       - path: Mac/Resources/DefaultAccelCurves.json
         buildPhase: resources
     dependencies:

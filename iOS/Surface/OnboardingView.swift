@@ -17,6 +17,7 @@ struct OnboardingView: View {
                     if let website {
                         Link("Download for Mac", destination: website)
                         Button("Copy download link") { UIPasteboard.general.url = website }
+                            .accessibilityHint("Copies the Mac download address so you can paste it on your Mac.")
                     }
                 }.tag(1)
                 pageView(symbol: "qrcode.viewfinder", title: "Pair your devices",
@@ -35,10 +36,13 @@ struct OnboardingView: View {
         .background(Color(uiColor: .systemBackground))
     }
     private func pageView(symbol: String, title: String, detail: String) -> some View {
-        VStack(spacing: 24) {
-            Image(systemName: symbol).font(.system(size: 64)).accessibilityHidden(true)
-            Text(title).font(.largeTitle.bold()).multilineTextAlignment(.center)
-            Text(detail).font(.body).multilineTextAlignment(.center).foregroundStyle(.secondary)
-        }.padding()
+        // Scrolls at the largest accessibility text sizes (iPhone SE) instead of clipping.
+        ScrollView {
+            VStack(spacing: 24) {
+                Image(systemName: symbol).font(.system(size: 64)).accessibilityHidden(true)
+                Text(title).font(.largeTitle.bold()).multilineTextAlignment(.center)
+                Text(detail).font(.body).multilineTextAlignment(.center).foregroundStyle(.secondary)
+            }.padding()
+        }
     }
 }

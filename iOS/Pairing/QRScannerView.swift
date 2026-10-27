@@ -28,8 +28,13 @@ final class QRScannerController: UIViewController {
         message.textColor = .white
         message.numberOfLines = 0
         message.textAlignment = .center
+        message.font = UIFont.preferredFont(forTextStyle: .body)
+        message.adjustsFontForContentSizeCategory = true
         message.text = "Point the camera at the QR code in Trackglass for Mac."
         view.addSubview(message)
+        view.isAccessibilityElement = true
+        view.accessibilityLabel = "Camera view for scanning the pairing code"
+        view.accessibilityHint = "The code is read automatically when it is in view."
     }
 
     override func viewDidAppear(_ animated: Bool) {

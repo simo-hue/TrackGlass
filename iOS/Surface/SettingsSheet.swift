@@ -94,8 +94,8 @@ struct SettingsSheet: View {
             var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
             guard UIColor(color).getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return }
             // Extended-sRGB components (P3 picks) can be < 0 or > 1; clamp before converting or UInt32() traps.
-        func channel(_ value: CGFloat) -> UInt32 { UInt32((min(1, max(0, value)) * 255).rounded()) }
-        let rgb = channel(red) << 16 | channel(green) << 8 | channel(blue)
+            func channel(_ value: CGFloat) -> UInt32 { UInt32((min(1, max(0, value)) * 255).rounded()) }
+            let rgb = channel(red) << 16 | channel(green) << 8 | channel(blue)
             var value = themes.theme
             if background { value.backgroundRGB = rgb } else { value.accentRGB = rgb }
             themes.select(value)

@@ -30,9 +30,11 @@ struct PINEntryView: View {
                             HStack {
                                 Text(mac.name)
                                 Spacer()
-                                if selectedInstance == mac.instanceName { Image(systemName: "checkmark") }
+                                if selectedInstance == mac.instanceName { Image(systemName: "checkmark").accessibilityHidden(true) }
                             }
-                        }.disabled(inProgress)
+                        }
+                        .disabled(inProgress)
+                        .accessibilityAddTraits(selectedInstance == mac.instanceName ? .isSelected : [])
                     }
                     if !browser.macs.contains(where: \.isPairing) { Text(browser.status) }
                 }

@@ -117,7 +117,10 @@ struct TrackglassMacApp: App {
                 NSApplication.shared.terminate(nil)
             }
         } label: {
-            Text(Bundle.main.object(forInfoDictionaryKey: "TGProductName") as? String ?? "")
+            // SPEC §6.1: template image (trackpad outline + phone outline), 18 × 18 pt.
+            Image("MenuBarIcon")
+                .renderingMode(.template)
+                .accessibilityLabel(Bundle.main.object(forInfoDictionaryKey: "TGProductName") as? String ?? "Trackglass")
         }
     }
 }

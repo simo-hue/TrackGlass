@@ -37,9 +37,13 @@ final class ConnectionState {
         onSessionChange?()
     }
 
-    func updateDiscovery(macs: [DiscoveredMac], pairedMacs: [PairedPeer]) {
+    /// Browser state text ("Looking for Macs…", or why discovery is blocked, e.g. Local Network denied).
+    private(set) var discoveryStatus = "Looking for Macs…"
+
+    func updateDiscovery(macs: [DiscoveredMac], pairedMacs: [PairedPeer], status: String? = nil) {
         self.macs = macs
         self.pairedMacs = pairedMacs
+        if let status { discoveryStatus = status }
     }
 
     func updateLastMac(name: String) { lastMacName = name }

@@ -181,6 +181,7 @@ actor ConnectionManager {
 
     private func refreshState() async {
         let macs = await browser.macs
+        let discoveryStatus = await browser.status
         let isConnected = await session.isConnected
         let status = await session.status
         let macName = await session.macName
@@ -188,7 +189,7 @@ actor ConnectionManager {
         let settings = await session.settings
         let diagnostics = await session.diagnostics
         let diagnosticsSequence = await session.diagnosticsSequence
-        await state.updateDiscovery(macs: macs, pairedMacs: pairedMacs)
+        await state.updateDiscovery(macs: macs, pairedMacs: pairedMacs, status: discoveryStatus)
         await state.updateSession(isConnected: isConnected, status: status, macName: macName,
                                   rttMicros: rttMicros, settings: settings, diagnostics: diagnostics, diagnosticsSequence: diagnosticsSequence)
     }

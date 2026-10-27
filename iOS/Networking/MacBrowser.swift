@@ -78,8 +78,9 @@ final class MacBrowser {
                 case .ready: self.status = "Looking for Macs…"
                 case .waiting(let error): self.status = "Discovery waiting: \(error.localizedDescription)"
                 case .failed(let error): self.status = "Discovery failed: \(error.localizedDescription)"
-                default: break
+                default: return
                 }
+                self.onChange?()   // the status is user-visible (Local Network denial); publish it like a result change
             }
         }
         browser.start(queue: .main)

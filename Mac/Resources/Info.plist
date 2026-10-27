@@ -33,6 +33,8 @@
 	<string>$(TG_BUNDLE_PREFIX)</string>
 	<key>TGProductName</key>
 	<string>$(TG_PRODUCT_NAME)</string>
+	<key>TGRepoURL</key>
+	<string>$(TG_REPO_URL)</string>
 	<key>TGWebsiteURL</key>
 	<string>$(TG_WEBSITE_URL)</string>
 </dict>

@@ -22,7 +22,13 @@ struct MacDiscoveryView: View {
                 Section("Paired Macs") {
                     MacsListView(state: state, manager: manager, connect: connect, pair: { links.showPairing() })
                 }
-                if state.macs.isEmpty { Text("Looking for Macs…") }
+                if state.macs.isEmpty {
+                    Text(state.discoveryStatus)
+                    if state.discoveryStatus.hasPrefix("Discovery waiting") || state.discoveryStatus.hasPrefix("Discovery failed") {
+                        Text("Allow Local Network access for Trackglass in Settings → Privacy & Security → Local Network.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
             .navigationTitle("Macs")
             .toolbar { Button("Done") { dismiss() } }

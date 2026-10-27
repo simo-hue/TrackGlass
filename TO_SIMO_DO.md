@@ -332,3 +332,10 @@ Decisions (SPEC changes, so yours):
 6. **`Config/Shared.xcconfig`** now carries `TG_REPO_URL = https://github.com/simo-hue/TrackGlass` and the raw-GitHub appcast URL per SPEC §1.5; confirm the owner/repo spelling.
 
 Improvements recorded but not done (no decision needed; scheduled after CI is green): streaming `.tgrec` writer (recordings currently buffer in RAM), per-datagram `Data` allocation in `UDPFrameSink`, duplicate frames when UIKit splits one event into began/moved/ended calls, `ConnectionManager.refreshState` single-snapshot refactor, ControlChannel handshake timeout, `tgreplay` `"parametric"` model, `LSRequiresIPhoneOS`/`PrivacyInfo.xcprivacy` for M11.4, VoiceOver label on the surface (M10.4), Kit test gaps (ControlChannel loopback, framer bounds, negotiated cipher suite).
+
+## 2026-10-27 — M10.4 build and manual checks
+
+1. `xcodegen generate && Scripts/ci.sh` (new asset catalogs and two tests). Paste failures back.
+2. Mac: the menu bar now shows the two-outline template icon instead of the word; confirm it adapts to light/dark menu bars and that the app icon appears in Finder/Dock during Settings. iOS: the home-screen icon is the brand mark on near-black.
+3. VoiceOver on the iPhone: pair and change a setting using only VoiceOver (grip button is "Open settings"; the surface reads "Trackpad" and passes touches straight through; the PIN list announces the selected Mac).
+4. Settings → Accessibility → Larger Text at the maximum size on an iPhone SE: onboarding, the Macs list and Settings must not clip text.

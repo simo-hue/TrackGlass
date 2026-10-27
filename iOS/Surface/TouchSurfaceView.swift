@@ -34,6 +34,11 @@ final class TouchSurfaceView: UIView {
     private func configure() {
         backgroundColor = .black
         _ = renderer
+        // VoiceOver: one element whose touches pass straight through to the Mac.
+        isAccessibilityElement = true
+        accessibilityLabel = "Trackpad"
+        accessibilityHint = "Move, tap and use gestures here to control your Mac."
+        accessibilityTraits = .allowsDirectInteraction
         displayLinkDriver.onTick = { [weak self] in
             guard let self, let geometry = self.lastGeometry else { return }
             self.emitStationaryKeepAliveIfNeeded()
