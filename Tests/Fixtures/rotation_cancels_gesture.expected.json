@@ -1,0 +1,16 @@
+[
+  {
+    "t": "dockSwipe",
+    "kind": "vertical",
+    "phase": "began",
+    "progressDelta": 0.2,
+    "exitVelocity": 0
+  },
+  {
+    "t": "dockSwipe",
+    "kind": "vertical",
+    "phase": "cancelled",
+    "progressDelta": 0,
+    "exitVelocity": 20
+  }
+]

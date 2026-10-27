@@ -1,0 +1,33 @@
+[
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "mayBegin",
+    "naturalInverted": true
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "cancelled",
+    "naturalInverted": true
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "mayBegin",
+    "naturalInverted": true
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "cancelled",
+    "naturalInverted": true
+  },
+  {
+    "t": "smartZoom"
+  }
+]

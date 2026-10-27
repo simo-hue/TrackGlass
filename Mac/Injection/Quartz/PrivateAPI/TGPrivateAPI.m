@@ -57,3 +57,44 @@ PrivateAPICapabilities TGPrivateAPIGetCapabilities(void) {
     });
     return capabilities;
 }
+
+// Method signatures from Apple's HIDEvent headers. Class lookup stays dynamic.
+@protocol TGDynamicHIDEvent
+- (instancetype)initWithType:(uint32_t)type timestamp:(uint64_t)timestamp senderID:(uint64_t)senderID;
+- (void)setOptions:(uint32_t)options;
+- (void)setIntegerValue:(NSInteger)value forField:(uint32_t)field;
+- (void)setDoubleValue:(double)value forField:(uint32_t)field;
+- (void)appendEvent:(id)event;
+@end
+
+id TGCreateDockHIDEvent(int64_t kind, int64_t phase, double progress, double velocity) {
+    (void)TGPrivateAPIGetCapabilities();
+    Class cls = NSClassFromString(@"HIDEvent");
+    if (!cls) return nil;
+    for (NSString *name in @[@"initWithType:timestamp:senderID:", @"setOptions:", @"setIntegerValue:forField:", @"setDoubleValue:forField:", @"appendEvent:"]) {
+        if (![cls instancesRespondToSelector:NSSelectorFromString(name)]) return nil;
+    }
+    id<TGDynamicHIDEvent> event = [(id<TGDynamicHIDEvent>)[cls alloc] initWithType:TGHIDDockSwipe timestamp:0 senderID:0];
+    [event setOptions:(uint32_t)phase << TGHIDPhaseShift];
+    [event setIntegerValue:kind forField:TGHIDDockMotionField];
+    [event setIntegerValue:TGHIDDockPrimary forField:TGHIDDockFlavorField];
+    [event setDoubleValue:progress forField:TGHIDDockProgressField];
+    if (phase == TGPhaseEnded || phase == TGPhaseCancelled) {
+        id<TGDynamicHIDEvent> child = [(id<TGDynamicHIDEvent>)[cls alloc] initWithType:TGHIDVelocity timestamp:0 senderID:0];
+        [child setDoubleValue:velocity forField:TGHIDVelocityXField];
+        [child setDoubleValue:velocity forField:TGHIDVelocityYField];
+        [child setDoubleValue:0 forField:TGHIDVelocityZField];
+        [event appendEvent:child];
+    }
+    return event;
+}
+
+bool TGAttachDockHIDEvent(CGEventRef event, id hidEvent) {
+    PrivateAPICapabilities capabilities = TGPrivateAPIGetCapabilities();
+    if (!capabilities.dockSwipe) return false;
+    const char *name = capabilities.attachmentSymbol == 1 ? "CGEventSetHIDEvent" : "CGEventSetIOHIDEvent";
+    void (*attach)(CGEventRef, id) = dlsym(RTLD_DEFAULT, name);
+    if (!attach) return false;
+    attach(event, hidEvent);
+    return true;
+}

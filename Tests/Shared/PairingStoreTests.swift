@@ -1,0 +1,69 @@
+import XCTest
+import Security
+import TrackglassKit
+
+final class PairingStoreTests: XCTestCase {
+    func testRoundTripUpdateListAndDelete() throws {
+        let store = PairingStore(service: "app.trackglass.pairing.tests.\(UUID().uuidString)")
+        let firstID = UUID()
+        let secondID = UUID()
+        defer {
+            try? store.delete(peerID: firstID)
+            try? store.delete(peerID: secondID)
+        }
+        let first = PairedPeer(peerID: firstID, ltk: Data(repeating: 0x31, count: 32),
+                               name: "Phone α", pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let second = PairedPeer(peerID: secondID, ltk: Data(repeating: 0x42, count: 32),
+                                name: "iPad", pairedAt: first.pairedAt)
+        XCTAssertNil(try store.load(peerID: firstID))
+        XCTAssertTrue(try store.all().isEmpty)
+        try store.save(first)
+        try store.save(second)
+        XCTAssertEqual(try store.load(peerID: firstID), first)
+        XCTAssertEqual(Set(try store.all().map(\.peerID)), [firstID, secondID])
+        let updated = PairedPeer(peerID: firstID, ltk: second.ltk, name: "Renamed", pairedAt: first.pairedAt)
+        try store.save(updated)
+        XCTAssertEqual(try store.load(peerID: firstID), updated)
+        XCTAssertEqual(try store.all().count, 2)
+        try store.delete(peerID: firstID)
+        try store.delete(peerID: firstID)
+        XCTAssertNil(try store.load(peerID: firstID))
+        XCTAssertEqual(try store.all(), [second])
+    }
+
+    func testStoredProtectionAndJSONFormat() throws {
+        let store = PairingStore(service: "app.trackglass.pairing.tests.\(UUID().uuidString)")
+        let id = UUID()
+        defer { try? store.delete(peerID: id) }
+        try store.save(PairedPeer(peerID: id, ltk: Data(repeating: 7, count: 32), name: "Mac",
+                                 pairedAt: Date(timeIntervalSince1970: 0)))
+        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: store.service,
+                                    kSecAttrAccount as String: id.uuidString.lowercased(),
+                                    kSecReturnAttributes as String: true,
+                                    kSecReturnData as String: true]
+        #if os(macOS)
+        query[kSecUseDataProtectionKeychain as String] = true
+        #endif
+        var raw: CFTypeRef?
+        XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, &raw), errSecSuccess)
+        let attributes = try XCTUnwrap(raw as? [String: Any])
+        XCTAssertEqual(attributes[kSecAttrAccessible as String] as? String,
+                       kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
+        XCTAssertEqual(attributes[kSecAttrSynchronizable as String] as? Bool, false)
+        let data = try XCTUnwrap(attributes[kSecValueData as String] as? Data)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: String])
+        XCTAssertEqual(Set(json.keys), ["ltk", "name", "pairedAt"])
+        XCTAssertEqual(json["ltk"], Data(repeating: 7, count: 32).base64EncodedString())
+        XCTAssertEqual(json["pairedAt"], "1970-01-01T00:00:00Z")
+    }
+
+    func testInvalidKeyIsRejectedWithoutSaving() throws {
+        let store = PairingStore(service: "app.trackglass.pairing.tests.\(UUID().uuidString)")
+        let id = UUID()
+        XCTAssertThrowsError(try store.save(PairedPeer(peerID: id, ltk: Data(count: 31), name: "Bad"))) {
+            XCTAssertEqual($0 as? PairingStoreError, .invalidRecord)
+        }
+        XCTAssertNil(try store.load(peerID: id))
+    }
+}

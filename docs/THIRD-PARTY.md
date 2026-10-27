@@ -2,9 +2,13 @@
 
 ## Apple IOHIDFamily — APSL-2.0
 
-Apple's [IOHIDFamily](https://github.com/apple-oss-distributions/IOHIDFamily) is the factual reference for the acceleration algorithm specified in SPEC §6.6. The algorithm will be independently reproduced in Swift; no Apple source file or function body is copied. Apple retains copyright in its source. The applicable license is the [Apple Public Source License 2.0](https://opensource.apple.com/apsl/).
+Apple's [IOHIDFamily](https://github.com/apple-oss-distributions/IOHIDFamily) is the factual reference for the acceleration algorithm specified in SPEC §6.6. The algorithm is independently reproduced in Swift; no Apple source file or function body is copied. Apple retains copyright in its source. The applicable license is the [Apple Public Source License 2.0](https://opensource.apple.com/apsl/).
 
-The acceleration implementation files will carry the attribution required by SPEC §6.6 when implemented. At P0.3, no acceleration implementation is present.
+The acceleration implementation files (`Packages/TrackglassEngine/Sources/TrackglassEngine/Acceleration/ParametricAccelerationCurve.swift`, `PointerAccelerator.swift`, `ScrollAccelerator.swift`) carry the attribution header required by SPEC §6.6.
+
+## Inter — SIL Open Font License 1.1
+
+The website (`website/assets/fonts`) self-hosts the [Inter](https://rsms.me/inter/) typeface under the SIL OFL 1.1; the license text is in `website/assets/fonts/LICENSE.txt`. The apps do not bundle it.
 
 ## Reference-only projects
 

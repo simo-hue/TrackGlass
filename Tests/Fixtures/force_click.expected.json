@@ -1,0 +1,10 @@
+[
+  {
+    "t": "forceClick",
+    "stage": 2
+  },
+  {
+    "t": "haptic",
+    "kind": "forceClickStage2"
+  }
+]

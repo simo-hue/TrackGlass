@@ -36,6 +36,24 @@ final class ControlMessageTests: XCTestCase {
         }
     }
 
+    func testNonFiniteOrNonPositiveGeometryIsRejected() throws {
+        let bad: [ControlMessage] = [
+            .hello(HelloMessage(protocolVersion: 1, peerID: peer, name: "P", modelIdentifier: "m", surfaceWidthMM: .nan,
+                                surfaceHeightMM: 141, ppi: 460, maxContacts: 10, displayHz: 120, caps: 0, trackingOverride: 0)),
+            .hello(HelloMessage(protocolVersion: 1, peerID: peer, name: "P", modelIdentifier: "m", surfaceWidthMM: 65,
+                                surfaceHeightMM: 0, ppi: 460, maxContacts: 10, displayHz: 120, caps: 0, trackingOverride: 0)),
+            .surface(SurfaceMessage(surfaceWidthMM: 141, surfaceHeightMM: 65, ppi: .infinity, trackingOverride: 0)),
+            .surface(SurfaceMessage(surfaceWidthMM: 141, surfaceHeightMM: 65, ppi: 460, trackingOverride: .nan))
+        ]
+        for message in bad {
+            XCTAssertThrowsError(try ControlMessage.decode(message.encode(sequence: 0, sentAt: 0))) { error in
+                XCTAssertEqual(error as? ControlCodecError, .invalidValue)
+            }
+        }
+        let good = ControlMessage.surface(SurfaceMessage(surfaceWidthMM: 141, surfaceHeightMM: 65, ppi: 460, trackingOverride: -1))
+        XCTAssertEqual(try ControlMessage.decode(good.encode(sequence: 0, sentAt: 0)).message, good)
+    }
+
     func testEveryTruncationIsTyped() throws {
         for message in messages {
             let data = try message.encode(sequence: 0, sentAt: 0)

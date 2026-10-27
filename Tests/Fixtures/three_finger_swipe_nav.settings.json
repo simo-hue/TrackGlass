@@ -1,0 +1,15 @@
+{
+  "settings": {
+    "threeFingerHorizontalGesture": 1
+  },
+  "geometry": {
+    "widthMM": 200,
+    "heightMM": 200,
+    "isLandscape": false
+  },
+  "acceleration": {
+    "model": "unitGain"
+  },
+  "ticks": [],
+  "geometryChanges": []
+}

@@ -23,7 +23,10 @@ public enum TLSConfig {
     }
 
     public static func parameters(control options: NWProtocolTLS.Options) -> NWParameters {
-        let parameters = NWParameters(tls: options)
+        // HAPTIC must not queue behind an unacknowledged STATUS/PONG segment (Nagle): disable coalescing.
+        let tcp = NWProtocolTCP.Options()
+        tcp.noDelay = true
+        let parameters = NWParameters(tls: options, tcp: tcp)
         parameters.defaultProtocolStack.applicationProtocols.insert(
             NWProtocolFramer.Options(definition: TGControlFramer.definition), at: 0)
         configure(parameters)

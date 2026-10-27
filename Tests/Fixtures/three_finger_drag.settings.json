@@ -1,0 +1,17 @@
+{
+  "settings": {
+    "threeFingerDrag": true
+  },
+  "geometry": {
+    "widthMM": 65.1,
+    "heightMM": 141.1,
+    "isLandscape": false
+  },
+  "acceleration": {
+    "model": "unitGain"
+  },
+  "ticks": [
+    1400000000
+  ],
+  "geometryChanges": []
+}

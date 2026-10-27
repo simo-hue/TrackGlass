@@ -56,12 +56,12 @@ public enum TouchFrameDecoder {
             guard let phase = Contact.Phase(rawValue: buffer[offset + 1]),
                   let kind = Contact.Kind(rawValue: buffer[offset + 2]) else { throw TouchFrameCodecError.invalidContact }
             guard buffer[offset + 3] == 0 else { throw TouchFrameCodecError.reservedBits }
-            frame.append(Contact(
-                contactID: buffer[offset], phase: phase, kind: kind,
-                x: Float(bitPattern: UInt32(littleEndian: buffer.loadUnaligned(fromByteOffset: offset + 4, as: UInt32.self))),
-                y: Float(bitPattern: UInt32(littleEndian: buffer.loadUnaligned(fromByteOffset: offset + 8, as: UInt32.self))),
-                majorRadius: Float(bitPattern: UInt32(littleEndian: buffer.loadUnaligned(fromByteOffset: offset + 12, as: UInt32.self)))
-            ))
+            let x = Float(bitPattern: UInt32(littleEndian: buffer.loadUnaligned(fromByteOffset: offset + 4, as: UInt32.self)))
+            let y = Float(bitPattern: UInt32(littleEndian: buffer.loadUnaligned(fromByteOffset: offset + 8, as: UInt32.self)))
+            let radius = Float(bitPattern: UInt32(littleEndian: buffer.loadUnaligned(fromByteOffset: offset + 12, as: UInt32.self)))
+            // NaN/infinite coordinates would reach pointer deltas unchanged; reject them (allocation-free branch).
+            guard x.isFinite, y.isFinite, radius.isFinite else { throw TouchFrameCodecError.invalidContact }
+            frame.append(Contact(contactID: buffer[offset], phase: phase, kind: kind, x: x, y: y, majorRadius: radius))
         }
         return frame
     }

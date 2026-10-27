@@ -1,0 +1,22 @@
+{
+  "settings": {},
+  "geometry": {
+    "widthMM": 200,
+    "heightMM": 200,
+    "isLandscape": false
+  },
+  "acceleration": {
+    "model": "unitGain"
+  },
+  "ticks": [],
+  "geometryChanges": [
+    {
+      "atNs": 30000000,
+      "geometry": {
+        "widthMM": 200,
+        "heightMM": 200,
+        "isLandscape": true
+      }
+    }
+  ]
+}

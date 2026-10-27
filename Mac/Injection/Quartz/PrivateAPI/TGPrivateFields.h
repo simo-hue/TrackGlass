@@ -43,3 +43,15 @@ enum {
 };
 enum { TGMomentumNone = 0, TGMomentumBegin = 1, TGMomentumContinue = 2, TGMomentumEnd = 3 };
 enum { TGSwipeUp = 1, TGSwipeDown = 2, TGSwipeLeft = 4, TGSwipeRight = 8 };
+
+// Apple IOHIDEventFieldDefs/IOHIDEventTypes, as exposed by MMF Shared/IOKit/External.
+// Field base = event type << 16; checked 2026-10-26.
+enum {
+    TGHIDPhaseShift = 24, TGHIDDockPrimary = 3,
+    TGHIDDockMotionField = (23 << 16) | 1,
+    TGHIDDockProgressField = (23 << 16) | 2,
+    TGHIDDockFlavorField = (23 << 16) | 5,
+    TGHIDVelocityXField = (9 << 16),
+    TGHIDVelocityYField = (9 << 16) | 1,
+    TGHIDVelocityZField = (9 << 16) | 2
+};

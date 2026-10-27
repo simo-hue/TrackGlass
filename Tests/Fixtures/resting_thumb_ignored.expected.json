@@ -1,0 +1,76 @@
+[
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "mayBegin",
+    "naturalInverted": true
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "cancelled",
+    "naturalInverted": true
+  },
+  {
+    "t": "pointerMove",
+    "dx": 0.75,
+    "dy": 0
+  },
+  {
+    "t": "pointerMove",
+    "dx": 1.5,
+    "dy": 0
+  },
+  {
+    "t": "pointerMove",
+    "dx": 1.5,
+    "dy": 0
+  },
+  {
+    "t": "pointerMove",
+    "dx": 1.5,
+    "dy": 0
+  },
+  {
+    "t": "pointerMove",
+    "dx": 1.5,
+    "dy": 0
+  },
+  {
+    "t": "pointerMove",
+    "dx": 1.5,
+    "dy": 0
+  },
+  {
+    "t": "pointerMove",
+    "dx": 1.5,
+    "dy": 0
+  },
+  {
+    "t": "pointerMove",
+    "dx": 1.5,
+    "dy": 0
+  },
+  {
+    "t": "pointerMove",
+    "dx": 1.5,
+    "dy": 0
+  },
+  {
+    "t": "pointerMove",
+    "dx": 1.5,
+    "dy": 0
+  },
+  {
+    "t": "pointerMove",
+    "dx": 1.5,
+    "dy": 0
+  },
+  {
+    "t": "pointerMove",
+    "dx": 1.5,
+    "dy": 0
+  }
+]

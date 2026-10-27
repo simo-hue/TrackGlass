@@ -82,7 +82,7 @@ Notation: `§x.y` = section of `docs/SPEC.md`. "Gate" steps branch; record the o
 ## M2 — iOS touch surface (no network yet)
 
 ### M2.1 UIKit root and surface view
-- Do: `SceneDelegate` installs `TouchSurfaceViewController` as root; `TouchSurfaceView` black, `isMultipleTouchEnabled`, `isExclusiveTouch`; VC overrides: home indicator hidden, status bar hidden, all screen edges deferred, orientations per §5.4; `isIdleTimerDisabled = true` while the surface is visible (connected-only from M3.4). No gesture recognizers anywhere.
+- Do: `SceneDelegate` installs `TouchSurfaceViewController` as root; `TouchSurfaceView` black, `isMultipleTouchEnabled`, `isExclusiveTouch`; VC overrides: home indicator automatic hiding disabled to preserve two-swipe protection, status bar hidden, all screen edges deferred, orientations per §5.4; `isIdleTimerDisabled = true` while the surface is visible (connected-only from M3.4). No gesture recognizers anywhere.
 - Test (MANUAL): on the iPhone the app is full-screen black; swiping from any edge needs the second system swipe; the screen does not auto-lock for 3 minutes.
 - Commit: `ios: touch surface root`
 
@@ -92,7 +92,7 @@ Notation: `§x.y` = section of `docs/SPEC.md`. "Gate" steps branch; record the o
 - Commit: `ios: touch frames`
 
 ### M2.3 FrameSender with zero allocation
-- Do: `FrameSender` (ring buffer of 16 frames, serial `.userInteractive` queue, one reusable 188-byte encode buffer), `TouchSurfaceView` writes into a preallocated `TouchFrame` and enqueues; `ConsoleFrameSink` now consumes encoded bytes.
+- Do: `FrameSender` (ring buffer of 16 frames that drops the oldest queued frame when full, serial `.userInteractive` queue, one reusable 188-byte encode buffer), `TouchSurfaceView` writes into a preallocated `TouchFrame` and enqueues; `ConsoleFrameSink` now consumes encoded bytes.
 - Test (AUTO+MANUAL): Instruments → Allocations, 20 s of five-finger dragging: zero transient allocations attributed to Trackglass's own symbols in `TouchSurfaceView.emit`/`FrameSender` (UIKit-internal allocations are excluded); frames still print.
 - Commit: `ios: frame sender`
 
@@ -136,7 +136,7 @@ Notation: `§x.y` = section of `docs/SPEC.md`. "Gate" steps branch; record the o
 - Commit: `net: control session`
 
 ### M3.5 Input channel
-- Do: Mac `InputListener` (DTLS, same key registration / fallback), identity check against the admitted phone, `INPUT_HEARTBEAT`; phone `FrameSender` now sends to the UDP connection (`.idempotent`); Mac logs frames/s and `lossPermille` (sequence gaps) once per second.
+- Do: Mac `InputListener` (DTLS; listener registers only the admitted phone's LTK so the authenticated key binds the session identity), `INPUT_HEARTBEAT`; phone `FrameSender` now sends to the UDP connection (`.idempotent`); Mac logs frames/s and `lossPermille` (sequence gaps) once per second.
 - Test (MANUAL): with a finger moving on the phone the Mac logs ≈ 120 frames/s on the ProMotion iPhone; raw unencrypted UDP sent to the port with `nc -u` is ignored.
 - Commit: `net: input channel`
 

@@ -10,3 +10,14 @@ Config/Local.xcconfig
 *.tgrec
 !Tests/Fixtures/**/*.tgrec
 !Tests/Fixtures/*.tgrec
+# audit snapshots and release artefacts
+.audit-snapshot.tgz
+*.tgz
+*.dmg
+*.xcarchive
+*.ipa
+# signing material never enters the repo
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile

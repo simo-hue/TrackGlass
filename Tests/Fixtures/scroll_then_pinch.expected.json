@@ -1,0 +1,46 @@
+[
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "mayBegin",
+    "naturalInverted": true
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 4,
+    "phase": "began",
+    "naturalInverted": true
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 4,
+    "phase": "changed",
+    "naturalInverted": true
+  },
+  {
+    "t": "gestureBegin"
+  },
+  {
+    "t": "magnify",
+    "delta": 0.19999999999999996,
+    "phase": "began"
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "ended",
+    "naturalInverted": true
+  },
+  {
+    "t": "magnify",
+    "delta": 0,
+    "phase": "ended"
+  },
+  {
+    "t": "gestureEnd"
+  }
+]

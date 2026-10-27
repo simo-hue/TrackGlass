@@ -1,0 +1,50 @@
+[
+  {
+    "t": "button",
+    "kind": "left",
+    "phase": "down",
+    "clickCount": 1
+  },
+  {
+    "t": "button",
+    "kind": "left",
+    "phase": "up",
+    "clickCount": 1
+  },
+  {
+    "t": "haptic",
+    "kind": "click"
+  },
+  {
+    "t": "button",
+    "kind": "left",
+    "phase": "down",
+    "clickCount": 2
+  },
+  {
+    "t": "button",
+    "kind": "left",
+    "phase": "up",
+    "clickCount": 2
+  },
+  {
+    "t": "haptic",
+    "kind": "click"
+  },
+  {
+    "t": "button",
+    "kind": "left",
+    "phase": "down",
+    "clickCount": 3
+  },
+  {
+    "t": "button",
+    "kind": "left",
+    "phase": "up",
+    "clickCount": 3
+  },
+  {
+    "t": "haptic",
+    "kind": "click"
+  }
+]

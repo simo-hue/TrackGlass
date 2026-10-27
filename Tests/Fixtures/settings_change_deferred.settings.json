@@ -1,0 +1,24 @@
+{
+  "settings": {
+    "momentumScrollEnabled": false
+  },
+  "geometry": {
+    "widthMM": 65,
+    "heightMM": 141,
+    "isLandscape": false
+  },
+  "acceleration": {
+    "model": "unitGain"
+  },
+  "ticks": [],
+  "geometryChanges": [],
+  "settingsChanges": [
+    {
+      "atNs": 20000001,
+      "settings": {
+        "naturalScrolling": false,
+        "momentumScrollEnabled": false
+      }
+    }
+  ]
+}

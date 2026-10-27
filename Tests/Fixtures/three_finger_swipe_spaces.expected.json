@@ -1,0 +1,20 @@
+[
+  {
+    "t": "dockSwipe",
+    "kind": "horizontal",
+    "phase": "began",
+    "progressDelta": -0.5454545454545454,
+    "exitVelocity": 0
+  },
+  {
+    "t": "dockSwipe",
+    "kind": "horizontal",
+    "phase": "ended",
+    "progressDelta": 0,
+    "exitVelocity": -54.54545454545454
+  },
+  {
+    "t": "haptic",
+    "kind": "spaceSwitched"
+  }
+]

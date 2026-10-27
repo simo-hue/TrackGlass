@@ -1,0 +1,19 @@
+[
+  {
+    "t": "button",
+    "kind": "left",
+    "phase": "down",
+    "clickCount": 1
+  },
+  {
+    "t": "pointerMove",
+    "dx": 3,
+    "dy": 0
+  },
+  {
+    "t": "button",
+    "kind": "left",
+    "phase": "up",
+    "clickCount": 1
+  }
+]

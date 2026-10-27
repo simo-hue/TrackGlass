@@ -1,0 +1,30 @@
+[
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "mayBegin",
+    "naturalInverted": true
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 2,
+    "phase": "began",
+    "naturalInverted": true
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 3,
+    "phase": "changed",
+    "naturalInverted": true
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "ended",
+    "naturalInverted": true
+  }
+]

@@ -1,0 +1,15 @@
+{
+  "settings": {
+    "smartZoomEnabled": false
+  },
+  "geometry": {
+    "widthMM": 65.1,
+    "heightMM": 141.1,
+    "isLandscape": false
+  },
+  "acceleration": {
+    "model": "unitGain"
+  },
+  "ticks": [],
+  "geometryChanges": []
+}

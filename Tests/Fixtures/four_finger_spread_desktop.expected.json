@@ -1,0 +1,16 @@
+[
+  {
+    "t": "dockSwipe",
+    "kind": "pinch",
+    "phase": "began",
+    "progressDelta": 0.3,
+    "exitVelocity": 0
+  },
+  {
+    "t": "dockSwipe",
+    "kind": "pinch",
+    "phase": "ended",
+    "progressDelta": 0,
+    "exitVelocity": 30.0
+  }
+]

@@ -1,0 +1,19 @@
+[
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "mayBegin",
+    "naturalInverted": true
+  },
+  {
+    "t": "notificationCenter"
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "cancelled",
+    "naturalInverted": true
+  }
+]

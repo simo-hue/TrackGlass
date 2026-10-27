@@ -18,6 +18,9 @@ targets:
     platform: iOS
     sources:
       - iOS/App
+      - iOS/Surface
+      - iOS/Networking
+      - iOS/Pairing
     dependencies:
       - package: TrackglassKit
     configFiles:
@@ -31,9 +34,30 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         TGProductName: $(TG_PRODUCT_NAME)
         TGBundlePrefix: $(TG_BUNDLE_PREFIX)
+        NSLocalNetworkUsageDescription: Trackglass finds and talks to Trackglass for Mac on your local network.
+        NSBonjourServices:
+          - _trackglass._tcp
+          - _trackglass._udp
         TGWebsiteURL: $(TG_WEBSITE_URL)
+        TGRepoURL: $(TG_REPO_URL)
+        LSRequiresIPhoneOS: true
         ITSAppUsesNonExemptEncryption: false
+        CFBundleURLTypes:
+          - CFBundleURLName: $(TG_BUNDLE_PREFIX).pairing
+            CFBundleURLSchemes:
+              - trackglass
+        NSCameraUsageDescription: Scan the pairing code shown by Trackglass for Mac.
+        CADisableMinimumFrameDurationOnPhone: true
         UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
           UISceneConfigurations:
@@ -51,14 +75,24 @@ targets:
       base:
         SWIFT_OBJC_BRIDGING_HEADER: Mac/Injection/Quartz/PrivateAPI/TGPrivateAPI.h
     sources:
-      - Mac/Injection/Quartz/PrivateAPI
       - Mac/App
+      - Mac/Networking
+      - Mac/Pairing
+      - Mac/Settings
+      - Mac/Injection
+      - path: Mac/Resources/DefaultAccelCurves.json
+        buildPhase: resources
     dependencies:
       - package: TrackglassKit
       - package: TrackglassEngine
     configFiles:
       Debug: Config/Mac.xcconfig
       Release: Config/Mac.xcconfig
+    entitlements:
+      path: Mac/Resources/TrackglassMac.entitlements
+      properties:
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)
     info:
       path: Mac/Resources/Info.plist
       properties:
@@ -67,7 +101,12 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         TGProductName: $(TG_PRODUCT_NAME)
         TGBundlePrefix: $(TG_BUNDLE_PREFIX)
+        NSLocalNetworkUsageDescription: Trackglass finds and talks to Trackglass for Mac on your local network.
+        NSBonjourServices:
+          - _trackglass._tcp
+          - _trackglass._udp
         TGWebsiteURL: $(TG_WEBSITE_URL)
+        TGRepoURL: $(TG_REPO_URL)
         LSUIElement: true
     scheme:
       gatherCoverageData: false
@@ -78,6 +117,7 @@ targets:
     platform: iOS
     sources:
       - Tests/TrackglassiOSTests
+      - Tests/Shared
     configFiles:
       Debug: Config/iOS.xcconfig
       Release: Config/iOS.xcconfig
@@ -87,19 +127,38 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: TrackglassiOS
+  TrackglassiOSUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - Tests/TrackglassiOSUITests
+    configFiles:
+      Debug: Config/iOS.xcconfig
+      Release: Config/iOS.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TG_BUNDLE_PREFIX).ios.uitests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: TrackglassiOS
   TrackglassMacTests:
     type: bundle.unit-test
     platform: macOS
     sources:
       - Tests/TrackglassMacTests
+      - iOS/Networking/PairingClient.swift
+      - iOS/Networking/SessionClient.swift
+      - iOS/Surface/UDPFrameSink.swift
+      - iOS/Surface/FrameSink.swift
+      - Tests/Shared
     configFiles:
       Debug: Config/Mac.xcconfig
       Release: Config/Mac.xcconfig
     settings:
       base:
-        SWIFT_OBJC_BRIDGING_HEADER: Mac/Injection/Quartz/PrivateAPI/TGPrivateAPI.h
         PRODUCT_BUNDLE_IDENTIFIER: $(TG_BUNDLE_PREFIX).mac.tests
         GENERATE_INFOPLIST_FILE: YES
+        SWIFT_OBJC_BRIDGING_HEADER: Mac/Injection/Quartz/PrivateAPI/TGPrivateAPI.h
     dependencies:
       - target: TrackglassMac
   tgreplay:
@@ -117,3 +176,14 @@ targets:
     sources:
       - Tools/tgaccel
     scheme: {}
+schemes:
+  TrackglassiOSSoak:
+    build:
+      targets:
+        TrackglassiOS: all
+        TrackglassiOSUITests: [test]
+    test:
+      targets:
+        - TrackglassiOSUITests
+      environmentVariables:
+        TG_SOAK_SECONDS: $(TG_SOAK_SECONDS)

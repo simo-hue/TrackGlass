@@ -1,0 +1,607 @@
+import Foundation
+import TrackglassKit
+
+public struct EngineGeometry: Sendable, Equatable, Codable {
+    public var widthMM: Double
+    public var heightMM: Double
+    public var isLandscape: Bool
+    public init(widthMM: Double, heightMM: Double, isLandscape: Bool) {
+        self.widthMM = widthMM; self.heightMM = heightMM; self.isLandscape = isLandscape
+    }
+}
+
+public struct EventBuffer: Sendable {
+    private var values = [GestureEvent?](repeating: nil, count: 32)
+    public private(set) var count = 0
+    public init() {}
+    public subscript(_ index: Int) -> GestureEvent { values[index]! }
+    public var events: [GestureEvent] { (0..<count).map { values[$0]! } }
+    public mutating func clear() { for i in 0..<count { values[i] = nil }; count = 0 }
+    mutating func append(_ event: GestureEvent) {
+        guard count < values.count else { assertionFailure("Gesture event buffer overflow"); return }
+        values[count] = event; count += 1
+    }
+}
+
+public protocol AccelerationModel: Sendable {
+    func accelerate(dxMM: Double, dyMM: Double, dtNanoseconds: UInt64) -> (Double, Double)
+}
+public struct UnitGainAcceleration: AccelerationModel {
+    public init() {}
+    public func accelerate(dxMM: Double, dyMM: Double, dtNanoseconds: UInt64) -> (Double, Double) { (dxMM, dyMM) }
+}
+public struct ConstantGainAcceleration: AccelerationModel {
+    public let pointsPerMM: Double
+    public init(pointsPerMM: Double = 4) { self.pointsPerMM = pointsPerMM }
+    public func accelerate(dxMM: Double, dyMM: Double, dtNanoseconds: UInt64) -> (Double, Double) { (dxMM * pointsPerMM, dyMM * pointsPerMM) }
+}
+
+private enum EngineMode: Equatable { case idle, pointer, pendingScroll, multiFinger }
+private struct ContactSlot {
+    var id: UInt8 = 0
+    var active = false
+    var seen = false
+    var palm = false
+    var resting = false
+    var restingEligible = true
+    var ignoredForMode = false
+    var moved = false
+    var x = 0.0
+    var y = 0.0
+    var startX = 0.0
+    var startY = 0.0
+    var time: UInt64 = 0
+    var beganAt: UInt64 = 0
+    var pathLength = 0.0
+}
+
+private struct TapContact {
+    let id: UInt8
+    let beganAt: UInt64
+    let startX: Double
+    let startY: Double
+    var pathLength: Double
+    var endedAt: UInt64?
+    var dragSequence = false
+    var releasesDragLock = false
+}
+
+private struct ContactTracker {
+    var slots = [ContactSlot](repeating: ContactSlot(), count: TouchFrame.maximumContacts)
+    var effectiveCount = 0
+    var trackedCount: Int { slots.reduce(into: 0) { if $1.active { $0 += 1 } } }
+    mutating func beginFrame() { for i in slots.indices { slots[i].seen = false } }
+    func index(for id: UInt8) -> Int? { slots.firstIndex(where: { $0.id == id && $0.active }) }
+    func freeIndex() -> Int? { slots.firstIndex(where: { !$0.active }) }
+    mutating func finishFrame() {
+        for i in slots.indices where slots[i].active && !slots[i].seen { slots[i].active = false }
+        recount()
+    }
+    mutating func recount() {
+        effectiveCount = slots.reduce(into: 0) { if $1.active && !$1.palm && !$1.resting { $0 += 1 } }
+    }
+    mutating func clear() { for i in slots.indices { slots[i].active = false; slots[i].seen = false }; effectiveCount = 0 }
+}
+
+public final class GestureEngine: @unchecked Sendable {
+    private let acceleration: any AccelerationModel
+    private let scrollAcceleration: any AccelerationModel
+    private var twoFinger = TwoFingerRecognizer()
+    private var multiFinger = MultiFingerRecognizer()
+    private var momentum = ScrollMomentum()
+    private var stopMomentumRequested = false
+    private var tapConsumedByGesture = false
+    private var forceHoldCancelled = false
+    private var geometry: EngineGeometry
+    private var settings: TrackpadSettings
+    private var pendingSettings: TrackpadSettings?
+    private var pendingTwoFingerTap: (deadline: UInt64, secondaryEnabled: Bool)?
+    private var tracker = ContactTracker()
+    private var mode = EngineMode.idle
+    private var settleDeadline: UInt64 = 0
+    private var accumulatedX = 0.0
+    private var accumulatedY = 0.0
+    private var tapContacts = [TapContact]()
+    private var previousClickTime: UInt64?
+    private var previousClickX = 0.0
+    private var previousClickY = 0.0
+    private var previousClickCount = 0
+    private var dragButtonHeld = false
+    private var dragLockEngaged = false
+    private var dragContactID: UInt8?
+    private var dragClickCount = 2
+    private var dragReleaseDeadline: UInt64?
+    private var threeFingerDragStart: (Double, Double)?
+    private var threeFingerDragPrevious: (Double, Double)?
+    private var threeFingerDragPreviousTime: UInt64 = 0
+    private var threeFingerDragActive = false
+    public private(set) var needsTick = false
+    public var hasActiveContacts: Bool { tracker.trackedCount > 0 }
+
+    public init(settings: TrackpadSettings = TrackpadSettings(), geometry: EngineGeometry,
+                acceleration: (any AccelerationModel)? = nil,
+                scrollAcceleration: any AccelerationModel = ConstantGainAcceleration()) {
+        self.settings = settings; self.geometry = geometry
+        self.acceleration = acceleration ?? PointerAccelerator.fallback(trackingSpeed: settings.trackingSpeed)
+        self.scrollAcceleration = scrollAcceleration
+        tapContacts.reserveCapacity(TouchFrame.maximumContacts)
+    }
+
+    public func process(_ frame: TouchFrame, into events: inout EventBuffer) {
+        if frame.isSyntheticLiftoff {
+            // A held button with no contact, no grace window and no deliberate lock is a stuck state
+            // (every path that ends a drag contact opens one of those); the phone's lift-off clears it.
+            let stuckDrag = dragButtonHeld && !dragLockEngaged && dragReleaseDeadline == nil
+            if hasActiveContacts || stuckDrag { reset(into: &events, releaseDragLock: false) }
+            return
+        }
+        if momentum.active {
+            for index in 0..<frame.contactCount where frame[index].phase == .began && frame[index].kind == .finger {
+                momentum.cancel(into: &events)
+                appendScroll(.mayBegin, into: &events); appendScroll(.cancelled, into: &events)
+                break
+            }
+        }
+        expireTwoFingerTap(now: frame.frameTime, into: &events)
+        expireDragGrace(now: frame.frameTime, into: &events)
+        let oldCentroid = activeCentroid()
+        tracker.beginFrame()
+        let oldEffectiveCount = tracker.effectiveCount
+        var contactCancelled = false
+        var moveDX = 0.0; var moveDY = 0.0; var moveDT: UInt64 = 0; var hasPointerDelta = false
+        var dragDX = 0.0; var dragDY = 0.0; var dragDT: UInt64 = 0; var hasDragDelta = false
+
+        for i in 0..<frame.contactCount {
+            let contact = frame[i]
+            guard contact.kind == .finger else { continue }
+            let x = Double(contact.x), y = Double(contact.y)
+            var slotIndex = tracker.index(for: contact.contactID)
+            if slotIndex == nil { slotIndex = tracker.freeIndex() }
+            guard let index = slotIndex else { continue }
+            if contact.phase == .ended || contact.phase == .cancelled {
+                contactCancelled = contactCancelled || contact.phase == .cancelled
+                let pathLength = tracker.slots[index].pathLength
+                if contact.phase == .ended, let tapIndex = tapContacts.firstIndex(where: { $0.id == contact.contactID }) {
+                    tapContacts[tapIndex].endedAt = frame.frameTime
+                    tapContacts[tapIndex].pathLength = pathLength
+                    let quickTap = pathLength < 2.0 && frame.frameTime >= tapContacts[tapIndex].beganAt &&
+                        frame.frameTime - tapContacts[tapIndex].beganAt <= 300_000_000
+                    endDragContact(id: contact.contactID, quickTap: quickTap, now: frame.frameTime, into: &events)
+                } else {
+                    // A cancelled contact never clicks (§5.2); if it was dragging, release safely.
+                    if contact.phase == .cancelled { tapContacts.removeAll { $0.id == contact.contactID } }
+                    endDragContact(id: contact.contactID, quickTap: false, now: frame.frameTime, into: &events)
+                }
+                tracker.slots[index].active = false; tracker.slots[index].seen = true
+                continue
+            }
+            if contact.phase == .began || !tracker.slots[index].active {
+                let lateExtra = mode != .idle && frame.frameTime > settleDeadline && tracker.effectiveCount > 0 && !tracker.slots[index].active
+                if tracker.slots[index].active {
+                    // §4.7: a `began` for a still-tracked ID first ends the old contact.
+                    endDragContact(id: contact.contactID, quickTap: false, now: frame.frameTime, into: &events)
+                }
+                tracker.slots[index] = ContactSlot(id: contact.contactID, active: true, seen: true,
+                    palm: Double(contact.majorRadius) > 11, x: x, y: y, startX: x, startY: y,
+                    time: frame.frameTime, beganAt: frame.frameTime)
+                if lateExtra { tracker.slots[index].resting = true; tracker.slots[index].ignoredForMode = true }
+                tapContacts.removeAll { $0.id == contact.contactID }
+                // A palm is never part of a tap (§6.5.2); it must not hold the tap open until it lifts.
+                guard !tracker.slots[index].palm else { continue }
+                tapContacts.append(TapContact(id: contact.contactID, beganAt: frame.frameTime,
+                    startX: x, startY: y, pathLength: 0, endedAt: nil))
+                let tapIndex = tapContacts.count - 1
+                if dragLockEngaged {
+                    tapContacts[tapIndex].releasesDragLock = true
+                } else if dragButtonHeld, let deadline = dragReleaseDeadline, frame.frameTime <= deadline {
+                    dragReleaseDeadline = nil
+                    dragContactID = contact.contactID
+                    tapContacts[tapIndex].dragSequence = true
+                } else if settings.dragging, let previousClickTime,
+                          frame.frameTime >= previousClickTime,
+                          frame.frameTime - previousClickTime < settings.doubleClickIntervalNs,
+                          hypot(x - previousClickX, y - previousClickY) <= 5 {
+                    let count = min(previousClickCount + 1, 3)
+                    dragButtonHeld = true; dragContactID = contact.contactID
+                    dragClickCount = count; self.previousClickTime = nil
+                    tapContacts[tapIndex].dragSequence = true
+                    events.append(.button(kind: .left, phase: .down, clickCount: count))
+                }
+                continue
+            }
+            let previous = tracker.slots[index]
+            tracker.slots[index].seen = true
+            if frame.frameTime > previous.time {
+                let originDistance = hypot(x - previous.startX, y - previous.startY)
+                tracker.slots[index].pathLength += hypot(x - previous.x, y - previous.y)
+                if previous.resting && !previous.ignoredForMode && originDistance > 3 {
+                    tracker.slots[index].resting = false
+                    tracker.slots[index].restingEligible = false
+                    tracker.slots[index].moved = true
+                }
+                if !previous.palm && !previous.resting && (x != previous.x || y != previous.y) {
+                    // Movement below 0.05 mm is accumulated by the emitters below, never dropped (§6.5.4).
+                    if hypot(x - previous.x, y - previous.y) > 0.05 { tracker.slots[index].moved = true }
+                    if dragButtonHeld && dragContactID == contact.contactID {
+                        dragDX = x - previous.x; dragDY = y - previous.y
+                        dragDT = frame.frameTime - previous.time; hasDragDelta = true
+                    } else if oldEffectiveCount == 1 && mode == .pointer {
+                        moveDX = x - previous.x; moveDY = y - previous.y
+                        moveDT = frame.frameTime - previous.time; hasPointerDelta = true
+                    }
+                }
+                if hypot(x - previous.startX, y - previous.startY) > 1.5 { tracker.slots[index].restingEligible = false }
+                tracker.slots[index].x = x; tracker.slots[index].y = y; tracker.slots[index].time = frame.frameTime
+            }
+        }
+        for slot in tracker.slots where slot.active && !slot.seen {
+            // §4.7: a tracked contact absent from a newer frame is ended at that frame's time.
+            var quickTap = false
+            if let tapIndex = tapContacts.firstIndex(where: { $0.id == slot.id }) {
+                tapContacts[tapIndex].endedAt = frame.frameTime
+                tapContacts[tapIndex].pathLength = slot.pathLength
+                quickTap = slot.pathLength < 2.0 && frame.frameTime >= tapContacts[tapIndex].beganAt &&
+                    frame.frameTime - tapContacts[tapIndex].beganAt <= 300_000_000
+            }
+            endDragContact(id: slot.id, quickTap: quickTap, now: frame.frameTime, into: &events)
+        }
+        tracker.finishFrame()
+        classifyRestingContacts(now: frame.frameTime)
+        // A thumb that has settled into resting is excluded from finger counting (§6.5.2), including taps:
+        // the index finger's tap must click while the thumb stays down.
+        for slot in tracker.slots where slot.active && slot.resting && !slot.ignoredForMode {
+            tapContacts.removeAll { $0.id == slot.id }
+        }
+        transitionMode(previousCount: oldEffectiveCount, now: frame.frameTime, cancelled: contactCancelled, into: &events)
+        if mode == .pendingScroll, tracker.effectiveCount == 2, let pair = twoFingerGeometry() {
+            let start = events.count
+            twoFinger.update(x: pair.x, y: pair.y, distance: pair.distance, angle: pair.angle, time: frame.frameTime, settings: settings,
+                             acceleration: scrollAcceleration, suppressActivation: hasRestingThumbCandidate, into: &events)
+            for index in start..<events.count {
+                if case let .scroll(dx, dy, _, _) = events[index] {
+                    momentum.record(dx: dx, dy: dy, dt: twoFinger.lastDeltaTime, at: frame.frameTime)
+                }
+            }
+            tapConsumedByGesture = tapConsumedByGesture || twoFinger.hasActiveGesture
+        }
+        if mode == .multiFinger, let sample = multiFingerSample() {
+            multiFinger.update(sample, settings: settings, into: &events)
+            tapConsumedByGesture = tapConsumedByGesture || multiFinger.active
+        }
+        updateForceClick(now: frame.frameTime, into: &events)
+        updateThreeFingerDrag(now: frame.frameTime, oldCentroid: oldCentroid, into: &events)
+        emitTapIfComplete(now: frame.frameTime, into: &events)
+        if hasDragDelta, dragButtonHeld, !threeFingerDragActive {
+            let delta = acceleration.accelerate(dxMM: dragDX, dyMM: dragDY, dtNanoseconds: dragDT)
+            emitAccumulatedPointerMove(dx: delta.0, dy: delta.1, into: &events)
+        }
+        if mode == .pointer, tracker.effectiveCount == 1, hasPointerDelta {
+            let delta = acceleration.accelerate(dxMM: moveDX, dyMM: moveDY, dtNanoseconds: moveDT)
+            emitAccumulatedPointerMove(dx: delta.0, dy: delta.1, into: &events)
+        }
+        if tracker.trackedCount == 0 { tapConsumedByGesture = false; forceHoldCancelled = false; if !momentum.active { applyPendingSettings() } }
+        needsTick = tracker.trackedCount > 0 || dragReleaseDeadline != nil || momentum.active || pendingTwoFingerTap != nil
+    }
+
+    public func tick(now: UInt64, into events: inout EventBuffer) {
+        expireTwoFingerTap(now: now, into: &events)
+        expireDragGrace(now: now, into: &events)
+        let previousCount = tracker.effectiveCount
+        classifyRestingContacts(now: now)
+        transitionMode(previousCount: previousCount, now: now, into: &events)
+        if stopMomentumRequested { momentum.cancel(into: &events); stopMomentumRequested = false }
+        momentum.tick(now: now, into: &events)
+        updateForceClick(now: now, into: &events)
+        if tracker.trackedCount == 0, !momentum.active, dragReleaseDeadline == nil { applyPendingSettings() }
+        needsTick = tracker.trackedCount > 0 || dragReleaseDeadline != nil || momentum.active || pendingTwoFingerTap != nil
+    }
+
+    private func updateForceClick(now: UInt64, into events: inout EventBuffer) {
+        if tracker.trackedCount > 1 { forceHoldCancelled = true }
+        guard settings.forceClickEnabled, !forceHoldCancelled, !tapConsumedByGesture,
+              !dragButtonHeld, !dragLockEngaged, tracker.trackedCount == 1, tracker.effectiveCount == 1,
+              let slot = tracker.slots.first(where: { $0.active && !$0.palm && !$0.resting }) else { return }
+        if slot.pathLength >= 1 { forceHoldCancelled = true; return }
+        guard now >= slot.beganAt, now - slot.beganAt >= 600_000_000 else { return }
+        tapConsumedByGesture = true
+        events.append(.forceClick(stage: 2)); events.append(.haptic(.forceClickStage2))
+    }
+
+    public func setSettings(_ settings: TrackpadSettings) {
+        if momentum.active && !settings.momentumScrollEnabled { stopMomentumRequested = true }
+        if tracker.trackedCount == 0, !momentum.active, dragReleaseDeadline == nil, pendingTwoFingerTap == nil { applySettings(settings) }
+        else { pendingSettings = settings }
+    }
+
+    public func setGeometry(_ geometry: EngineGeometry, into events: inout EventBuffer) {
+        reset(into: &events, releaseDragLock: false); self.geometry = geometry
+    }
+
+    public func forceLiftoff(releaseDragLock: Bool = true, into events: inout EventBuffer) {
+        reset(into: &events, releaseDragLock: releaseDragLock)
+    }
+
+    private var hasRestingThumbCandidate: Bool {
+        tracker.slots.contains { contact in
+            contact.active && !contact.palm && !contact.resting && contact.restingEligible &&
+            contact.startY >= geometry.heightMM - 18 &&
+            hypot(contact.x - contact.startX, contact.y - contact.startY) <= 1.5
+        }
+    }
+
+    private func classifyRestingContacts(now: UInt64) {
+        for i in tracker.slots.indices {
+            let contact = tracker.slots[i]
+            var anotherFingerMoved = false
+            for j in tracker.slots.indices where j != i && tracker.slots[j].active && !tracker.slots[j].palm && tracker.slots[j].moved {
+                anotherFingerMoved = true
+            }
+            guard contact.active, !contact.palm, !contact.resting, contact.restingEligible,
+                  anotherFingerMoved,
+                  contact.y >= geometry.heightMM - 18, now >= contact.beganAt,
+                  now - contact.beganAt >= 150_000_000,
+                  hypot(contact.x - contact.startX, contact.y - contact.startY) <= 1.5 else { continue }
+            tracker.slots[i].resting = true
+        }
+        tracker.recount()
+    }
+
+    private func transitionMode(previousCount: Int, now: UInt64, cancelled: Bool = false, into events: inout EventBuffer) {
+        let count = tracker.effectiveCount
+        if mode == .idle, count > 0 {
+            mode = .pointer
+            let beganAt = earliestActiveContactTime()
+            settleDeadline = beganAt &+ 60_000_000
+        }
+        if mode == .multiFinger, count < multiFinger.fingerCount {
+            multiFinger.end(cancelled: cancelled, into: &events)
+            mode = count == 0 ? .idle : .pointer
+        }
+        if (3...5).contains(count), now <= settleDeadline,
+           !(count == 3 && settings.threeFingerDrag),
+           (mode != .multiFinger || (!multiFinger.active && multiFinger.fingerCount != count)),
+           let sample = multiFingerSample() {
+            if mode == .pendingScroll { twoFinger.end(cancelled: true, natural: settings.naturalScrolling, into: &events) }
+            mode = .multiFinger; multiFinger.begin(fingers: count, sample: sample)
+        }
+        // Two effective fingers in pointer mode always arm scrolling: inside the settle window (a normal
+        // two-finger landing), after a thumb stops resting (§6.5.2), or when a multi-finger set drops to two.
+        // Late extra fingers never raise the count (they are `ignoredForMode`), so no window check is needed.
+        if mode == .pointer, previousCount != 2, count == 2 {
+            mode = .pendingScroll; appendScroll(.mayBegin, into: &events)
+            (scrollAcceleration as? ScrollAccelerator)?.reset()
+            momentum.clearSamples()
+            if let pair = twoFingerGeometry() { twoFinger.begin(x: pair.x, y: pair.y, distance: pair.distance, angle: pair.angle, time: now, rightEdge: pair.rightEdge) }
+        } else if mode == .pendingScroll, count < 2 {
+            if twoFinger.scrollActive && !cancelled { momentum.start(now: now, enabled: settings.momentumScrollEnabled) }
+            twoFinger.end(cancelled: cancelled, natural: settings.naturalScrolling, into: &events)
+            mode = count == 0 ? .idle : .pointer
+        } else if count == 0 {
+            mode = .idle; accumulatedX = 0; accumulatedY = 0
+        }
+    }
+
+    private func appendScroll(_ phase: GesturePhase, into events: inout EventBuffer) {
+        events.append(.scroll(dxPoints: 0, dyPoints: 0, phase: phase, naturalInverted: settings.naturalScrolling))
+    }
+
+    private func earliestActiveContactTime() -> UInt64 {
+        var earliest = UInt64.max
+        for slot in tracker.slots where slot.active && !slot.palm && !slot.resting { earliest = min(earliest, slot.beganAt) }
+        return earliest == UInt64.max ? 0 : earliest
+    }
+
+    private func reset(into events: inout EventBuffer, releaseDragLock: Bool) {
+        momentum.cancel(into: &events); stopMomentumRequested = false
+        pendingTwoFingerTap = nil
+        if mode == .multiFinger { multiFinger.end(cancelled: true, into: &events) }
+        if mode == .pendingScroll { twoFinger.end(cancelled: true, natural: settings.naturalScrolling, into: &events) }
+        tapConsumedByGesture = false
+        forceHoldCancelled = false
+        let preserveLock = dragButtonHeld && dragLockEngaged && !releaseDragLock
+        if dragButtonHeld && !preserveLock { events.append(.button(kind: .left, phase: .up, clickCount: dragClickCount)) }
+        tracker.clear(); tapContacts.removeAll(keepingCapacity: true); mode = .idle; needsTick = false; accumulatedX = 0; accumulatedY = 0
+        dragButtonHeld = preserveLock; dragLockEngaged = preserveLock; dragContactID = nil; dragReleaseDeadline = nil
+        threeFingerDragStart = nil; threeFingerDragPrevious = nil; threeFingerDragPreviousTime = 0; threeFingerDragActive = false
+        applyPendingSettings()
+    }
+
+    private func applyPendingSettings() {
+        guard tracker.trackedCount == 0, !momentum.active, dragReleaseDeadline == nil, pendingTwoFingerTap == nil else { return }
+        if let pendingSettings { applySettings(pendingSettings); self.pendingSettings = nil }
+    }
+
+    private func applySettings(_ settings: TrackpadSettings) {
+        self.settings = settings
+        (acceleration as? PointerAccelerator)?.updateTrackingSpeed(settings.trackingSpeed)
+        (scrollAcceleration as? ScrollAccelerator)?.updateTrackingSpeed(settings.trackingSpeed)
+    }
+
+    private func expireDragGrace(now: UInt64, into events: inout EventBuffer) {
+        guard let deadline = dragReleaseDeadline, now >= deadline else { return }
+        events.append(.button(kind: .left, phase: .up, clickCount: dragClickCount))
+        dragButtonHeld = false; dragContactID = nil; dragReleaseDeadline = nil
+    }
+
+    /// Sub-point remainders accumulate in `accumulatedX/Y` so slow motion is never dropped (§6.5.4).
+    private func emitAccumulatedPointerMove(dx: Double, dy: Double, into events: inout EventBuffer) {
+        accumulatedX += dx; accumulatedY += dy
+        guard abs(accumulatedX) >= 0.05 || abs(accumulatedY) >= 0.05 else { return }
+        events.append(.pointerMove(dx: accumulatedX, dy: accumulatedY)); accumulatedX = 0; accumulatedY = 0
+    }
+
+    /// Drag bookkeeping shared by every way a drag contact can go away (`.ended`, `.cancelled`,
+    /// vanished per §4.7, or its ID re-used): the release grace window opens or drag lock engages,
+    /// so a lost or cancelled `ended` can never leave the button held (§8.8). A quick lift
+    /// (`quickTap`) is left to `emitTapIfComplete`, which turns it into the click release.
+    private func endDragContact(id: UInt8, quickTap: Bool, now: UInt64, into events: inout EventBuffer) {
+        guard dragContactID == id else { return }
+        dragContactID = nil
+        guard dragButtonHeld, !threeFingerDragActive, !quickTap else { return }
+        engageDragLockOrGrace(now: now, into: &events)
+    }
+
+    private func engageDragLockOrGrace(now: UInt64, into events: inout EventBuffer) {
+        guard dragButtonHeld, !dragLockEngaged, dragReleaseDeadline == nil else { return }
+        if settings.dragLock {
+            dragLockEngaged = true
+            events.append(.haptic(.dragLockEngaged))
+        } else {
+            dragReleaseDeadline = now &+ 300_000_000
+        }
+    }
+
+    private func multiFingerSample() -> MultiFingerRecognizer.Sample? {
+        guard let center = activeCentroid(), tracker.effectiveCount >= 3 else { return nil }
+        var radius = 0.0
+        for contact in tracker.slots where contact.active && !contact.palm && !contact.resting {
+            radius += hypot(contact.x - center.0, contact.y - center.1)
+        }
+        return .init(x: center.0, y: center.1, radius: radius / Double(tracker.effectiveCount))
+    }
+
+    private func twoFingerGeometry() -> (x: Double, y: Double, distance: Double, angle: Double, rightEdge: Bool)? {
+        var first: ContactSlot?
+        for contact in tracker.slots where contact.active && !contact.palm && !contact.resting {
+            if let first {
+                let dx = contact.x - first.x, dy = contact.y - first.y
+                return ((first.x + contact.x) / 2, (first.y + contact.y) / 2, hypot(dx, dy), -atan2(dy, dx), first.x >= geometry.widthMM - 3 && contact.x >= geometry.widthMM - 3)
+            }
+            first = contact
+        }
+        return nil
+    }
+
+    private func activeCentroid() -> (Double, Double)? {
+        var x = 0.0, y = 0.0, count = 0
+        for contact in tracker.slots where contact.active && !contact.palm && !contact.resting {
+            x += contact.x; y += contact.y; count += 1
+        }
+        guard count > 0 else { return nil }
+        return (x / Double(count), y / Double(count))
+    }
+
+    private func updateThreeFingerDrag(now: UInt64, oldCentroid: (Double, Double)?, into events: inout EventBuffer) {
+        if settings.threeFingerDrag, tracker.effectiveCount == 3, let center = activeCentroid() {
+            if threeFingerDragStart == nil {
+                threeFingerDragStart = center
+                threeFingerDragPreviousTime = now
+            }
+            if let start = threeFingerDragStart, !threeFingerDragActive,
+               hypot(center.0 - start.0, center.1 - start.1) > 2 {
+                threeFingerDragActive = true
+                dragContactID = nil; dragReleaseDeadline = nil
+                if !dragButtonHeld {
+                    // Re-landing inside the grace window or on a locked drag continues the held button.
+                    dragButtonHeld = true; dragClickCount = 1
+                    events.append(.button(kind: .left, phase: .down, clickCount: 1))
+                }
+            }
+            if threeFingerDragActive, let previous = oldCentroid {
+                let delta = acceleration.accelerate(dxMM: center.0 - previous.0, dyMM: center.1 - previous.1,
+                    dtNanoseconds: now &- threeFingerDragPreviousTime)
+                if abs(delta.0) >= 0.05 || abs(delta.1) >= 0.05 { events.append(.pointerMove(dx: delta.0, dy: delta.1)) }
+            }
+            threeFingerDragPrevious = center; threeFingerDragPreviousTime = now
+            return
+        }
+        threeFingerDragStart = nil; threeFingerDragPrevious = nil; threeFingerDragPreviousTime = 0
+        guard threeFingerDragActive else { return }
+        threeFingerDragActive = false; dragContactID = nil
+        engageDragLockOrGrace(now: now, into: &events)
+    }
+
+    private func appendSecondaryClick(into events: inout EventBuffer) {
+        events.append(.button(kind: .right, phase: .down, clickCount: 1))
+        events.append(.button(kind: .right, phase: .up, clickCount: 1))
+        events.append(.haptic(.secondaryClick))
+    }
+
+    private func expireTwoFingerTap(now: UInt64, into events: inout EventBuffer) {
+        guard let pending = pendingTwoFingerTap, now >= pending.deadline else { return }
+        pendingTwoFingerTap = nil
+        if pending.secondaryEnabled { appendSecondaryClick(into: &events) }
+    }
+
+    private func emitTapIfComplete(now: UInt64, into events: inout EventBuffer) {
+        guard !tapContacts.isEmpty, tapContacts.allSatisfy({ $0.endedAt != nil }) else { return }
+        if tapConsumedByGesture { tapContacts.removeAll(keepingCapacity: true); return }
+        let count = tapContacts.count
+        var firstBegan = UInt64.max, lastEnded: UInt64 = 0
+        var withinMovement = true
+        for contact in tapContacts {
+            firstBegan = min(firstBegan, contact.beganAt)
+            lastEnded = max(lastEnded, contact.endedAt ?? 0)
+            withinMovement = withinMovement && contact.pathLength < 2.0
+        }
+        guard count <= 3, lastEnded >= firstBegan,
+              lastEnded - firstBegan <= 300_000_000, withinMovement else {
+            tapContacts.removeAll(keepingCapacity: true)
+            return
+        }
+        if count == 3 {
+            if settings.threeFingerTapGesture == 2 { events.append(.lookUpAtPointer) }
+            tapContacts.removeAll(keepingCapacity: true)
+            return
+        }
+        if count == 2 {
+            let first = tapContacts[0], second = tapContacts[1]
+            guard settings.trackpadRightClick || settings.smartZoomEnabled,
+                  max(first.beganAt, second.beganAt) - min(first.beganAt, second.beganAt) <= 100_000_000 else {
+                tapContacts.removeAll(keepingCapacity: true)
+                return
+            }
+            if settings.smartZoomEnabled {
+                if let pending = pendingTwoFingerTap, now < pending.deadline {
+                    pendingTwoFingerTap = nil
+                    events.append(.smartZoom)
+                } else {
+                    pendingTwoFingerTap = (now &+ settings.doubleClickIntervalNs, settings.trackpadRightClick)
+                }
+            } else { appendSecondaryClick(into: &events) }
+            tapContacts.removeAll(keepingCapacity: true)
+            return
+        }
+        guard let contact = tapContacts.first else { tapContacts.removeAll(keepingCapacity: true); return }
+        if contact.releasesDragLock {
+            events.append(.button(kind: .left, phase: .up, clickCount: dragClickCount))
+            events.append(.haptic(.dragLockReleased))
+            dragButtonHeld = false; dragLockEngaged = false; dragContactID = nil
+            previousClickTime = nil; previousClickCount = 0
+            tapContacts.removeAll(keepingCapacity: true)
+            return
+        }
+        if contact.dragSequence {
+            if contact.pathLength < 2.0, let ended = contact.endedAt,
+               ended >= contact.beganAt, ended - contact.beganAt <= 300_000_000 {
+                events.append(.button(kind: .left, phase: .up, clickCount: dragClickCount))
+                events.append(.haptic(.click))
+                dragButtonHeld = false; dragContactID = nil; dragReleaseDeadline = nil
+                previousClickTime = ended; previousClickX = contact.startX; previousClickY = contact.startY
+                previousClickCount = dragClickCount
+            }
+            tapContacts.removeAll(keepingCapacity: true)
+            return
+        }
+        let corner = settings.cornerSecondaryClick
+        let inBottom = contact.startY >= geometry.heightMM - 22
+        let secondaryCorner = inBottom && ((corner == 1 && contact.startX <= 22) ||
+            (corner == 2 && contact.startX >= geometry.widthMM - 22))
+        let kind: ButtonKind = secondaryCorner ? .right : .left
+        var clickCount = 1
+        if kind == .left, let previousClickTime, let ended = contact.endedAt,
+           ended >= previousClickTime, ended - previousClickTime < settings.doubleClickIntervalNs,
+           hypot(contact.startX - previousClickX, contact.startY - previousClickY) <= 5 {
+            clickCount = min(previousClickCount + 1, 3)
+        }
+        events.append(.button(kind: kind, phase: .down, clickCount: clickCount))
+        events.append(.button(kind: kind, phase: .up, clickCount: clickCount))
+        events.append(.haptic(secondaryCorner ? .secondaryClick : .click))
+        if kind == .left, let ended = contact.endedAt {
+            previousClickTime = ended; previousClickX = contact.startX; previousClickY = contact.startY
+            previousClickCount = clickCount
+        }
+        tapContacts.removeAll(keepingCapacity: true)
+        _ = now
+    }
+}

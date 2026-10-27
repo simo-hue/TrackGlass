@@ -1,0 +1,32 @@
+[
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "mayBegin",
+    "naturalInverted": true
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "cancelled",
+    "naturalInverted": true
+  },
+  {
+    "t": "button",
+    "kind": "right",
+    "phase": "down",
+    "clickCount": 1
+  },
+  {
+    "t": "button",
+    "kind": "right",
+    "phase": "up",
+    "clickCount": 1
+  },
+  {
+    "t": "haptic",
+    "kind": "secondaryClick"
+  }
+]

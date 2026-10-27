@@ -25,5 +25,7 @@ typedef void * _Nullable (*TGSymbolLookup)(const char *name);
 typedef Class _Nullable (*TGClassLookup)(const char *name);
 FOUNDATION_EXPORT PrivateAPICapabilities TGPrivateAPIProbe(TGSymbolLookup symbols, TGClassLookup classes);
 
+FOUNDATION_EXPORT id _Nullable TGCreateDockHIDEvent(int64_t kind, int64_t phase, double progress, double velocity);
+FOUNDATION_EXPORT bool TGAttachDockHIDEvent(CGEventRef event, id hidEvent);
 NS_ASSUME_NONNULL_END
 #endif

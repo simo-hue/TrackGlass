@@ -22,6 +22,13 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_trackglass._tcp</string>
+		<string>_trackglass._udp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Trackglass finds and talks to Trackglass for Mac on your local network.</string>
 	<key>TGBundlePrefix</key>
 	<string>$(TG_BUNDLE_PREFIX)</string>
 	<key>TGProductName</key>

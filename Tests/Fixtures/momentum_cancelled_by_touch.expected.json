@@ -1,0 +1,80 @@
+[
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "mayBegin",
+    "naturalInverted": true
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 8,
+    "phase": "began",
+    "naturalInverted": true
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 8,
+    "phase": "changed",
+    "naturalInverted": true
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 8,
+    "phase": "changed",
+    "naturalInverted": true
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "ended",
+    "naturalInverted": true
+  },
+  {
+    "t": "scrollMomentum",
+    "dxPoints": 0,
+    "dyPoints": 8.0,
+    "phase": "begin"
+  },
+  {
+    "t": "scrollMomentum",
+    "dxPoints": 0,
+    "dyPoints": 7.872892424945678,
+    "phase": "continued"
+  },
+  {
+    "t": "scrollMomentum",
+    "dxPoints": 0,
+    "dyPoints": 7.74780439184588,
+    "phase": "continued"
+  },
+  {
+    "t": "scrollMomentum",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "end"
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "mayBegin",
+    "naturalInverted": true
+  },
+  {
+    "t": "scroll",
+    "dxPoints": 0,
+    "dyPoints": 0,
+    "phase": "cancelled",
+    "naturalInverted": true
+  },
+  {
+    "t": "pointerMove",
+    "dx": 0,
+    "dy": 10
+  }
+]

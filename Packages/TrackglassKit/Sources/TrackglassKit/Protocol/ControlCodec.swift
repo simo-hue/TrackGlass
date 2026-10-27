@@ -5,6 +5,7 @@ public enum ControlCodecError: Error, Equatable, Sendable {
     case invalidUTF8
     case invalidKeyLength
     case trailingBytes
+    case invalidValue
 }
 
 public struct ControlPacket: Equatable, Sendable {
@@ -162,7 +163,23 @@ extension ControlMessage {
             return ControlPacket(header: header, message: .unknown(type: header.type))
         }
         guard reader.offset == data.count else { throw ControlCodecError.trailingBytes }
+        try validateGeometry(message)
         return ControlPacket(header: header, message: message)
+    }
+
+    /// Surface dimensions and density feed pointer math and CGEvent coordinates directly; NaN,
+    /// infinite or non-positive values are rejected here rather than propagating (§8 robustness).
+    private static func validateGeometry(_ message: ControlMessage) throws {
+        let values: [Float]
+        let override: Float
+        switch message {
+        case .hello(let hello):
+            values = [hello.surfaceWidthMM, hello.surfaceHeightMM, hello.ppi]; override = hello.trackingOverride
+        case .surface(let surface):
+            values = [surface.surfaceWidthMM, surface.surfaceHeightMM, surface.ppi]; override = surface.trackingOverride
+        default: return
+        }
+        guard values.allSatisfy({ $0.isFinite && $0 > 0 }), override.isFinite else { throw ControlCodecError.invalidValue }
     }
 }
 

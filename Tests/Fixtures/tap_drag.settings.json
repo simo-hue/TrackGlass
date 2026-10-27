@@ -1,0 +1,17 @@
+{
+  "settings": {
+    "dragging": true
+  },
+  "geometry": {
+    "widthMM": 65.1,
+    "heightMM": 141.1,
+    "isLandscape": false
+  },
+  "acceleration": {
+    "model": "unitGain"
+  },
+  "ticks": [
+    1650000000
+  ],
+  "geometryChanges": []
+}
