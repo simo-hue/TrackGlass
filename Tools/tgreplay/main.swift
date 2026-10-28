@@ -33,6 +33,14 @@ private struct ReplayResult {
     let forcedFinalLiftoff: Bool
     let contactsRemain: Bool
     let eventsAfterReset: Int
+    /// `invariants` only (pipeline emulation): how many events the engine had emitted *before* the final,
+    /// BYE-style forced lift-off, whether a drag lock was deliberately engaged at that point, how many
+    /// emulated 1.5 s lift-off timeouts fired, and whether the engine had settled (no contacts, no pending
+    /// timer work) within the settle budget after the last frame.
+    let eventsBeforeFinalLiftoff: Int
+    let dragLockEngagedBeforeFinalLiftoff: Bool
+    let timeoutLiftoffs: Int
+    let settledBeforeFinalLiftoff: Bool
 }
 
 private enum ReplayError: Error, CustomStringConvertible {
@@ -70,9 +78,9 @@ private enum TGReplay {
             }
             let result = try replay(recording: URL(fileURLWithPath: arguments[1]),
                                     settingsURL: URL(fileURLWithPath: arguments[3]), dropFraction: fraction, seed: seed,
-                                    forceFinalLiftoff: true)
+                                    emulatePipeline: true)
             try checkInvariants(result)
-            print("invariants passed (drop=\(fraction), seed=\(seed))")
+            print("invariants passed (drop=\(fraction), seed=\(seed), timeoutLiftoffs=\(result.timeoutLiftoffs))")
         case "velocity-stats":
             guard arguments.count >= 2 else { throw ReplayError.usage(usage) }
             for path in arguments.dropFirst() {
@@ -141,8 +149,19 @@ private enum TGReplay {
       tgreplay velocity-stats <a.tgrec> [<b.tgrec> ...]   (M10.3: compare velocity smoothness of recordings)
     """
 
+    /// ENGINE_TICK (§2.4), LIFTOFF_TIMEOUT (§4.7) and the budget after the last frame within which every
+    /// timer-driven state (release grace, pending secondary click, momentum) must have run out.
+    private static let engineTickNs: UInt64 = 8_000_000
+    private static let liftoffTimeoutNs: UInt64 = 1_500_000_000
+    private static let settleBudgetNs: UInt64 = 10_000_000_000
+
+    /// `emulatePipeline` (the `invariants` command) adds what `InputPipeline` contributes on the Mac and a
+    /// recording cannot carry: the 8 ms tick from the first frame until the engine no longer asks for ticks,
+    /// and the 1.5 s no-frame lift-off timeout (§4.7). Only then does a dropped `ended`/lift-off datagram
+    /// exercise the engine's own recovery instead of being papered over by the tool's final forced lift-off,
+    /// which stays as the BYE-style safety net and must find nothing left to release.
     private static func replay(recording: URL, settingsURL: URL, dropFraction: Double = 0, seed: UInt64 = 1,
-                               forceFinalLiftoff: Bool = false) throws -> ReplayResult {
+                               emulatePipeline: Bool = false) throws -> ReplayResult {
         let configuration = try JSONDecoder().decode(ReplaySettings.self, from: Data(contentsOf: settingsURL))
         let acceleration: any AccelerationModel
         var scrollAcceleration: any AccelerationModel
@@ -174,56 +193,88 @@ private enum TGReplay {
         default: throw ReplayError.unsupportedAcceleration(configuration.acceleration.model)
         }
         var reader = try TGRecReader(contentsOf: recording)
+        var recorded: [TouchFrame] = []
+        while let record = try reader.next() {
+            recorded.append(try record.frameBytes.withUnsafeBytes { try TouchFrameDecoder.decode($0) })
+        }
         let engine = GestureEngine(settings: configuration.settings, geometry: configuration.geometry, acceleration: acceleration, scrollAcceleration: scrollAcceleration)
         var events: [GestureEvent] = []
         var frames: [TouchFrame] = []
-        let ticks = (configuration.ticks ?? []).sorted()
+        var ticks = (configuration.ticks ?? []).sorted()
+        if emulatePipeline, let first = recorded.first?.frameTime, let last = recorded.last?.frameTime {
+            // §2.4: the pipeline's 8 ms timer runs while contacts are tracked; merge it with the fixture's own ticks.
+            var grid = Set(ticks)
+            var time = first &+ engineTickNs
+            while time < last { grid.insert(time); time &+= engineTickNs }
+            ticks = grid.sorted()
+        }
         let changes = (configuration.geometryChanges ?? []).sorted { $0.atNs < $1.atNs }
         let settingsChanges = (configuration.settingsChanges ?? []).sorted { $0.atNs < $1.atNs }
         var settingsIndex = 0
         var tickIndex = 0, changeIndex = 0
         var random = seed
-        while let record = try reader.next() {
-            let frame = try record.frameBytes.withUnsafeBytes { try TouchFrameDecoder.decode($0) }
+        var lastAcceptedFrameTime: UInt64?
+        var timeoutLiftoffs = 0
+
+        /// The pipeline's lift-off timeout (§4.7): no frame for 1.5 s while contacts are tracked releases everything.
+        func emulateLiftoffTimeout(now: UInt64, into buffer: inout EventBuffer) {
+            guard emulatePipeline, engine.hasActiveContacts, let last = lastAcceptedFrameTime,
+                  now >= last &+ liftoffTimeoutNs else { return }
+            engine.forceLiftoff(releaseDragLock: true, into: &buffer)
+            timeoutLiftoffs += 1
+        }
+
+        /// Applies every scheduled tick, geometry change and settings change dated before `limit`, in time order.
+        /// SPEC §6.10: scheduled against the frames' own clock, so Mac-recorded (origin 2) fixtures replay correctly.
+        func runScheduled(before limit: UInt64) {
             while true {
                 let tickTime = tickIndex < ticks.count ? ticks[tickIndex] : UInt64.max
                 let changeTime = changeIndex < changes.count ? changes[changeIndex].atNs : UInt64.max
                 let settingsTime = settingsIndex < settingsChanges.count ? settingsChanges[settingsIndex].atNs : UInt64.max
-                // SPEC §6.10: scheduled against the frame's own clock, so Mac-recorded (origin 2) fixtures replay correctly.
-                guard min(tickTime, changeTime, settingsTime) < frame.frameTime else { break }
+                guard min(tickTime, changeTime, settingsTime) < limit else { break }
                 var buffer = EventBuffer()
                 if settingsTime <= min(tickTime, changeTime) {
                     engine.setSettings(settingsChanges[settingsIndex].settings); settingsIndex += 1
                 } else if tickTime < changeTime {
                     engine.tick(now: tickTime, into: &buffer); tickIndex += 1
+                    emulateLiftoffTimeout(now: tickTime, into: &buffer)
                 } else {
                     engine.setGeometry(changes[changeIndex].geometry, into: &buffer); changeIndex += 1
                 }
                 events.append(contentsOf: buffer.events)
             }
+        }
+
+        for frame in recorded {
+            runScheduled(before: frame.frameTime)
             if dropped(fraction: dropFraction, random: &random) { continue }
             frames.append(frame)
+            lastAcceptedFrameTime = frame.frameTime
             var buffer = EventBuffer(); engine.process(frame, into: &buffer); events.append(contentsOf: buffer.events)
         }
-        while tickIndex < ticks.count || changeIndex < changes.count || settingsIndex < settingsChanges.count {
-            let tickTime = tickIndex < ticks.count ? ticks[tickIndex] : UInt64.max
-            let changeTime = changeIndex < changes.count ? changes[changeIndex].atNs : UInt64.max
-            let settingsTime = settingsIndex < settingsChanges.count ? settingsChanges[settingsIndex].atNs : UInt64.max
-            var buffer = EventBuffer()
-            if settingsTime <= min(tickTime, changeTime) {
-                engine.setSettings(settingsChanges[settingsIndex].settings); settingsIndex += 1
-            } else if tickTime < changeTime {
-                engine.tick(now: tickTime, into: &buffer); tickIndex += 1
-            } else {
-                engine.setGeometry(changes[changeIndex].geometry, into: &buffer); changeIndex += 1
-            }
-            events.append(contentsOf: buffer.events)
-        }
+        runScheduled(before: UInt64.max)
         if let releaseDragLock = configuration.forceLiftoffReleaseDragLock {
             var buffer = EventBuffer(); engine.forceLiftoff(releaseDragLock: releaseDragLock, into: &buffer)
             events.append(contentsOf: buffer.events)
         }
-        let didForceFinalLiftoff = forceFinalLiftoff || dropFraction > 0
+        var settled = true
+        if emulatePipeline, let last = lastAcceptedFrameTime ?? recorded.last?.frameTime {
+            // Keep the timer running after the last frame exactly as the pipeline does while `needsTick`
+            // (release grace, pending secondary click, momentum) or contacts remain (lift-off timeout).
+            var time = max(last, ticks.last ?? 0) &+ engineTickNs
+            let deadline = time &+ settleBudgetNs
+            while engine.needsTick || engine.hasActiveContacts, time < deadline {
+                var buffer = EventBuffer()
+                engine.tick(now: time, into: &buffer)
+                emulateLiftoffTimeout(now: time, into: &buffer)
+                events.append(contentsOf: buffer.events)
+                time &+= engineTickNs
+            }
+            settled = !engine.needsTick && !engine.hasActiveContacts
+        }
+        let eventsBeforeFinalLiftoff = events.count
+        let dragLockEngaged = engine.isDragLockEngaged
+        let didForceFinalLiftoff = emulatePipeline || dropFraction > 0
         if didForceFinalLiftoff {
             var buffer = EventBuffer(); engine.forceLiftoff(releaseDragLock: true, into: &buffer)
             events.append(contentsOf: buffer.events)
@@ -231,9 +282,12 @@ private enum TGReplay {
         var afterReset = EventBuffer()
         if didForceFinalLiftoff {
             let latest = max(frames.last?.frameTime ?? 0, ticks.last ?? 0)
-            engine.tick(now: latest > UInt64.max - 10_000_000_000 ? UInt64.max : latest + 10_000_000_000, into: &afterReset)
+            engine.tick(now: latest > UInt64.max - 20_000_000_000 ? UInt64.max : latest + 20_000_000_000, into: &afterReset)
         }
-        return ReplayResult(header: reader.header, events: events, frames: frames, forcedFinalLiftoff: didForceFinalLiftoff, contactsRemain: engine.hasActiveContacts, eventsAfterReset: afterReset.count)
+        return ReplayResult(header: reader.header, events: events, frames: frames, forcedFinalLiftoff: didForceFinalLiftoff,
+                            contactsRemain: engine.hasActiveContacts, eventsAfterReset: afterReset.count,
+                            eventsBeforeFinalLiftoff: eventsBeforeFinalLiftoff, dragLockEngagedBeforeFinalLiftoff: dragLockEngaged,
+                            timeoutLiftoffs: timeoutLiftoffs, settledBeforeFinalLiftoff: settled)
     }
 
     private static func dropped(fraction: Double, random: inout UInt64) -> Bool {
@@ -264,15 +318,17 @@ private enum TGReplay {
         print("verified \(files.count) fixtures")
     }
 
-    private static func checkInvariants(_ result: ReplayResult) throws {
-        var heldButtons = Set<ButtonKind>()
-        for event in result.events {
+    private static func heldButtons(in events: ArraySlice<GestureEvent>) -> Set<ButtonKind> {
+        var held = Set<ButtonKind>()
+        for event in events {
             if case let .button(kind, phase, _) = event {
-                if phase == .down { heldButtons.insert(kind) }
-                else { heldButtons.remove(kind) }
+                if phase == .down { held.insert(kind) } else { held.remove(kind) }
             }
         }
-        if !heldButtons.isEmpty { throw ReplayError.invariant("a button remains down after replay: \(heldButtons)") }
+        return held
+    }
+
+    private static func activeGestures(in events: ArraySlice<GestureEvent>) -> Set<String> {
         var gestures = Set<String>()
         func track(_ name: String, _ phase: GesturePhase) {
             switch phase {
@@ -281,7 +337,7 @@ private enum TGReplay {
             case .changed: break
             }
         }
-        for event in result.events {
+        for event in events {
             switch event {
             case let .scroll(_, _, phase, _): track("scroll", phase)
             case let .magnify(_, phase): track("magnify", phase)
@@ -295,11 +351,38 @@ private enum TGReplay {
             default: break
             }
         }
-        guard gestures.isEmpty else { throw ReplayError.invariant("gestures remain active: \(gestures.sorted())") }
+        return gestures
+    }
+
+    /// §6.10 safety invariants under loss. The engine (plus the emulated pipeline timer and 1.5 s timeout) must
+    /// have released every button and ended every gesture on its own; the tool's final forced lift-off is only
+    /// allowed to release a deliberately engaged drag lock (§6.5.10: drag lock survives until a tap or BYE).
+    private static func checkInvariants(_ result: ReplayResult) throws {
         guard result.forcedFinalLiftoff else { throw ReplayError.invariant("replay ended without a forced final lift-off") }
+        let beforeFinal = result.events[..<result.eventsBeforeFinalLiftoff]
+        guard result.settledBeforeFinalLiftoff else {
+            throw ReplayError.invariant("engine still tracked contacts or asked for ticks 10 s after the last frame")
+        }
+        let heldBefore = heldButtons(in: beforeFinal)
+        if result.dragLockEngagedBeforeFinalLiftoff {
+            guard heldBefore == [.left] else {
+                throw ReplayError.invariant("drag lock engaged but held buttons are \(heldBefore) before the final lift-off")
+            }
+        } else if !heldBefore.isEmpty {
+            throw ReplayError.invariant("a button remained down until the final forced lift-off: \(heldBefore)")
+        }
+        let gesturesBefore = activeGestures(in: beforeFinal)
+        guard gesturesBefore.isEmpty else {
+            throw ReplayError.invariant("gestures remained active until the final forced lift-off: \(gesturesBefore.sorted())")
+        }
+        let heldAfter = heldButtons(in: result.events[...])
+        if !heldAfter.isEmpty { throw ReplayError.invariant("a button remains down after replay: \(heldAfter)") }
+        let gesturesAfter = activeGestures(in: result.events[...])
+        guard gesturesAfter.isEmpty else { throw ReplayError.invariant("gestures remain active: \(gesturesAfter.sorted())") }
         guard !result.contactsRemain else { throw ReplayError.invariant("a contact remains active") }
         guard result.eventsAfterReset == 0 else { throw ReplayError.invariant("events emitted after forced final reset") }
-        print("button, contact, gesture and reset invariants passed")
+        print("button, contact, gesture and reset invariants passed"
+              + (result.dragLockEngagedBeforeFinalLiftoff ? " (drag lock released by the final lift-off)" : ""))
     }
 
 }

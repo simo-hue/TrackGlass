@@ -18,6 +18,10 @@ xcb() { xcodebuild "$@" ${SIGNING[@]+"${SIGNING[@]}"}; }
 
 swift test --package-path Packages/TrackglassKit
 swift test --package-path Packages/TrackglassEngine
+# SPEC §10.1 performance gates (encode/decode ≤ 300 ns, curve multiplier ≤ 50 ns) only assert in optimized
+# builds; run exactly those tests again in release so the budget is enforced, not just measured.
+swift test -c release --package-path Packages/TrackglassKit --filter 'TouchFrameTests/test(Encode|Decode)Performance'
+swift test -c release --package-path Packages/TrackglassEngine --filter 'PointerAccelerationCurveTests/testMultiplierAverageRuntimeIsAtMostFiftyNanoseconds'
 if [[ "${TG_CI_UNSIGNED:-0}" == 1 ]]; then
   # The Mac-hosted bundle needs the data-protection Keychain (keychain-access-groups), which an unsigned
   # build cannot use; those tests stay on the signed release Mac. The Mac app is still built below.
@@ -27,6 +31,8 @@ else
 fi
 xcb -project Trackglass.xcodeproj -scheme TrackglassiOS -destination "${TG_IOS_TEST_DESTINATION:-platform=iOS Simulator,name=iPhone 17}" \
   ${IOS_TEST_SKIPS[@]+"${IOS_TEST_SKIPS[@]}"} test
+# The 24 h soak driver (M9.4) is only ever run by hand; compiling it here keeps it from rotting.
+xcb -project Trackglass.xcodeproj -scheme TrackglassiOSSoak -destination "${TG_IOS_TEST_DESTINATION:-platform=iOS Simulator,name=iPhone 17}" build-for-testing
 xcb -project Trackglass.xcodeproj -scheme TrackglassiOS -destination 'generic/platform=iOS' build
 xcb -project Trackglass.xcodeproj -scheme TrackglassMac -configuration Debug build
 TRACKGLASS_REPLAY_DERIVED_DATA="${TMPDIR:-/tmp}/trackglass-replay-ci"

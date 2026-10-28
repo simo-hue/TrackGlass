@@ -1,6 +1,8 @@
 #!/bin/bash
 # M9.3: replay every fixture with pseudo-random datagram loss and check the safety invariants
 # (every button down has an up, every began has an ended/cancelled, nothing after the final lift-off).
+# tgreplay emulates the pipeline's 8 ms tick and 1.5 s lift-off timeout, so the engine's own recovery is
+# what is tested; the final forced lift-off may only release an engaged drag lock (docs/QA-Robustness.md §3).
 # Usage: Scripts/invariants.sh [path-to-tgreplay] [drop-fraction] [last-seed]
 set -euo pipefail
 shopt -s nullglob

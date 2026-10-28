@@ -37,7 +37,7 @@ Run with the latest Mac and phone builds installed together. Tick each item in `
 
 ## 3. Loss and latency conditioning (M9.3)
 
-1. Automated: `Scripts/invariants.sh` (run by `Scripts/ci.sh`) replays every fixture with 5 % pseudo-random datagram loss for seeds 1–20 and checks that no button stays down, every gesture that began ends, and nothing is emitted after the final lift-off.
+1. Automated: `Scripts/invariants.sh` (run by `Scripts/ci.sh`) replays every fixture with 5 % pseudo-random datagram loss for seeds 1–20. `tgreplay invariants` emulates what the Mac pipeline adds around the engine — the 8 ms tick from the first frame until the engine stops asking for ticks, and the 1.5 s no-frame lift-off timeout (§4.7) — and then checks that the engine released every button and ended every gesture **on its own** (a drag lock that is still engaged is the one legitimate held button: §6.5.10 says only a tap or BYE ends it), that it settled within 10 s of the last frame, that the BYE-style final forced lift-off finds nothing else to release, and that nothing is emitted afterwards.
 2. On the iPhone enable Settings → Developer → Network Link Conditioner with a custom profile: 3 % packet loss both ways. Use the Mac for five minutes: pointer, taps, drags, scrolls, pinch, three-finger swipes.
 3. Switch to a profile with 100 ms delay spikes (e.g. "Very Bad Network"). Repeat for five minutes.
 4. Expected: no stuck button or gesture, no pointer jump larger than the finger movement, the connection never drops, and when it is forced to drop (toggle Wi-Fi) it reconnects within 2 s.
