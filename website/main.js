@@ -39,9 +39,72 @@
      Nav
      ------------------------------------------------------------------ */
   const nav = $("#nav");
-  const onScrollNav = () => nav.classList.toggle("is-solid", scrollY > 24);
+  const progress = $("#navProgress");
+  const onScrollNav = () => {
+    nav.classList.toggle("is-solid", scrollY > 24);
+    if (progress) {
+      const max = document.documentElement.scrollHeight - innerHeight;
+      progress.style.setProperty("--p", max > 0 ? clamp(scrollY / max, 0, 1).toFixed(4) : 0);
+    }
+  };
   addEventListener("scroll", onScrollNav, { passive: true });
   onScrollNav();
+
+  // Active section → sliding indicator behind the nav links
+  (function navIndicator() {
+    const links = $$(".nav__links a[data-nav]"), ind = $("#navInd"); if (!links.length || !ind) return;
+    const place = a => {
+      if (!a) { ind.style.setProperty("--o", 0); return; }
+      ind.style.setProperty("--x", a.offsetLeft + "px"); ind.style.setProperty("--w", a.offsetWidth + "px"); ind.style.setProperty("--o", 1);
+    };
+    const visible = new Map();
+    const io = new IntersectionObserver(entries => {
+      entries.forEach(e => visible.set(e.target.id, e.isIntersecting));
+      const active = links.map(a => a.dataset.nav).find(id => visible.get(id));
+      links.forEach(a => a.classList.toggle("is-active", a.dataset.nav === active));
+      place(links.find(a => a.dataset.nav === active));
+    }, { rootMargin: "-40% 0px -50% 0px" });
+    links.forEach(a => { const s = $("#" + a.dataset.nav); if (s) io.observe(s); });
+    links.forEach(a => a.addEventListener("pointerenter", () => place(a)));
+    $(".nav__links").addEventListener("pointerleave", () => place(links.find(a => a.classList.contains("is-active"))));
+    addEventListener("resize", () => place(links.find(a => a.classList.contains("is-active"))));
+  })();
+
+  /* ------------------------------------------------------------------
+     Cursor spotlight on glass panels
+     ------------------------------------------------------------------ */
+  if (!matchMedia("(hover: none)").matches) {
+    $$("[data-spot]").forEach(el => {
+      el.addEventListener("pointermove", e => {
+        const r = el.getBoundingClientRect();
+        el.style.setProperty("--mx", (e.clientX - r.left) + "px");
+        el.style.setProperty("--my", (e.clientY - r.top) + "px");
+      }, { passive: true });
+    });
+  }
+
+  /* ------------------------------------------------------------------
+     Ticker: duplicate once for a seamless loop
+     ------------------------------------------------------------------ */
+  (function ticker() {
+    const t = $("#ticker"); if (!t) return;
+    t.innerHTML += t.innerHTML;
+  })();
+
+  /* ------------------------------------------------------------------
+     Theme stage: gentle 3D tilt toward the cursor
+     ------------------------------------------------------------------ */
+  (function tilt() {
+    const stage = $("#themeStage"), pad = $("#themeIpad");
+    if (!stage || !pad || reduced || matchMedia("(hover: none)").matches) return;
+    stage.addEventListener("pointermove", e => {
+      const r = stage.getBoundingClientRect();
+      const x = (e.clientX - r.left) / r.width - .5, y = (e.clientY - r.top) / r.height - .5;
+      pad.style.setProperty("--ry", (x * 10).toFixed(2) + "deg");
+      pad.style.setProperty("--rx", (-y * 8).toFixed(2) + "deg");
+    }, { passive: true });
+    stage.addEventListener("pointerleave", () => { pad.style.setProperty("--ry", "0deg"); pad.style.setProperty("--rx", "0deg"); });
+  })();
 
   /* ------------------------------------------------------------------
      Reveal on scroll
@@ -389,15 +452,19 @@
       path.setAttribute("d", d);
       fill.setAttribute("d", d + ` L${X(VMAX)} ${Y(0)} L${X(0)} ${Y(0)} Z`);
       const vd = 10; dot.setAttribute("cx", X(vd)); dot.setAttribute("cy", Y(f(vd)));
+      if (readout) readout.textContent = `${vd} mm/s → ${(f(vd) / (vd * 2)).toFixed(2)}×`;
     };
+    const readout = $("#curveReadout");
+    const setFill = () => input.style.setProperty("--fill", (parseFloat(input.value) / 3 * 100).toFixed(1) + "%");
     const labelFor = v => { const tick = Math.round(v / 3 * 9) + 1; return tick === 4 ? "Default" : tick + " / 10"; };
     const update = () => {
+      setFill();
       current = parseFloat(input.value); out.textContent = labelFor(current);
       if (reduced) { shown = current; draw(shown); return; }
       const from = shown; tween(380, t => { shown = lerp(from, current, t); draw(shown); }, easeOut);
     };
     input.addEventListener("input", update);
-    draw(shown); out.textContent = labelFor(current);
+    setFill(); draw(shown); out.textContent = labelFor(current);
   })();
 
   /* ------------------------------------------------------------------
