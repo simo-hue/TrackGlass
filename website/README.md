@@ -31,7 +31,7 @@ Custom domain (optional): Settings → Pages → Custom domain, then add a `CNAM
 
 ## Editing the demo
 
-The hero demo is scripted in `main.js` (`hero()`): a loop of Point → Click → Scroll → Zoom → Spaces that pauses whenever the visitor moves their own cursor (or finger) over the iPad. Device sizes live in `styles.css` under `.monitor` and `.ipad-perspective`; the design coordinates are a 1100 × 740 stage that is scaled to fit its container (`data-stage` on `.stage-wrap`), with `data-crop` choosing the horizontal slice shown on phones.
+The hero demo is scripted in `main.js` (`hero()`): a loop of Point → Click → Scroll → Zoom → Spaces that pauses whenever the visitor moves their own cursor (or finger) over the iPad. The Mac screen shows two Safari windows built from real content: github.com/simo-hue (Space A, with the avatar embedded as a data URI so the page still makes no external requests) and simo-hue.github.io (Space B). Device sizes live in `styles.css` under `.monitor` and `.ipad-perspective`; the design coordinates are a 1100 × 740 stage that is scaled to fit its container (`data-stage` on `.stage-wrap`), with `data-crop` choosing the horizontal slice shown on phones.
 
 The pairing section is driven by scroll position on desktop (`pairing()` in `main.js`) and by a timer on narrow screens. The acceleration curve uses the same parametric form as macOS pointer acceleration, with illustrative parameters.
 

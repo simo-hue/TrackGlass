@@ -152,17 +152,25 @@
     const ripple = $("#ripple");
     const pointer = $("#pointer");
     const desk = $("#desk");
-    const photoScroll = $("#photoScroll");
-    const grid = $("#photoGrid");
+    const photoScroll = $("#pageScroll");
+    const grid = $("#page");
     const btn = $("#demoBtn");
     const hint = $("#heroHint");
     const label = $("#captionLabel");
     const stepsEl = $("#captionSteps");
 
-    // Photo tiles
-    const tints = ["#5b7bd5,#8fd3ff", "#c3a6ff,#5b4bd5", "#ff9a8b,#ff6a88", "#43e97b,#38f9d7", "#f6d365,#fda085", "#a1c4fd,#c2e9fb", "#fbc2eb,#a6c1ee", "#84fab0,#8fd3f4",
-                   "#e0c3fc,#8ec5fc", "#f093fb,#f5576c", "#4facfe,#00f2fe", "#fa709a,#fee140", "#30cfd0,#330867", "#a8edea,#fed6e3", "#5ee7df,#b490ca", "#c471f5,#fa71cd"];
-    grid.innerHTML = tints.concat(tints.slice().reverse()).map(t => `<i style="background:linear-gradient(135deg,${t})"></i>`).join("");
+    // Contribution graph (illustrative pattern, deterministic)
+    const contrib = $("#contrib");
+    if (contrib) {
+      let s = 1337; const rnd = () => { s = (s * 1103515245 + 12345) >>> 0; return (s >>> 8) / 16777216; };
+      let html = "";
+      for (let c = 0; c < 52; c++) for (let r = 0; r < 7; r++) {
+        const season = .35 + .5 * Math.sin((c / 52) * Math.PI * 2 + 1.2);
+        const v = rnd() * season; const l = v < .18 ? 0 : v < .34 ? 1 : v < .5 ? 2 : v < .66 ? 3 : 4;
+        html += `<i data-l="${l}"></i>`;
+      }
+      contrib.innerHTML = html;
+    }
 
     // Geometry (design px)
     const G = { w: 352, h: 242 };      // glass (iPad 380x270 minus 14px bezel)
@@ -231,8 +239,8 @@
     }
 
     async function run() {
-      const BTN = fromDesk(512, 292);            // Share button centre, mapped from desk to glass coordinates
-      const PHOTOS = fromDesk(230, 220);
+      const BTN = fromDesk(136, 259);            // "Follow" button on the GitHub profile, mapped from desk to glass coordinates
+      const PHOTOS = fromDesk(430, 260);
       // reset
       desk.classList.remove("is-space-b");
       photoScroll.style.setProperty("--scroll", "0px"); grid.style.setProperty("--zoom", 1);
