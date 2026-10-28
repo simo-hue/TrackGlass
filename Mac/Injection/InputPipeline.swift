@@ -34,6 +34,7 @@ final class InputPipeline: @unchecked Sendable {
         self.engine = GestureEngine(settings: settings, geometry: geometry, acceleration: accelerationModel,
             scrollAcceleration: PointerAccelerationProvider.makeScroll(settings: settings))
         self.injector = injector
+        (injector as? QuartzInjector)?.confinementQueue = queue
         timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: .milliseconds(8))
         timer.setEventHandler { [weak self] in self?.tick() }
@@ -112,9 +113,9 @@ final class InputPipeline: @unchecked Sendable {
     /// §6.3: three seconds without any datagram (frame or heartbeat) while connected means the engine
     /// is reset and STATUS reports idle; the 1.5 s lift-off timeout in `tick` covers tracked contacts,
     /// this covers everything else (momentum, grace windows, pending taps, a deliberate drag lock).
-    func idleCheck() {
+    func idleCheck(now: UInt64 = DispatchTime.now().uptimeNanoseconds) {
         dispatchPrecondition(condition: .onQueue(queue))
-        guard lastInputUptime != 0, DispatchTime.now().uptimeNanoseconds &- lastInputUptime >= 3_000_000_000,
+        guard lastInputUptime != 0, now &- lastInputUptime >= 3_000_000_000,
               engine.needsTick || engine.hasActiveContacts || engine.diagnosticState != 0 else { return }
         events.clear(); engine.forceLiftoff(releaseDragLock: true, into: &events); injectEvents(); updateTimer()
     }

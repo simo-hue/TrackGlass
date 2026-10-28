@@ -4,7 +4,7 @@ import OSLog
 import TrackglassEngine
 
 enum PointerAccelerationProvider {
-    private static let logger = Logger(subsystem: "app.trackglass.mac", category: "acceleration")
+    private static let logger = Logger(subsystem: "app.trackglass.mac", category: "prefs")   // §6.10: net, engine, inject, prefs
     private static let registryKeys = ["HIDAccelCurves", "HIDPointerResolution", "HIDPointerReportRate"]
 
     static func make(settings: TrackpadSettings) -> PointerAccelerator {

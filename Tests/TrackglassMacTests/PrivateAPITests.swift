@@ -50,14 +50,25 @@ final class PrivateAPITests: XCTestCase {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Mac")
         let files = try XCTUnwrap(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
-        let pattern = try NSRegularExpression(pattern: #"CGEventField\s*\(\s*rawValue\s*:"#)
+        // §0.5: raw event fields/types, runtime symbol and class lookups, and the private-framework paths live
+        // only in the PrivateAPI module. Public `CGEventType` cases are fine; numeric raw values are not.
+        let patterns = try [
+            #"CGEventField\s*\(\s*rawValue\s*:"#,
+            #"CGEventType\s*\(\s*rawValue\s*:"#,
+            #"\bNSClassFromString\s*\("#,
+            #"\bdlsym\s*\("#, #"\bdlopen\s*\("#,
+            #"PrivateFrameworks/"#
+        ].map { try NSRegularExpression(pattern: $0) }
         var inspected = 0
         for case let url as URL in files {
             guard ["swift", "h", "m", "mm"].contains(url.pathExtension),
                   !url.path.contains("/Injection/Quartz/PrivateAPI/") else { continue }
             inspected += 1
             let source = try String(contentsOf: url, encoding: .utf8)
-            XCTAssertNil(pattern.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)), url.path)
+            for pattern in patterns {
+                XCTAssertNil(pattern.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)),
+                             "\(url.path) matches \(pattern.pattern)")
+            }
         }
         XCTAssertGreaterThan(inspected, 0, "The source boundary test must inspect the actual Mac tree")
     }

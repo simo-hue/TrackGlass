@@ -85,4 +85,114 @@ final class DockSwipeInjectorTests: XCTestCase {
         injector.inject(.dockSwipe(kind: .vertical, progressDelta: 0.2, phase: .began, exitVelocity: 0))
         time = 2_000_000_000; injector.tick(); XCTAssertEqual(events.count, 14)
     }
+
+    func testKeyboardFallbackNeedsHalfASwipe() {
+        // Owner decision 2026-10-28: the discrete fallback fires only at |progress| ≥ 0.5 (the spaceSwitched haptic's
+        // threshold); a shorter swipe snaps back (§10.3 C7: a 40 mm swipe switches nothing).
+        var keys: [CGEvent] = []
+        let injector = QuartzInjector(dockPath: .attachedHIDEvent, capabilities: PrivateAPICapabilities(),
+            postKeyEvent: { keys.append($0) }, postDockEvent: { _ in XCTFail("Private event posted") })
+        for (progress, expected) in [(0.36, 0), (-0.49, 0), (0.5, 2), (-0.5, 2), (1.2, 2)] {
+            keys.removeAll()
+            injector.inject(.dockSwipe(kind: .horizontal, progressDelta: progress, phase: .began, exitVelocity: 0))
+            injector.inject(.dockSwipe(kind: .horizontal, progressDelta: 0, phase: .ended, exitVelocity: 1))
+            XCTAssertEqual(keys.count, expected, "progress \(progress)")
+        }
+        XCTAssertEqual(QuartzInjector.fallbackProgressThreshold, 0.5)
+    }
+
+    func testLegacyDockTrialSelectsTheLegacyPathOnlyOnMacOS27() {
+        let trial = PrivateGestureTrials(legacyDockSwipes: true)
+        XCTAssertEqual(DockSwipePath.resolved(trials: trial), .legacyFields)
+        var full = PrivateAPICapabilities()
+        full.gestureEvents = true
+        if #available(macOS 27, *) {
+            XCTAssertEqual(DockSwipePath.resolved(trials: PrivateGestureTrials()), .attachedHIDEvent)
+            XCTAssertTrue(DockSwipePath.isLegacyTrial(trial))
+            let list = QuartzInjector.degradedGestures(capabilities: full, path: .legacyFields, trials: trial)
+            XCTAssertTrue(list.contains { $0.hasSuffix("legacy dock-swipe trial (macOS 27)") }, "\(list)")
+            XCTAssertFalse(list.contains { $0.hasPrefix("Spaces, Mission Control, App Exposé and Show Desktop use shortcuts") })
+        } else {
+            XCTAssertEqual(DockSwipePath.resolved(trials: PrivateGestureTrials()), .legacyFields)
+            XCTAssertFalse(DockSwipePath.isLegacyTrial(trial), "below the cut line the legacy path is not a trial")
+        }
+        // With the trial on, a dock swipe posts the legacy e29/e30 pair instead of keyboard shortcuts.
+        var docks: [CGEvent] = []
+        var keys: [CGEvent] = []
+        let injector = QuartzInjector(dockPath: .legacyFields, capabilities: full, trials: trial,
+            postKeyEvent: { keys.append($0) }, postDockEvent: { docks.append($0) })
+        injector.inject(.dockSwipe(kind: .horizontal, progressDelta: 0.7, phase: .began, exitVelocity: 0))
+        XCTAssertEqual(docks.map(\.type), [TGEventTypeGesture, TGEventTypeDockCompanion])
+        XCTAssertTrue(keys.isEmpty)
+    }
+
+    func testAttachedPathHIDEventCarriesKindPhaseProgressAndVelocity() throws {
+        // §10.1: the attached DockSwipePath asserted field by field (SPEC §6.9.4 macOS 27+ construction).
+        guard TGPrivateAPIGetCapabilities().hidEventClass else { throw XCTSkip("HIDEvent is unavailable on this OS") }
+        let factory = DockSwipeEventFactory()
+        _ = factory.make(kind: .vertical, delta: 0.3, phase: .began, exitVelocity: 0, inverted: false, source: nil, location: .zero)
+        let pair = try XCTUnwrap(factory.make(kind: .vertical, delta: 0, phase: .ended, exitVelocity: 4,
+                                              inverted: false, source: nil, location: CGPoint(x: 12, y: 34)))
+        var captured: Any?
+        let carrier = try XCTUnwrap(DockSwipeEventFactory.attached(from: pair.1, attach: { _, hid in captured = hid; return true }))
+        XCTAssertEqual(carrier.type, TGEventTypeDockCompanion)
+        XCTAssertEqual(carrier.location, CGPoint(x: 12, y: 34))
+        let hid = try XCTUnwrap(captured)
+        var type: UInt32 = 0
+        guard TGHIDEventGetType(hid, &type) else { throw XCTSkip("HIDEvent does not expose its fields on this OS") }
+        XCTAssertEqual(Int(type), Int(TGHIDDockSwipe))
+        var options: UInt32 = 0
+        if TGHIDEventGetOptions(hid, &options) {
+            XCTAssertEqual(Int(options >> UInt32(TGHIDPhaseShift)), Int(TGPhaseEnded))
+        }
+        var motion: Int64 = 0, flavor: Int64 = 0, progress = 0.0
+        XCTAssertTrue(TGHIDEventGetInteger(hid, UInt32(TGHIDDockMotionField), &motion))
+        XCTAssertTrue(TGHIDEventGetInteger(hid, UInt32(TGHIDDockFlavorField), &flavor))
+        XCTAssertTrue(TGHIDEventGetDouble(hid, UInt32(TGHIDDockProgressField), &progress))
+        XCTAssertEqual(motion, 2, "vertical")
+        XCTAssertEqual(flavor, Int64(TGHIDDockPrimary))
+        XCTAssertEqual(progress, 0.3, accuracy: 1e-4)   // HID may store progress as 16.16 fixed point
+        let children = try XCTUnwrap(TGHIDEventGetChildren(hid), "the ended event carries a velocity child")
+        XCTAssertEqual(children.count, 1)
+        let velocity = children[0]
+        var childType: UInt32 = 0
+        XCTAssertTrue(TGHIDEventGetType(velocity, &childType))
+        XCTAssertEqual(Int(childType), Int(TGHIDVelocity))
+        var vx = 0.0, vy = 0.0, vz = 1.0
+        XCTAssertTrue(TGHIDEventGetDouble(velocity, UInt32(TGHIDVelocityXField), &vx))
+        XCTAssertTrue(TGHIDEventGetDouble(velocity, UInt32(TGHIDVelocityYField), &vy))
+        XCTAssertTrue(TGHIDEventGetDouble(velocity, UInt32(TGHIDVelocityZField), &vz))
+        XCTAssertEqual(vx, 4); XCTAssertEqual(vy, 4); XCTAssertEqual(vz, 0)
+        // A changed step carries no velocity child.
+        let changed = try XCTUnwrap(factory.make(kind: .vertical, delta: 0.1, phase: .changed, exitVelocity: 0,
+                                                 inverted: false, source: nil, location: .zero))
+        var changedHID: Any?
+        _ = DockSwipeEventFactory.attached(from: changed.1, attach: { _, hid in changedHID = hid; return true })
+        XCTAssertEqual(TGHIDEventGetChildren(try XCTUnwrap(changedHID))?.count ?? 0, 0)
+    }
+
+    func testAttachedEndIsRepostedLikeTheLegacyEnd() {
+        // §6.9.4 end re-posts at +0.2 s and +0.5 s apply to the attached path too (one carrier per post).
+        var time: UInt64 = 0
+        var events: [CGEvent] = []
+        var full = PrivateAPICapabilities()
+        full.gestureEvents = true; full.dockSwipe = true
+        guard TGPrivateAPIGetCapabilities().dockSwipe else {
+            // Without the attachment symbol the injector falls back to shortcuts and posts nothing private.
+            let injector = QuartzInjector(dockPath: .attachedHIDEvent, capabilities: full,
+                                          postKeyEvent: { _ in }, postDockEvent: { events.append($0) }, now: { time })
+            injector.inject(.dockSwipe(kind: .horizontal, progressDelta: 0.7, phase: .began, exitVelocity: 0))
+            injector.inject(.dockSwipe(kind: .horizontal, progressDelta: 0, phase: .ended, exitVelocity: 1))
+            XCTAssertTrue(events.isEmpty)
+            return
+        }
+        let injector = QuartzInjector(dockPath: .attachedHIDEvent, capabilities: full,
+                                      postDockEvent: { events.append($0) }, now: { time })
+        injector.inject(.dockSwipe(kind: .horizontal, progressDelta: 0.7, phase: .began, exitVelocity: 0))
+        injector.inject(.dockSwipe(kind: .horizontal, progressDelta: 0, phase: .ended, exitVelocity: 1))
+        XCTAssertEqual(events.count, 2)
+        time = 200_000_000; injector.tick(); XCTAssertEqual(events.count, 3)
+        time = 500_000_000; injector.tick(); XCTAssertEqual(events.count, 4)
+        XCTAssertTrue(events.allSatisfy { $0.type == TGEventTypeDockCompanion })
+    }
 }

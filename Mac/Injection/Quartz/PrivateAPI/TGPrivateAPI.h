@@ -33,5 +33,13 @@ FOUNDATION_EXPORT id _Nullable TGCreateForceHIDEvent(int64_t stage, double press
 // Attaches a HIDEvent to a CGEvent through the resolved private symbol; false when the mechanism is unavailable.
 FOUNDATION_EXPORT bool TGAttachHIDEvent(CGEventRef event, id hidEvent);
 FOUNDATION_EXPORT bool TGAttachDockHIDEvent(CGEventRef event, id hidEvent);
+
+// Test support (SPEC §10.1 InjectorTests, attached DockSwipePath): read back what the factories wrote into a HIDEvent.
+// Each returns false when the event does not answer the needed selector (OS change), so tests can skip.
+FOUNDATION_EXPORT bool TGHIDEventGetType(id event, uint32_t *outType);
+FOUNDATION_EXPORT bool TGHIDEventGetOptions(id event, uint32_t *outOptions);
+FOUNDATION_EXPORT bool TGHIDEventGetInteger(id event, uint32_t field, int64_t *outValue);
+FOUNDATION_EXPORT bool TGHIDEventGetDouble(id event, uint32_t field, double *outValue);
+FOUNDATION_EXPORT NSArray * _Nullable TGHIDEventGetChildren(id event);
 NS_ASSUME_NONNULL_END
 #endif

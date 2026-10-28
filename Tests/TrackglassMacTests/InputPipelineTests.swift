@@ -73,9 +73,37 @@ final class InputPipelineTests: XCTestCase {
         queue.sync { pipeline.stop() }
     }
 
-    private static func data(sequence: UInt32, time: UInt64, phase: Contact.Phase = .moved) -> Data {
+    func testThreeSecondsWithoutDatagramsResetsTheEngineEvenWithADragLock() {
+        // §6.3: no frame or heartbeat for 3 s while connected → the engine is reset and STATUS reports idle.
+        // A deliberately engaged drag lock (§6.5.10) is the state the 1.5 s contact timeout cannot clear,
+        // because no contact is tracked; the idle check must release it.
+        let queue = DispatchQueue(label: "pipeline-idle-test")
+        let injector = RecordingInjector()
+        let pipeline = InputPipeline(queue: queue,
+            geometry: EngineGeometry(widthMM: 100, heightMM: 60, isLandscape: true),
+            settings: TrackpadSettings(dragging: true, dragLock: true), injector: injector)
+        queue.sync {
+            pipeline.consume(Self.data(sequence: 1, time: 1_000_000_000, phase: .began))
+            pipeline.consume(Self.data(sequence: 2, time: 1_050_000_000, phase: .ended))
+            pipeline.consume(Self.data(sequence: 3, time: 1_200_000_000, phase: .began))     // tap-and-a-half: button down
+            pipeline.consume(Self.data(sequence: 4, time: 1_300_000_000, phase: .moved, x: 30))
+            pipeline.consume(Self.data(sequence: 5, time: 1_400_000_000, phase: .ended, x: 30)) // lift → drag lock engages
+            XCTAssertEqual(pipeline.diagnosticEngineState, 4, "drag held by the lock")
+            XCTAssertTrue(injector.events.contains(.button(kind: .left, phase: .down, clickCount: 2)))
+            XCTAssertFalse(injector.events.contains(.button(kind: .left, phase: .up, clickCount: 2)))
+            let now = DispatchTime.now().uptimeNanoseconds
+            pipeline.idleCheck(now: now &+ 2_900_000_000)
+            XCTAssertEqual(pipeline.diagnosticEngineState, 4, "2.9 s of silence is not idle yet")
+            pipeline.idleCheck(now: now &+ 3_000_000_000)
+            XCTAssertEqual(pipeline.diagnosticEngineState, 0)
+            XCTAssertTrue(injector.events.contains(.button(kind: .left, phase: .up, clickCount: 2)))
+            pipeline.stop()
+        }
+    }
+
+    private static func data(sequence: UInt32, time: UInt64, phase: Contact.Phase = .moved, x: Float = 10) -> Data {
         var frame = TouchFrame(sequence: sequence, frameTime: time)
-        frame.append(Contact(contactID: 1, phase: phase, x: 10, y: 10))
+        frame.append(Contact(contactID: 1, phase: phase, x: x, y: 10))
         var storage = [UInt8](repeating: 0, count: TouchFrame.maximumByteCount)
         let written = try! storage.withUnsafeMutableBytes { try TouchFrameEncoder(frame: frame).encode(into: $0) }
         return Data(storage.prefix(written))

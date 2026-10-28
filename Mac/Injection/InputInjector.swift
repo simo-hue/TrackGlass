@@ -24,10 +24,18 @@ final class PointerState {
     private let post: (CGEvent) -> Void
     init(post: @escaping (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) }) {
         self.post = post
-        eventSource = CGEventSource(stateID: .hidSystemState)!
-        eventSource.localEventsSuppressionInterval = 0
-        eventSource.setLocalEventsFilterDuringSuppressionState(CGEventFilterMask(rawValue: 7), state: .eventSuppressionStateSuppressionInterval)
+        eventSource = Self.sharedEventSource
     }
+    /// §6.7: one `CGEventSource(.hidSystemState)` for the process, with local-event suppression disabled so
+    /// posting never suppresses the user's physical devices. Sessions come and go; the source does not.
+    /// Only ever touched from the `input-pipeline` queue (§2.4); CoreGraphics types carry no Sendable annotation.
+    nonisolated(unsafe) static let sharedEventSource: CGEventSource = {
+        let source = CGEventSource(stateID: .hidSystemState)!
+        source.localEventsSuppressionInterval = 0
+        // `.permitAllEvents` (public mask value 1 | 2 | 4): local mouse, keyboard and system-defined events pass.
+        source.setLocalEventsFilterDuringSuppressionState(CGEventFilterMask(rawValue: 7), state: .eventSuppressionStateSuppressionInterval)
+        return source
+    }()
     /// §6.7 / §8.2: the first input after display sleep or ≥ 10 s of idleness declares user activity
     /// *before* the event is posted in the same tick, so the display wakes like it does for a real trackpad.
     func declareActivityIfNeeded() {
@@ -66,7 +74,7 @@ final class PointerState {
     func tick() { _ = CGEvent(source: nil)?.location }
 }
 
-private final class DisplayBounds: @unchecked Sendable {
+final class DisplayBounds: @unchecked Sendable {
     private let lock = NSLock()
     private var displays: [CGRect] = []
     private var registered = false
@@ -100,15 +108,39 @@ private final class DisplayBounds: @unchecked Sendable {
 
     func clamp(_ proposed: CGPoint, from current: CGPoint) -> CGPoint {
         lock.lock(); let screens = displays; lock.unlock()
+        return Self.resolve(proposed, from: current, screens: screens)
+    }
+
+    /// §6.7 multi-display rule, pure so `TrackglassMacTests` can drive it with synthetic display rectangles:
+    /// accept a point inside any display; otherwise slide along the edge (`(new.x, cur.y)`, then `(cur.x, new.y)`);
+    /// otherwise clamp into the display that contains the current point. §8.4 "pointer never lands
+    /// off-screen": if even the current point is in no display (the window between an unplug and the
+    /// reconfiguration callback), clamp into the display nearest to the proposed point.
+    static func resolve(_ proposed: CGPoint, from current: CGPoint, screens: [CGRect]) -> CGPoint {
         guard !screens.isEmpty else { return proposed }
         if screens.contains(where: { $0.contains(proposed) }) { return proposed }
         let horizontalSlide = CGPoint(x: proposed.x, y: current.y)
         if screens.contains(where: { $0.contains(horizontalSlide) }) { return horizontalSlide }
         let verticalSlide = CGPoint(x: current.x, y: proposed.y)
         if screens.contains(where: { $0.contains(verticalSlide) }) { return verticalSlide }
-        guard let currentDisplay = screens.first(where: { $0.contains(current) }) else { return proposed }
-        return CGPoint(x: min(max(proposed.x, currentDisplay.minX), currentDisplay.maxX.nextDown),
-                       y: min(max(proposed.y, currentDisplay.minY), currentDisplay.maxY.nextDown))
+        let target = screens.first(where: { $0.contains(current) }) ?? nearest(to: proposed, in: screens)
+        return clampInside(proposed, target)
+    }
+
+    private static func clampInside(_ point: CGPoint, _ rect: CGRect) -> CGPoint {
+        CGPoint(x: min(max(point.x, rect.minX), rect.maxX.nextDown),
+                y: min(max(point.y, rect.minY), rect.maxY.nextDown))
+    }
+
+    private static func nearest(to point: CGPoint, in screens: [CGRect]) -> CGRect {
+        var best = screens[0]
+        var bestDistance = Double.infinity
+        for rect in screens {
+            let inside = clampInside(point, rect)
+            let distance = hypot(Double(inside.x - point.x), Double(inside.y - point.y))
+            if distance < bestDistance { bestDistance = distance; best = rect }
+        }
+        return best
     }
 }
 
@@ -131,6 +163,9 @@ final class QuartzInjector: InputInjector {
         }
         if trials.forceClick && capabilities.dockSwipe { result.append("Force click: private event trial (G-FORCE)") }
         else { result.append("Force click uses Look Up") }
+        if path == .legacyFields && DockSwipePath.isLegacyTrial(trials) && capabilities.gestureEvents {
+            result.append("Spaces, Mission Control, App Exposé, Launchpad, Show Desktop: legacy dock-swipe trial (macOS 27)")
+        }
         if trials.notificationCenter && capabilities.gestureEvents { result.append("Notification Center: private gesture trial (G-NC)") }
         else { result.append("Notification Center uses Accessibility") }
         if !capabilities.gestureEvents { result.append("Scroll zoom gestures unavailable") }
@@ -154,6 +189,14 @@ final class QuartzInjector: InputInjector {
     private var heldButton: ButtonKind?
     private let postScrollEvent: (CGEvent) -> Void
     private let logger = Logger(subsystem: "app.trackglass.mac", category: "inject")
+    /// §2.4: the injector is confined to the `input-pipeline` queue; `InputPipeline` sets this so every entry point
+    /// checks it in debug builds. Unit tests that drive the injector directly leave it nil.
+    var confinementQueue: DispatchQueue?
+    private func assertConfined() {
+        #if DEBUG
+        if let confinementQueue { dispatchPrecondition(condition: .onQueue(confinementQueue)) }
+        #endif
+    }
     init(postScrollEvent: @escaping (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) },
          dockPath: DockSwipePath = .current,
          capabilities: PrivateAPICapabilities = QuartzInjector.runtimeCapabilities,
@@ -168,6 +211,7 @@ final class QuartzInjector: InputInjector {
         self.postScrollEvent = postScrollEvent
     }
     func inject(_ event: GestureEvent) {
+        assertConfined()
         switch event {
         case .pointerMove, .haptic, .scrollMomentum, .gestureEnd: break
         default: pointer.declareActivityIfNeeded()   // §8.2: any first touch wakes the display, not only moves
@@ -235,7 +279,7 @@ final class QuartzInjector: InputInjector {
             }
             let output: (CGEvent?, CGEvent)
             if dockPath == .attachedHIDEvent {
-                guard let attached = DockSwipeEventFactory.attached(from: pair.1) else {
+                guard let attached = DockSwipeEventFactory.attached(from: pair.1, source: pointer.eventSource) else {
                     if phase == .ended { fallbackDock(kind: kind, progress: dockFactory.progress) }
                     return
                 }
@@ -283,8 +327,12 @@ final class QuartzInjector: InputInjector {
         return true
     }
 
+    /// Discrete fallback (§6.9.4). It fires only when the swipe got at least half way (|progress| ≥ 0.5, owner
+    /// decision 2026-10-28) — the threshold of the phone's `spaceSwitched` haptic, and a short swipe snaps back
+    /// as §10.3 C7 requires instead of switching a whole Space.
+    static let fallbackProgressThreshold = 0.5
     private func fallbackDock(kind: DockSwipeKind, progress: Double) {
-        guard progress != 0 else { return }
+        guard abs(progress) >= Self.fallbackProgressThreshold else { return }
         let key: CGKeyCode
         let flags: CGEventFlags
         switch kind {
@@ -301,6 +349,7 @@ final class QuartzInjector: InputInjector {
         logger.notice("Dock gesture: keyboard fallback")
     }
     func tick() {
+        assertConfined()
         pointer.tick()
         let time = now()
         if let deadline = forceLookupDeadline, time >= deadline {

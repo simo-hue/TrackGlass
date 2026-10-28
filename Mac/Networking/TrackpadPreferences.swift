@@ -33,7 +33,16 @@ final class TrackpadPreferences: @unchecked Sendable {
         queue.async { [weak self] in self?.timer?.cancel(); self?.timer = nil }
     }
 
-    private func poll() {
+    /// §6.4: the preferences are read "every 2 s **and immediately on session start**". Called on HELLO so
+    /// the WELCOME settings and the engine's first snapshot never lag a change made in the last poll
+    /// interval. Synchronous on the preferences queue (a few CFPreferences reads and one IOHID device
+    /// query); the caller receives the fresh snapshot directly, so `onChange` is not fired for it.
+    func readNow() -> TrackpadSettings {
+        queue.sync { poll(notify: false) }
+        return currentSnapshot
+    }
+
+    private func poll(notify: Bool = true) {
         dispatchPrecondition(condition: .onQueue(queue))
         let next = Self.readSnapshot { key in
             if self.reportedUnknownKeys.insert(key).inserted {
@@ -43,7 +52,7 @@ final class TrackpadPreferences: @unchecked Sendable {
         lock.lock(); let changed = next != snapshot; snapshot = next; lock.unlock()
         if changed {
             logger.info("trackpad preferences changed clicking=\(next.clicking) secondary=\(next.trackpadRightClick) corner=\(next.cornerSecondaryClick) dragging=\(next.dragging) dragLock=\(next.dragLock) threeFingerDrag=\(next.threeFingerDrag) natural=\(next.naturalScrolling) trackingSpeed=\(next.trackingSpeed)")
-            onChange?(next)
+            if notify { onChange?(next) }
         }
     }
 

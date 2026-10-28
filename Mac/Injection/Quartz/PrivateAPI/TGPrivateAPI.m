@@ -1,5 +1,6 @@
 #import "TGPrivateAPI.h"
 #import <dlfcn.h>
+#import <objc/runtime.h>
 #import <os/log.h>
 
 static void *TGLookupSymbol(const char *name) {
@@ -8,6 +9,20 @@ static void *TGLookupSymbol(const char *name) {
 
 static Class TGLookupClass(const char *name) {
     return NSClassFromString([NSString stringWithUTF8String:name]);
+}
+
+// True when the class exposes every selector the HID event factories send (Apple's HIDEvent headers).
+static BOOL TGHIDEventClassUsable(Class hidClass) {
+    if (hidClass == Nil) return NO;
+    const char *selectors[] = {
+        "initWithType:timestamp:senderID:", "setOptions:",
+        "setIntegerValue:forField:", "setDoubleValue:forField:", "appendEvent:"
+    };
+    for (size_t i = 0; i < sizeof(selectors) / sizeof(selectors[0]); i++) {
+        if (![hidClass instancesRespondToSelector:NSSelectorFromString(
+                [NSString stringWithUTF8String:selectors[i]])]) return NO;
+    }
+    return YES;
 }
 
 PrivateAPICapabilities TGPrivateAPIProbe(TGSymbolLookup symbols, TGClassLookup classes) {
@@ -23,15 +38,7 @@ PrivateAPICapabilities TGPrivateAPIProbe(TGSymbolLookup symbols, TGClassLookup c
 
     Class hidClass = classes("HIDEvent");
     result.hidEventClass = hidClass != Nil;
-    BOOL methodsAvailable = hidClass != Nil;
-    const char *selectors[] = {
-        "initWithType:timestamp:senderID:", "setOptions:",
-        "setIntegerValue:forField:", "setDoubleValue:forField:", "appendEvent:"
-    };
-    for (size_t i = 0; i < sizeof(selectors) / sizeof(selectors[0]); i++) {
-        if (![hidClass instancesRespondToSelector:NSSelectorFromString(
-                [NSString stringWithUTF8String:selectors[i]])]) methodsAvailable = NO;
-    }
+    BOOL methodsAvailable = TGHIDEventClassUsable(hidClass);
     // Missing APIs select the discrete keyboard fallback in the later injector.
     result.dockSwipe = result.gestureEvents && result.attachmentSymbol != 0 && methodsAvailable;
     // Keep these disabled until their physical G-NC/G-FORCE gates pass.
@@ -39,6 +46,18 @@ PrivateAPICapabilities TGPrivateAPIProbe(TGSymbolLookup symbols, TGClassLookup c
     result.fluidTouchGesture = NO;
     result.forceEvent = NO;
     return result;
+}
+
+// SPEC §6.9.4: every private symbol is resolved once at launch; the frame path never calls dlsym or
+// NSClassFromString again. Both are Nil/NULL until `TGPrivateAPIGetCapabilities` has run.
+static Class gHIDEventClass = Nil;
+static void (*gAttachHIDEvent)(CGEventRef, id) = NULL;
+
+static os_log_t TGInjectLog(void) {
+    static os_log_t log;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ log = os_log_create("app.trackglass.mac", "inject"); });   // §6.10 categories
+    return log;
 }
 
 PrivateAPICapabilities TGPrivateAPIGetCapabilities(void) {
@@ -50,7 +69,17 @@ PrivateAPICapabilities TGPrivateAPIGetCapabilities(void) {
         (void)dlopen("/System/Library/PrivateFrameworks/HID.framework/HID", RTLD_LAZY | RTLD_GLOBAL);
         (void)dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY | RTLD_GLOBAL);
         capabilities = TGPrivateAPIProbe(TGLookupSymbol, TGLookupClass);
-        os_log_info(OS_LOG_DEFAULT, "Trackglass private API: attachment=%u HIDEvent=%d dock=%d gesture=%d fluid=%d force=%d",
+        // The HID event factories work wherever the class is usable (tests exercise them without the
+        // attachment symbol); the attachment itself additionally needs the exported function.
+        Class hidClass = TGLookupClass("HIDEvent");
+        gHIDEventClass = TGHIDEventClassUsable(hidClass) ? hidClass : Nil;
+        if (capabilities.dockSwipe) {
+            // IOHIDEventRef is declared CF_BRIDGED_TYPE(HIDEvent) in IOHIDFamily, so the ObjC object is the
+            // IOHIDEventRef: the same call shape serves either exported name (§6.9.4 "alternate symbol").
+            gAttachHIDEvent = TGLookupSymbol(capabilities.attachmentSymbol == 1 ? "CGEventSetHIDEvent" : "CGEventSetIOHIDEvent");
+            if (!gHIDEventClass || !gAttachHIDEvent) capabilities.dockSwipe = NO;
+        }
+        os_log_info(TGInjectLog(), "private API: attachment=%u HIDEvent=%d dock=%d gesture=%d fluid=%d force=%d",
                     capabilities.attachmentSymbol, capabilities.hidEventClass,
                     capabilities.dockSwipe, capabilities.gestureEvents,
                     capabilities.fluidTouchGesture, capabilities.forceEvent);
@@ -67,15 +96,11 @@ PrivateAPICapabilities TGPrivateAPIGetCapabilities(void) {
 - (void)appendEvent:(id)event;
 @end
 
-// Returns the dynamic HIDEvent class once every required selector is present, else Nil.
+// The dynamic HIDEvent class, resolved and selector-checked once by the capability probe; Nil when the
+// attached path is unavailable. No allocation and no runtime lookup per call (frame path, §7).
 static Class TGHIDEventClass(void) {
     (void)TGPrivateAPIGetCapabilities();
-    Class cls = NSClassFromString(@"HIDEvent");
-    if (!cls) return Nil;
-    for (NSString *name in @[@"initWithType:timestamp:senderID:", @"setOptions:", @"setIntegerValue:forField:", @"setDoubleValue:forField:", @"appendEvent:"]) {
-        if (![cls instancesRespondToSelector:NSSelectorFromString(name)]) return Nil;
-    }
-    return cls;
+    return gHIDEventClass;
 }
 
 id TGCreateDockHIDEvent(int64_t kind, int64_t phase, double progress, double velocity) {
@@ -122,14 +147,54 @@ id TGCreateForceHIDEvent(int64_t stage, double pressure, double progress) {
 bool TGAttachHIDEvent(CGEventRef event, id hidEvent) {
     PrivateAPICapabilities capabilities = TGPrivateAPIGetCapabilities();
     // dockSwipe is the "HIDEvent class + attachment symbol" capability; every attached path shares it.
-    if (!capabilities.dockSwipe) return false;
-    const char *name = capabilities.attachmentSymbol == 1 ? "CGEventSetHIDEvent" : "CGEventSetIOHIDEvent";
-    void (*attach)(CGEventRef, id) = dlsym(RTLD_DEFAULT, name);
-    if (!attach) return false;
-    attach(event, hidEvent);
+    if (!capabilities.dockSwipe || !gAttachHIDEvent || !event || !hidEvent) return false;
+    gAttachHIDEvent(event, hidEvent);
     return true;
 }
 
 bool TGAttachDockHIDEvent(CGEventRef event, id hidEvent) {
     return TGAttachHIDEvent(event, hidEvent);
+}
+
+// Read-back selectors from Apple's HIDEvent headers (HID.framework); looked up dynamically like the setters.
+@protocol TGDynamicHIDEventReading
+- (uint32_t)type;
+- (uint32_t)options;
+- (NSInteger)integerValueForField:(uint32_t)field;
+- (double)doubleValueForField:(uint32_t)field;
+- (NSArray *)children;
+@end
+
+static BOOL TGResponds(id event, const char *selector) {
+    return event != nil && [event respondsToSelector:sel_registerName(selector)];
+}
+
+bool TGHIDEventGetType(id event, uint32_t *outType) {
+    if (!outType || !TGResponds(event, "type")) return false;
+    *outType = [(id<TGDynamicHIDEventReading>)event type];
+    return true;
+}
+
+bool TGHIDEventGetOptions(id event, uint32_t *outOptions) {
+    if (!outOptions || !TGResponds(event, "options")) return false;
+    *outOptions = [(id<TGDynamicHIDEventReading>)event options];
+    return true;
+}
+
+bool TGHIDEventGetInteger(id event, uint32_t field, int64_t *outValue) {
+    if (!outValue || !TGResponds(event, "integerValueForField:")) return false;
+    *outValue = (int64_t)[(id<TGDynamicHIDEventReading>)event integerValueForField:field];
+    return true;
+}
+
+bool TGHIDEventGetDouble(id event, uint32_t field, double *outValue) {
+    if (!outValue || !TGResponds(event, "doubleValueForField:")) return false;
+    *outValue = [(id<TGDynamicHIDEventReading>)event doubleValueForField:field];
+    return true;
+}
+
+NSArray *TGHIDEventGetChildren(id event) {
+    if (!TGResponds(event, "children")) return nil;
+    id children = [(id<TGDynamicHIDEventReading>)event children];
+    return [children isKindOfClass:[NSArray class]] ? children : nil;
 }

@@ -7,15 +7,23 @@ import Foundation
 ///   `defaults write app.trackglass.mac TGTryPrivateNotificationCenter -bool YES`   (G-NC)
 ///   `defaults write app.trackglass.mac TGTryPrivateForceClick -bool YES`           (G-FORCE)
 /// A trial replaces its fallback entirely, so what the Mac does (or does not do) is the gate result.
+///
+/// `TGTryLegacyDockSwipes` (owner decision 2026-10-28): on macOS 27+, where the attached-HID-event Dock path has no
+/// exported symbol on the reference Mac (M7.3/M7.4), post the macOS 14–26 legacy-field events instead of the keyboard
+/// fallback, to test whether live-tracking Spaces / Mission Control still work there:
+///   `defaults write app.trackglass.mac TGTryLegacyDockSwipes -bool YES`
 struct PrivateGestureTrials: Equatable, Sendable {
     static let notificationCenterKey = "TGTryPrivateNotificationCenter"
     static let forceClickKey = "TGTryPrivateForceClick"
+    static let legacyDockSwipesKey = "TGTryLegacyDockSwipes"
     var notificationCenter = false
     var forceClick = false
+    var legacyDockSwipes = false
     static var fromDefaults: Self {
         let defaults = UserDefaults.standard
         return Self(notificationCenter: defaults.bool(forKey: notificationCenterKey),
-                    forceClick: defaults.bool(forKey: forceClickKey))
+                    forceClick: defaults.bool(forKey: forceClickKey),
+                    legacyDockSwipes: defaults.bool(forKey: legacyDockSwipesKey))
     }
 }
 

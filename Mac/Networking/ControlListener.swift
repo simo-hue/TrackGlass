@@ -30,13 +30,16 @@ final class ControlListener {
     static let defaultSettings = SettingsMessage(naturalScrolling: 1, tapToClick: 1,
         forceClickEnabled: 1, hapticsSuggested: 1, trackingSpeed: 0.6875, secondaryClickMode: 1)
 
+    /// Hosted tests keep the Appendix A defaults; the app reads the Mac's real preferences.
+    private let livePreferences = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+
     init(identity: PeerIdentity, store: PairingStore = PairingStore()) {
         self.identity = identity
         self.store = store
         preferences.onChange = { [weak self] settings in
             Task { @MainActor [weak self] in self?.apply(settings) }
         }
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil { preferences.start() }
+        if livePreferences { preferences.start() }
     }
 
     func sendStatus(_ message: StatusMessage, to peerID: UUID) {
@@ -84,6 +87,9 @@ final class ControlListener {
                         channel.end(reason: 2); return
                     }
                     let generation = self.generation
+                    // §6.4: read the Mac's preferences immediately on session start, so WELCOME and the
+                    // engine's first snapshot never lag a change made inside the last 2 s poll interval.
+                    if self.livePreferences { self.trackpadSettings = self.preferences.readNow() }
                     // The same phone reconnecting (Wi-Fi blip, app relaunch) supersedes its stale session
                     // instead of waiting for the heartbeat timeout and being told it is busy with itself.
                     if let stale = self.admitted.first(where: { $0.value == hello.peerID })?.key, stale != id {
