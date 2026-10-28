@@ -20,7 +20,7 @@ G-FORCE (M7.7) cannot run on this Mac: the private force path needs `CGEventSetH
 
 ## C. Release plumbing (before any public build)
 
-1. `SUPPORT_EMAIL` in `website/*.html`; `APPSTORE_URL` once the App Store page exists (search both words).
+1. `APPSTORE_URL` in `website/index.html` once the App Store page exists (the buttons show "App Store · soon" until then; support e-mail is set).
 2. Sparkle: back up the private key (`generate_keys -x <file>` → password manager, delete the file); put the Sparkle 2 tools (`generate_appcast`) on your PATH.
 3. `xcrun notarytool store-credentials trackglass-notary` (App Store Connect API key or app-specific password); Developer ID Application certificate installed; `gh auth login`.
 4. GitHub → Settings → Pages → Source: GitHub Actions (`.github/workflows/pages.yml` exists). The CI workflow runs on the next push to `main` by itself.

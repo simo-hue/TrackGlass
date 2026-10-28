@@ -71,6 +71,18 @@
   })();
 
   /* ------------------------------------------------------------------
+     Mobile menu
+     ------------------------------------------------------------------ */
+  (function menu() {
+    const btn = $("#navBurger"), sheet = $("#navSheet"); if (!btn || !sheet) return;
+    const set = open => { nav.classList.toggle("is-open", open); btn.setAttribute("aria-expanded", String(open)); };
+    btn.addEventListener("click", () => set(!nav.classList.contains("is-open")));
+    sheet.addEventListener("click", e => { if (e.target.closest("a")) set(false); });
+    addEventListener("keydown", e => { if (e.key === "Escape") set(false); });
+    addEventListener("click", e => { if (!nav.contains(e.target)) set(false); });
+  })();
+
+  /* ------------------------------------------------------------------
      Cursor spotlight on glass panels
      ------------------------------------------------------------------ */
   if (!matchMedia("(hover: none)").matches) {
@@ -500,6 +512,12 @@
      Repo links: <html data-repo="owner/name"> rewrites every OWNER placeholder
      ------------------------------------------------------------------ */
   (function links() {
+    // App Store buttons stay inert (no broken link) until APPSTORE_URL is filled in.
+    $$("a[href='APPSTORE_URL']").forEach(a => {
+      a.removeAttribute("href"); a.classList.add("is-soon"); a.setAttribute("aria-disabled", "true"); a.setAttribute("role", "link");
+      a.querySelector("svg")?.remove();
+      a.insertAdjacentHTML("beforeend", '<span class="btn__soon">App Store · soon</span>');
+    });
     const repo = document.documentElement.dataset.repo;
     if (!repo || repo.startsWith("OWNER")) return;
     $$("a[href*='github.com/OWNER/trackglass']").forEach(a => { a.href = a.href.replace("OWNER/trackglass", repo); });

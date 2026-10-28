@@ -13,13 +13,11 @@ Static site for Trackglass, built to be hosted on GitHub Pages from the `website
 | `assets/` | Favicon, fonts, `og.png` social preview |
 | `.nojekyll` | Tells GitHub Pages to serve the folder as-is |
 
-## Before publishing: three placeholders
+## Before publishing: one placeholder left
 
-Search and replace across the folder:
+The repository (`simo-hue/TrackGlass`) and the support e-mail are filled in. Still to replace:
 
-1. `OWNER/trackglass` → your GitHub `owner/repo` (links to releases, source and issues). Also set the same value in the `data-repo` attribute on the `<html>` tag of each page.
-2. `APPSTORE_URL` → the App Store link of the iOS app once it is live (until then, point it at `#download` or leave the button out).
-3. `SUPPORT_EMAIL` → the e-mail address shown on the privacy and support pages.
+1. `APPSTORE_URL` (two buttons in `index.html`) → the App Store link once the iOS app is live. Until then `main.js` turns those buttons into an inert "App Store · soon" state, so nothing links to a 404.
 
 ## Deploying on GitHub Pages
 
@@ -36,5 +34,7 @@ Custom domain (optional): Settings → Pages → Custom domain, then add a `CNAM
 The hero demo is scripted in `main.js` (`hero()`): a loop of Point → Click → Scroll → Zoom → Spaces that pauses whenever the visitor moves their own cursor (or finger) over the iPad. Device sizes live in `styles.css` under `.monitor` and `.ipad-perspective`; the design coordinates are a 1100 × 740 stage that is scaled to fit its container (`data-stage` on `.stage-wrap`), with `data-crop` choosing the horizontal slice shown on phones.
 
 The pairing section is driven by scroll position on desktop (`pairing()` in `main.js`) and by a timer on narrow screens. The acceleration curve uses the same parametric form as macOS pointer acceleration, with illustrative parameters.
+
+The visual system (aurora backdrop, grain, glass panels with gradient hairlines, cursor spotlight via `data-spot`, floating readouts, ticker, mobile menu) is all in `styles.css`; the small behaviours (nav indicator and progress, spotlight coordinates, ticker duplication, theme tilt) live at the top of `main.js`.
 
 Everything respects `prefers-reduced-motion`: animations are replaced by their final states.
