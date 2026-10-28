@@ -369,3 +369,13 @@ Improvements recorded but not done (no decision needed; scheduled after CI is gr
 1. `xcodegen generate && Scripts/ci.sh` — the first build resolves the Sparkle package from GitHub (needs network once). Paste the result.
 2. Still to do from step 2a: back up the private key (`generate_keys -x <file>` → password manager, then delete the file) and move the Sparkle tools out of Downloads onto your PATH (`generate_appcast` is what the release script calls).
 3. Then step 2b/2c (notarytool profile `trackglass-notary`, Developer ID Application certificate, `gh auth login`), and the first exercise: set `MARKETING_VERSION = 0.9.0` in `Config/Shared.xcconfig`, commit, and run `Scripts/release-mac.sh 0.9.0 --pre-release --dry-run`.
+
+## 2026-10-28 — G-NC / G-FORCE private-path trials (CI, then two short gate runs)
+
+1. `xcodegen generate && Scripts/ci.sh` (new file `Mac/Injection/Quartz/PrivateAPI/PrivateGestureTrials.swift`, six new tests in `GestureInjectorTests`/`PointerInjectorTests`). Paste failures back. Nothing in shipped behaviour changed: both gestures still use their fallbacks unless a trial default is set.
+2. Gate G-NC (SPEC §6.9.5), Debug Mac app from DerivedData, phone connected:
+   - `defaults write app.trackglass.mac TGTryPrivateNotificationCenter -bool YES`, relaunch Trackglass. The menu's "Reduced gesture mode" must now list "Notification Center: private gesture trial (G-NC)".
+   - Two-finger swipe in from the right edge of the phone. Observe whether Notification Center opens (and closes on a second swipe). `log stream --predicate 'subsystem == "app.trackglass.mac" AND category == "inject"'` shows `private fluid gesture trial (G-NC), attached=false` on this Mac.
+   - `defaults delete app.trackglass.mac TGTryPrivateNotificationCenter`, relaunch, confirm the Accessibility fallback opens it again.
+   - Reply "opened" or "nothing happened". I record the gate outcome in PROGRESS/SPEC Appendix A; "opened" means the private path ships with the AX action as runtime fallback, otherwise the current shipping order stands.
+3. Gate G-FORCE (SPEC §6.9.6): the private attempt needs the HID attachment symbol, which M6.1 found absent on the reference Mac, so on this machine `TGTryPrivateForceClick -bool YES` only logs `HID attachment unavailable, keyboard fallback` and behaves as today. If the macOS 14 QA Mac resolves `CGEventSetHIDEvent`/`CGEventSetIOHIDEvent` (`PrivateAPITests` prints `attachmentSymbol`), run the trial there: hold one finger still ≥ 600 ms over a word in TextEdit (Look Up popover?) and over a file in Finder (Quick Look?). Otherwise the gate outcome is "keyboard fallback shipped; private force path unreachable without the attachment symbol" and I record it as such.

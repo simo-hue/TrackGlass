@@ -26,6 +26,12 @@ typedef Class _Nullable (*TGClassLookup)(const char *name);
 FOUNDATION_EXPORT PrivateAPICapabilities TGPrivateAPIProbe(TGSymbolLookup symbols, TGClassLookup classes);
 
 FOUNDATION_EXPORT id _Nullable TGCreateDockHIDEvent(int64_t kind, int64_t phase, double progress, double velocity);
+// G-NC trial: a FluidTouchGesture (type 27) HIDEvent with the given motion/flavor, phase in the options and progress.
+FOUNDATION_EXPORT id _Nullable TGCreateFluidTouchHIDEvent(int64_t motion, int64_t flavor, int64_t phase, double progress);
+// G-FORCE trial: a Force (type 32) HIDEvent carrying stage, stage pressure and progress (behavior 0).
+FOUNDATION_EXPORT id _Nullable TGCreateForceHIDEvent(int64_t stage, double pressure, double progress);
+// Attaches a HIDEvent to a CGEvent through the resolved private symbol; false when the mechanism is unavailable.
+FOUNDATION_EXPORT bool TGAttachHIDEvent(CGEventRef event, id hidEvent);
 FOUNDATION_EXPORT bool TGAttachDockHIDEvent(CGEventRef event, id hidEvent);
 NS_ASSUME_NONNULL_END
 #endif

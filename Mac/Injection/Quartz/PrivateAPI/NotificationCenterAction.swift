@@ -10,7 +10,7 @@ enum NotificationCenterAction {
         var bar: CFTypeRef?
         guard AXUIElementCopyAttributeValue(application, "AXExtrasMenuBar" as CFString, &bar) == .success,
               let bar, CFGetTypeID(bar) == AXUIElementGetTypeID() else { return false }
-        let menu = unsafeBitCast(bar, to: AXUIElement.self)
+        let menu = unsafeDowncast(bar, to: AXUIElement.self)
         var children: CFTypeRef?
         guard AXUIElementCopyAttributeValue(menu, kAXChildrenAttribute as CFString, &children) == .success,
               let items = children as? [AXUIElement] else { return false }

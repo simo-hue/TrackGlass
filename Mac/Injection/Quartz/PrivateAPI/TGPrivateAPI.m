@@ -67,13 +67,20 @@ PrivateAPICapabilities TGPrivateAPIGetCapabilities(void) {
 - (void)appendEvent:(id)event;
 @end
 
-id TGCreateDockHIDEvent(int64_t kind, int64_t phase, double progress, double velocity) {
+// Returns the dynamic HIDEvent class once every required selector is present, else Nil.
+static Class TGHIDEventClass(void) {
     (void)TGPrivateAPIGetCapabilities();
     Class cls = NSClassFromString(@"HIDEvent");
-    if (!cls) return nil;
+    if (!cls) return Nil;
     for (NSString *name in @[@"initWithType:timestamp:senderID:", @"setOptions:", @"setIntegerValue:forField:", @"setDoubleValue:forField:", @"appendEvent:"]) {
-        if (![cls instancesRespondToSelector:NSSelectorFromString(name)]) return nil;
+        if (![cls instancesRespondToSelector:NSSelectorFromString(name)]) return Nil;
     }
+    return cls;
+}
+
+id TGCreateDockHIDEvent(int64_t kind, int64_t phase, double progress, double velocity) {
+    Class cls = TGHIDEventClass();
+    if (!cls) return nil;
     id<TGDynamicHIDEvent> event = [(id<TGDynamicHIDEvent>)[cls alloc] initWithType:TGHIDDockSwipe timestamp:0 senderID:0];
     [event setOptions:(uint32_t)phase << TGHIDPhaseShift];
     [event setIntegerValue:kind forField:TGHIDDockMotionField];
@@ -89,12 +96,40 @@ id TGCreateDockHIDEvent(int64_t kind, int64_t phase, double progress, double vel
     return event;
 }
 
-bool TGAttachDockHIDEvent(CGEventRef event, id hidEvent) {
+id TGCreateFluidTouchHIDEvent(int64_t motion, int64_t flavor, int64_t phase, double progress) {
+    Class cls = TGHIDEventClass();
+    if (!cls) return nil;
+    id<TGDynamicHIDEvent> event = [(id<TGDynamicHIDEvent>)[cls alloc] initWithType:TGHIDFluidTouchGesture timestamp:0 senderID:0];
+    [event setOptions:(uint32_t)phase << TGHIDPhaseShift];
+    [event setIntegerValue:0 forField:TGHIDFluidMaskField];
+    [event setIntegerValue:motion forField:TGHIDFluidMotionField];
+    [event setIntegerValue:flavor forField:TGHIDFluidFlavorField];
+    [event setDoubleValue:progress forField:TGHIDFluidProgressField];
+    return event;
+}
+
+id TGCreateForceHIDEvent(int64_t stage, double pressure, double progress) {
+    Class cls = TGHIDEventClass();
+    if (!cls) return nil;
+    id<TGDynamicHIDEvent> event = [(id<TGDynamicHIDEvent>)[cls alloc] initWithType:TGHIDForce timestamp:0 senderID:0];
+    [event setIntegerValue:0 forField:TGHIDForceBehaviorField];
+    [event setIntegerValue:stage forField:TGHIDForceStageField];
+    [event setDoubleValue:pressure forField:TGHIDForceStagePressureField];
+    [event setDoubleValue:progress forField:TGHIDForceProgressField];
+    return event;
+}
+
+bool TGAttachHIDEvent(CGEventRef event, id hidEvent) {
     PrivateAPICapabilities capabilities = TGPrivateAPIGetCapabilities();
+    // dockSwipe is the "HIDEvent class + attachment symbol" capability; every attached path shares it.
     if (!capabilities.dockSwipe) return false;
     const char *name = capabilities.attachmentSymbol == 1 ? "CGEventSetHIDEvent" : "CGEventSetIOHIDEvent";
     void (*attach)(CGEventRef, id) = dlsym(RTLD_DEFAULT, name);
     if (!attach) return false;
     attach(event, hidEvent);
     return true;
+}
+
+bool TGAttachDockHIDEvent(CGEventRef event, id hidEvent) {
+    return TGAttachHIDEvent(event, hidEvent);
 }

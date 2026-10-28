@@ -119,30 +119,34 @@ final class QuartzInjector: InputInjector {
         if UserDefaults.standard.bool(forKey: "TGDisablePrivateGestures") { return PrivateAPICapabilities() }
         return TGPrivateAPIGetCapabilities()
     }
-    /// Gates G-FORCE / G-NC (M7.6, M7.7): the private force and fluid-gesture paths are not implemented,
-    /// so `inject` always takes the fallbacks regardless of the resolved capability flags. The degraded
-    /// list must describe what `inject` does, not what the symbols would allow.
-    static let forceClickUsesFallback = true
-    static let notificationCenterUsesFallback = true
-    static func degradedGestures(capabilities: PrivateAPICapabilities = runtimeCapabilities, path: DockSwipePath = .current) -> [String] {
+    /// Gates G-FORCE / G-NC (M7.6, M7.7): until a physical gate passes, `inject` takes the fallbacks regardless
+    /// of the resolved capability flags; a `PrivateGestureTrials` flag switches one gesture to its private
+    /// attempt for the gate run. The degraded list describes what `inject` does, not what the symbols allow.
+    static func degradedGestures(capabilities: PrivateAPICapabilities = runtimeCapabilities, path: DockSwipePath = .current,
+                                 trials: PrivateGestureTrials = .fromDefaults) -> [String] {
         var result = [String]()
         if !capabilities.gestureEvents || (path == .attachedHIDEvent && !capabilities.dockSwipe) {
             result.append("Spaces, Mission Control, App Exposé and Show Desktop use shortcuts")
             result.append("Launchpad / Apps gesture unavailable")
         }
-        if forceClickUsesFallback || !capabilities.forceEvent { result.append("Force click uses Look Up") }
-        if notificationCenterUsesFallback || !capabilities.fluidTouchGesture { result.append("Notification Center uses Accessibility") }
+        if trials.forceClick && capabilities.dockSwipe { result.append("Force click: private event trial (G-FORCE)") }
+        else { result.append("Force click uses Look Up") }
+        if trials.notificationCenter && capabilities.gestureEvents { result.append("Notification Center: private gesture trial (G-NC)") }
+        else { result.append("Notification Center uses Accessibility") }
         if !capabilities.gestureEvents { result.append("Scroll zoom gestures unavailable") }
         return result
     }
     private let capabilities: PrivateAPICapabilities
+    private let trials: PrivateGestureTrials
     private let postKeyEvent: (CGEvent) -> Void
     private let dockFactory = DockSwipeEventFactory()
     private let dockPath: DockSwipePath
     private let postDockEvent: (CGEvent) -> Void
     private let now: () -> UInt64
-    var needsTick: Bool { dockEnd != nil || forceLookupDeadline != nil }
+    var needsTick: Bool { dockEnd != nil || forceLookupDeadline != nil || forceTrialStep != nil }
     private var forceLookupDeadline: UInt64?
+    private var forceTrialStep: Int?
+    private var forceTrialStart: UInt64 = 0
     private var dockEnd: (CGEvent?, CGEvent)?
     private var dockRepeatDeadline: UInt64 = 0
     private var dockFinalDeadline: UInt64 = 0
@@ -153,12 +157,13 @@ final class QuartzInjector: InputInjector {
     init(postScrollEvent: @escaping (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) },
          dockPath: DockSwipePath = .current,
          capabilities: PrivateAPICapabilities = QuartzInjector.runtimeCapabilities,
+         trials: PrivateGestureTrials = .fromDefaults,
          postKeyEvent: @escaping (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) },
          postDockEvent: @escaping (CGEvent) -> Void = { $0.post(tap: .cgSessionEventTap) },
          postPointerEvent: @escaping (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) },
          now: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
         pointer = PointerState(post: postPointerEvent)
-        self.capabilities = capabilities; self.postKeyEvent = postKeyEvent
+        self.capabilities = capabilities; self.trials = trials; self.postKeyEvent = postKeyEvent
         self.dockPath = dockPath; self.postDockEvent = postDockEvent; self.now = now
         self.postScrollEvent = postScrollEvent
     }
@@ -202,6 +207,12 @@ final class QuartzInjector: InputInjector {
             event.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
             postScrollEvent(event)
         case .forceClick(stage: 2):
+            if trials.forceClick, capabilities.dockSwipe, forceTrialStep == nil, postForceTrialStep(0) {
+                forceTrialStep = 1; forceTrialStart = now()
+                logger.notice("force click: private force event trial (G-FORCE)")
+                return
+            }
+            if trials.forceClick { logger.notice("force click trial: HID attachment unavailable, keyboard fallback") }
             inject(.button(kind: .left, phase: .down, clickCount: 1))
             inject(.button(kind: .left, phase: .up, clickCount: 1))
             forceLookupDeadline = now() + 30_000_000
@@ -243,6 +254,18 @@ final class QuartzInjector: InputInjector {
                   let pair = GestureEventFactory.navigation(direction, source: pointer.eventSource, location: location) else { return }
             postScrollEvent(pair.0); postScrollEvent(pair.1)
         case .notificationCenter:
+            if trials.notificationCenter, capabilities.gestureEvents, let location = CGEvent(source: nil)?.location {
+                let attached = dockPath == .attachedHIDEvent && capabilities.dockSwipe
+                let sequence = attached
+                    ? FluidGestureEventFactory.attachedNotificationCenterSequence(source: pointer.eventSource, location: location)
+                    : FluidGestureEventFactory.notificationCenterSequence(source: pointer.eventSource, location: location)
+                if let sequence {
+                    for event in sequence { postScrollEvent(event) }
+                    logger.notice("Notification Center: private fluid gesture trial (G-NC), attached=\(attached)")
+                    return
+                }
+                logger.notice("Notification Center trial: private gesture unavailable, Accessibility fallback")
+            }
             Task { @MainActor [logger] in
                 if !NotificationCenterAction.perform() { logger.notice("Notification Center Clock action unavailable") }
             }
@@ -250,6 +273,15 @@ final class QuartzInjector: InputInjector {
         }
     }
     func displayDidSleep() { pointer.displayDidSleep() }
+
+    /// G-FORCE trial: posts one step of the force sequence; false when the attached event cannot be built.
+    private func postForceTrialStep(_ index: Int) -> Bool {
+        guard let location = CGEvent(source: nil)?.location,
+              let event = ForceEventFactory.attachedEvent(ForceEventFactory.steps[index], source: pointer.eventSource,
+                                                          location: location) else { return false }
+        postScrollEvent(event)
+        return true
+    }
 
     private func fallbackDock(kind: DockSwipeKind, progress: Double) {
         guard progress != 0 else { return }
@@ -273,6 +305,14 @@ final class QuartzInjector: InputInjector {
         let time = now()
         if let deadline = forceLookupDeadline, time >= deadline {
             forceLookupDeadline = nil; inject(.lookUpAtPointer)
+        }
+        if let step = forceTrialStep {
+            if step >= ForceEventFactory.steps.count { forceTrialStep = nil }
+            else if time >= forceTrialStart &+ ForceEventFactory.steps[step].delayNs {
+                if !postForceTrialStep(step) { logger.notice("force click trial: step \(step) could not be built") }
+                forceTrialStep = step + 1
+                if forceTrialStep == ForceEventFactory.steps.count { forceTrialStep = nil }
+            }
         }
         guard let pair = dockEnd else { return }
         if dockRepeatDeadline != 0 && time >= dockRepeatDeadline {

@@ -44,9 +44,21 @@ final class PointerInjectorTests: XCTestCase {
         // Even with every private symbol resolved, force click and Notification Center use their fallbacks today (G-FORCE/G-NC pending).
         var full = PrivateAPICapabilities()
         full.gestureEvents = true; full.dockSwipe = true; full.forceEvent = true; full.fluidTouchGesture = true
-        let list = QuartzInjector.degradedGestures(capabilities: full, path: .legacyFields)
+        let list = QuartzInjector.degradedGestures(capabilities: full, path: .legacyFields, trials: PrivateGestureTrials())
         XCTAssertTrue(list.contains("Force click uses Look Up"))
         XCTAssertTrue(list.contains("Notification Center uses Accessibility"))
         XCTAssertFalse(list.contains { $0.hasPrefix("Spaces") })
+        // A gate trial replaces its fallback line so the menu shows what the injector will do during the test.
+        let trial = QuartzInjector.degradedGestures(capabilities: full, path: .legacyFields,
+                                                    trials: PrivateGestureTrials(notificationCenter: true, forceClick: true))
+        XCTAssertTrue(trial.contains("Force click: private event trial (G-FORCE)"))
+        XCTAssertTrue(trial.contains("Notification Center: private gesture trial (G-NC)"))
+        XCTAssertFalse(trial.contains("Force click uses Look Up"))
+        XCTAssertFalse(trial.contains("Notification Center uses Accessibility"))
+        // Trials without the mechanism they need still report the fallback.
+        let none = QuartzInjector.degradedGestures(capabilities: PrivateAPICapabilities(), path: .legacyFields,
+                                                   trials: PrivateGestureTrials(notificationCenter: true, forceClick: true))
+        XCTAssertTrue(none.contains("Force click uses Look Up"))
+        XCTAssertTrue(none.contains("Notification Center uses Accessibility"))
     }
 }

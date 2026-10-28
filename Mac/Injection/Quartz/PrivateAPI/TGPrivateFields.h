@@ -55,3 +55,29 @@ enum {
     TGHIDVelocityYField = (9 << 16) | 1,
     TGHIDVelocityZField = (9 << 16) | 2
 };
+
+// Gates G-NC / G-FORCE (SPEC §6.9.5, §6.9.6). Field offsets and enum values transcribed from Apple
+// IOHIDFamily-1633.100.36 IOHIDEventFieldDefs.h / IOHIDEventTypes.h on 2026-10-28:
+//   FluidTouchGesture (27): Mask |0, Motion |1, Progress |2, PositionX |3, PositionY |4, Flavor |5.
+//   Force (32): Behavior |0, Progress |1, Stage |2, StagePressure |3.
+//   IOHIDGestureMotion: FromRightEdge = 9.  IOHIDGestureFlavor: NotificationCenterPrimary = 1.
+enum {
+    TGHIDFluidMaskField = (27 << 16),
+    TGHIDFluidMotionField = (27 << 16) | 1,
+    TGHIDFluidProgressField = (27 << 16) | 2,
+    TGHIDFluidPositionXField = (27 << 16) | 3,
+    TGHIDFluidPositionYField = (27 << 16) | 4,
+    TGHIDFluidFlavorField = (27 << 16) | 5,
+    TGHIDForceBehaviorField = (32 << 16),
+    TGHIDForceProgressField = (32 << 16) | 1,
+    TGHIDForceStageField = (32 << 16) | 2,
+    TGHIDForceStagePressureField = (32 << 16) | 3
+};
+enum { TGHIDGestureMotionFromRightEdge = 9, TGHIDGestureFlavorNotificationCenterPrimary = 1 };
+
+// Legacy-field attempt for the fluid gesture (G-NC, macOS without the HID attachment): the swipe-family
+// slots the Dock path proves (123 motion, 124 progress, 132/134 phase). No reference documents these slots
+// for type 27; the physical gate decides. There is no documented slot set for Force (type 32), so that
+// attempt exists only on the attached-HID-event path.
+static const CGEventField TGFieldSwipeMotion = 123;
+static const CGEventField TGFieldSwipeProgress = 124;
