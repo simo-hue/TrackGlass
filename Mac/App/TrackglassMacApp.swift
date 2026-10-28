@@ -12,6 +12,7 @@ struct TrackglassMacApp: App {
     private let inputListener: InputListener
     @State private var errorMessage: String?
     private let windows: MacWindowCoordinator
+    private let updates = UpdateController()
     private let pairing: PairingService
     private let pairingWindow: PairingWindow
     private var workspaceObservers: [NSObjectProtocol] = []
@@ -61,7 +62,7 @@ struct TrackglassMacApp: App {
             })
         pairing.peersChanged = { [weak advertiser] in advertiser?.pairingSetChanged() }
         pairingWindow = PairingWindow(service: pairing)
-        let windows = MacWindowCoordinator(permission: advertiser.accessibilityPermission, pairing: pairing, control: control, input: inputListener)
+        let windows = MacWindowCoordinator(permission: advertiser.accessibilityPermission, pairing: pairing, control: control, input: inputListener, updates: updates)
         self.windows = windows
         advertiser.permissionRevoked = { [weak control, inputListener, weak windows] in
             control?.permissionRevoked(); inputListener.setAdmittedPeer(nil)
@@ -100,7 +101,7 @@ struct TrackglassMacApp: App {
             if let errorMessage { Text(errorMessage) }
             Button("Pair a device…") { pairingWindow.show() }
             Button("Settings…") { windows.showSettings() }
-            Button("Check for Updates…") {}.disabled(true)
+            Button("Check for Updates…") { updates.checkForUpdates() }
             if !pairing.pairedPeers.isEmpty {
                 Menu("Paired devices") {
                     ForEach(pairing.pairedPeers, id: \.peerID) { peer in

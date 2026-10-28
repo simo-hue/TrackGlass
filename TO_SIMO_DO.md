@@ -363,3 +363,9 @@ Improvements recorded but not done (no decision needed; scheduled after CI is gr
 1. `xcodegen generate && Scripts/ci.sh` again (the iOS target failed to compile last time on the new `TouchLike` protocol; fixed).
 2. Nothing else to do: `.github/workflows/ci.yml` runs on the next push to `main` by itself (public repo, free macOS minutes). If the hosted runner's Xcode/simulator differs from your Mac, the job log shows what it selected; tell me and I adjust.
 3. What remains in the plan without your input: nothing. Pending on you — Sparkle keys (M11.1), notarization profile + `gh auth` (M11.2 run), `SUPPORT_EMAIL`/`APPSTORE_URL`, LICENSE, Pages enablement, the PIN-pairing decision, device checks/calibrations/soak/M10.2/M10.3 recordings, and Phase 2's entitlement answer + SIP-disabled test Mac.
+
+## 2026-10-28 — Sparkle wired (M11.1)
+
+1. `xcodegen generate && Scripts/ci.sh` — the first build resolves the Sparkle package from GitHub (needs network once). Paste the result.
+2. Still to do from step 2a: back up the private key (`generate_keys -x <file>` → password manager, then delete the file) and move the Sparkle tools out of Downloads onto your PATH (`generate_appcast` is what the release script calls).
+3. Then step 2b/2c (notarytool profile `trackglass-notary`, Developer ID Application certificate, `gh auth login`), and the first exercise: set `MARKETING_VERSION = 0.9.0` in `Config/Shared.xcconfig`, commit, and run `Scripts/release-mac.sh 0.9.0 --pre-release --dry-run`.

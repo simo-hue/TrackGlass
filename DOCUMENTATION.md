@@ -1,5 +1,9 @@
 # Implementation log
 
+- [2026-10-28 15:00 CET]: M11.1 — Sparkle updates (uncompiled)
+  - *Details*: Sparkle 2.10.1 added as the one permitted Mac dependency (`project.yml` remote package); Info.plist carries `SUFeedURL`, `SUPublicEDKey` (from the gitignored `Config/Local.xcconfig`), `SUEnableAutomaticChecks`, `SUScheduledCheckInterval = 86400`; `UpdateController` wraps `SPUStandardUpdaterController` (not started under XCTest) for the menu item and the General tab; THIRD-PARTY updated.
+  - *Tech Notes*: First build needs network for SwiftPM to resolve Sparkle (also on the hosted CI runner). The end-to-end update test is part of the first release (`Scripts/release-mac.sh 0.9.0 --pre-release`). No other dependencies.
+
 - [2026-10-28 13:00 CET]: iOS compile fix, hosted CI workflow, DMG layout, Phase 2 record (uncompiled)
   - *Details*: The 2026-10-28 batch failed iOS compilation on `TouchLike` (non-isolated protocol vs `UITouch`'s main-actor members; existential not accepted as `AnyObject`); fixed by making it `@MainActor @objc`. Added `.github/workflows/ci.yml` plus `TG_CI_UNSIGNED` in `Scripts/ci.sh`; DMG background image and Finder view-options step (read-write image → layout → UDZO); `docs/Phase2-Spike.md` gate table.
   - *Tech Notes*: Phase 2 (DriverKit) is deliberately not started: it needs Apple's entitlement answer and a SIP-disabled test Mac, and a blind C++ dext would be unverifiable here. The hosted workflow uses `macos-26`; if GitHub's image lacks the expected Xcode/simulator, the two steps that pick them print what they chose. No new dependencies.

@@ -20,7 +20,7 @@ No code from Mac Mouse Fix (MMF License), VoodooInput (GPL-2.0), or Calf Trail's
 
 ## Sparkle 2 — MIT
 
-Sparkle is the planned Mac updater dependency for M11.1; it is not linked at P0.3. The following notices are from the [upstream Sparkle 2.x license](https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE), retrieved 2026-10-20. Preserve the notices for the selected release when integrating the framework, including its bundled components.
+Sparkle 2.10.1 is linked into the Mac app through Swift Package Manager (`project.yml`, M11.1) and ships inside the app bundle with its own license. The following notices are from the [upstream Sparkle 2.x license](https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE), retrieved 2026-10-20. Preserve the notices for the selected release when integrating the framework, including its bundled components.
 
 ```text
 Copyright (c) 2006-2013 Andy Matuschak.

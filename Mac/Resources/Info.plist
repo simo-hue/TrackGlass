@@ -29,6 +29,14 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Trackglass finds and talks to Trackglass for Mac on your local network.</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>$(TG_APPCAST_URL)</string>
+	<key>SUPublicEDKey</key>
+	<string>$(TG_SPARKLE_PUBLIC_KEY)</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 	<key>TGBundlePrefix</key>
 	<string>$(TG_BUNDLE_PREFIX)</string>
 	<key>TGProductName</key>

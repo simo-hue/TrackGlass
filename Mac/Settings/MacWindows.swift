@@ -31,8 +31,9 @@ final class MacWindowCoordinator {
     private let pairing: PairingService
     private let control: ControlListener
     private let input: InputListener
-    init(permission: AccessibilityPermission, pairing: PairingService, control: ControlListener, input: InputListener) {
-        self.permission = permission; self.pairing = pairing; self.control = control; self.input = input
+    private let updates: UpdateController
+    init(permission: AccessibilityPermission, pairing: PairingService, control: ControlListener, input: InputListener, updates: UpdateController) {
+        self.permission = permission; self.pairing = pairing; self.control = control; self.input = input; self.updates = updates
         // The button label follows the pipeline's real state (a session end also ends the recording).
         input.onRecordingChanged = { [weak model] recording in
             Task { @MainActor in model?.isRecording = recording }
@@ -51,7 +52,7 @@ final class MacWindowCoordinator {
     func showSettings() {
         if settings == nil {
             settings = window(title: "Trackglass Settings", size: NSSize(width: 560, height: 420),
-                content: MacSettingsContent(model: model, pairing: pairing, control: control,
+                content: MacSettingsContent(model: model, pairing: pairing, control: control, updates: updates,
                     toggleRecording: { [weak self] in self?.toggleRecording() }))
         }
         pairing.refreshPeers(); show(settings)
@@ -98,6 +99,7 @@ private struct MacSettingsContent: View {
     @Bindable var model: MacSettingsModel
     @Bindable var pairing: PairingService
     @Bindable var control: ControlListener
+    @Bindable var updates: UpdateController
     let toggleRecording: () -> Void
     private var website: URL? { (Bundle.main.object(forInfoDictionaryKey: "TGWebsiteURL") as? String).flatMap(URL.init(string:)) }
     private static func milliseconds(_ micros: UInt32) -> String { String(format: "%.2f ms", Double(micros) / 1_000) }
@@ -108,8 +110,13 @@ private struct MacSettingsContent: View {
                 LabeledContent("Mac tracking speed", value: String(format: "%.2f", control.currentTrackingSpeed))
                 LabeledContent("Phone tracking offset", value: String(format: "%+.2f", control.trackingOverride))
                 Text("Tracking speed follows System Settings. Adjust the phone’s Feel settings for an offset.").font(.caption).foregroundStyle(.secondary)
-                Button("Check for Updates…") {}.disabled(true)
-                Text("Update checking will be available in the release build.").font(.caption).foregroundStyle(.secondary)
+                Toggle("Check for updates automatically", isOn: $updates.automaticallyChecksForUpdates)
+                HStack {
+                    Button("Check for Updates…") { updates.checkForUpdates() }
+                    if let lastCheck = updates.lastCheck {
+                        Text("Last checked \(lastCheck.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 if let error = model.error { Text(error).foregroundStyle(.red) }
             }.padding().tabItem { Label("General", systemImage: "gear") }
             List {

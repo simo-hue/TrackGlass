@@ -12,6 +12,9 @@ packages:
     path: Packages/TrackglassKit
   TrackglassEngine:
     path: Packages/TrackglassEngine
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.10.1
 targets:
   TrackglassiOS:
     type: application
@@ -93,6 +96,7 @@ targets:
     dependencies:
       - package: TrackglassKit
       - package: TrackglassEngine
+      - package: Sparkle
     configFiles:
       Debug: Config/Mac.xcconfig
       Release: Config/Mac.xcconfig
@@ -116,6 +120,11 @@ targets:
         TGWebsiteURL: $(TG_WEBSITE_URL)
         TGRepoURL: $(TG_REPO_URL)
         LSUIElement: true
+        # Sparkle 2 (SPEC §6.11): EdDSA-signed appcast committed by Scripts/release-mac.sh; key from Config/Local.xcconfig.
+        SUFeedURL: $(TG_APPCAST_URL)
+        SUPublicEDKey: $(TG_SPARKLE_PUBLIC_KEY)
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
     scheme:
       gatherCoverageData: false
       testTargets:
