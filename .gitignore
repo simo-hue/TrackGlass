@@ -14,6 +14,8 @@ Config/Local.xcconfig
 .audit-snapshot.tgz
 *.tgz
 *.dmg
+# Sparkle release-notes fragments written beside the DMG by Scripts/release-mac.sh
+Releases/*.html
 *.xcarchive
 *.ipa
 # signing material never enters the repo

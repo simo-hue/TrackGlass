@@ -131,7 +131,7 @@ def dmg_background(source):
     y = 190 * scale
     draw.line((245 * scale, y, 405 * scale, y), fill=accent, width=6 * scale)
     draw.polygon([(405 * scale, y - 16 * scale), (435 * scale, y), (405 * scale, y + 16 * scale)], fill=lavender)
-    caption = "Drag Trackglass to Applications"
+    caption = "Drag Trackglass for Mac to Applications"
     font = None
     for candidate in ("/System/Library/Fonts/SFNS.ttf", "/System/Library/Fonts/Helvetica.ttc",
                       "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):

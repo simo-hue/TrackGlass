@@ -10,7 +10,7 @@
 #   • Developer ID Application certificate in the login Keychain; DEVELOPMENT_TEAM in Config/Local.xcconfig.
 #   • Notarization credentials:  xcrun notarytool store-credentials "$TG_NOTARY_PROFILE"  (default profile name: trackglass-notary)
 #   • Sparkle tools on PATH (generate_appcast; from the Sparkle release archive's bin/) and the EdDSA private key
-#     in the Keychain, created with Sparkle's generate_keys. The public key is TG_SPARKLE_PUBLIC_KEY in Config/Local.xcconfig.
+#     in the Keychain, created with Sparkle's generate_keys. The public key is TG_SPARKLE_PUBLIC_KEY in Config/Shared.xcconfig (tracked; it is not a secret).
 #   • gh auth login (GitHub CLI), and a release-notes file at Releases/release-notes/<version>.md.
 #   • MARKETING_VERSION in Config/Shared.xcconfig must equal <version>.
 #
@@ -47,7 +47,6 @@ BUILD_DIR="${TMPDIR:-/tmp}/trackglass-release-$VERSION"
 ARCHIVE="$BUILD_DIR/TrackglassMac.xcarchive"
 EXPORT_DIR="$BUILD_DIR/export"
 STAGING="$BUILD_DIR/dmg-root"
-PREVIOUS_APP="${TG_PREVIOUS_APP:-/Applications/$PRODUCT_NAME.app}"
 
 step() { printf '\n==> %s\n' "$*"; }
 fail() { echo "error: $*" >&2; exit 1; }
@@ -57,9 +56,13 @@ step "Checking prerequisites"
 git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && fail "tag $TAG already exists"
 [[ "$MARKETING_VERSION" == "$VERSION" ]] || fail "MARKETING_VERSION is $MARKETING_VERSION, not $VERSION (edit Config/Shared.xcconfig)"
 [[ -f "$NOTES" ]] || fail "missing release notes $NOTES"
+grep -qi '^DRAFT' "$NOTES" && fail "release notes $NOTES are still marked DRAFT; edit them first"
 [[ -f Config/Local.xcconfig ]] && grep -q '^DEVELOPMENT_TEAM *= *[A-Z0-9]' Config/Local.xcconfig || fail "DEVELOPMENT_TEAM is not set in Config/Local.xcconfig"
-grep -q '^TG_SPARKLE_PUBLIC_KEY *= *[A-Za-z0-9+/=]' Config/Local.xcconfig || fail "TG_SPARKLE_PUBLIC_KEY is not set in Config/Local.xcconfig (Sparkle generate_keys)"
-for tool in xcodegen xcodebuild hdiutil gh generate_appcast; do
+grep -q '^TG_SPARKLE_PUBLIC_KEY *= *[A-Za-z0-9+/=]' Config/Shared.xcconfig || fail "TG_SPARKLE_PUBLIC_KEY is not set in Config/Shared.xcconfig (Sparkle generate_keys -p)"
+if grep -q '^TG_SPARKLE_PUBLIC_KEY' Config/Local.xcconfig && ! grep -q "^$(grep '^TG_SPARKLE_PUBLIC_KEY' Config/Shared.xcconfig)\$" Config/Local.xcconfig; then
+  fail "Config/Local.xcconfig overrides TG_SPARKLE_PUBLIC_KEY with a different value; delete that line"
+fi
+for tool in xcodegen xcodebuild hdiutil gh generate_appcast python3; do
   command -v "$tool" >/dev/null || fail "$tool is not on PATH"
 done
 xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 || fail "notarytool profile '$NOTARY_PROFILE' is missing (xcrun notarytool store-credentials)"
@@ -93,6 +96,9 @@ xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist "$EXPORT_O
 APP="$(find "$EXPORT_DIR" -maxdepth 1 -name '*.app' | head -1)"
 [[ -d "$APP" ]] || fail "export produced no .app"
 codesign --verify --deep --strict --verbose=2 "$APP"
+# SPEC §8.6: the previously shipped build is the copy installed on this Mac under the bundle's real name
+# (the Mac target has no PRODUCT_NAME override, so it is TrackglassMac.app, not "$PRODUCT_NAME.app").
+PREVIOUS_APP="${TG_PREVIOUS_APP:-/Applications/$(basename "$APP")}"
 
 if [[ -d "$PREVIOUS_APP" ]]; then
   step "Asserting the signing team matches the previously shipped app"
@@ -166,9 +172,13 @@ else
 fi
 
 step "Updating Releases/appcast.xml"
+# Sparkle shows release notes from an HTML fragment beside the archive with the same base name; generate_appcast
+# embeds it as the item's description (a --release-notes-url-prefix would instead link to <prefix><name>.html,
+# which GitHub does not serve). Releases/*.html is ignored by Git like the DMG.
+python3 Scripts/release-notes-html.py "$NOTES" "Releases/${DMG_NAME%.dmg}.html"
 # generate_appcast signs with the EdDSA key from the Keychain and rewrites enclosure URLs to the release assets.
 generate_appcast --download-url-prefix "$REPO_URL/releases/download/$TAG/" --link "$REPO_URL/releases" \
-  --release-notes-url-prefix "$REPO_URL/releases/tag/" -o Releases/appcast.xml Releases/
+  -o Releases/appcast.xml Releases/
 git add Releases/appcast.xml
 git commit -m "release: appcast for $VERSION"
 git push origin HEAD

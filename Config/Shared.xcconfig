@@ -4,6 +4,9 @@ TG_REPO_URL = https:/$()/github.com/simo-hue/TrackGlass
 TG_WEBSITE_URL = https:/$()/simo-hue.github.io/TrackGlass
 // SPEC §1.5 / §6.11: Sparkle reads the appcast that Scripts/release-mac.sh commits under Releases/.
 TG_APPCAST_URL = https:/$()/raw.githubusercontent.com/simo-hue/TrackGlass/main/Releases/appcast.xml
+// SPEC §6.11 / M11.1: Sparkle's EdDSA *public* key (not a secret; the private key stays only in the owner's Keychain).
+// Tracked here so every clone — CI, a second release Mac — builds an app that can verify updates (owner decision 2026-10-28).
+TG_SPARKLE_PUBLIC_KEY = spCJUnlQqJOdvV8hkmf1ESUBohVb4pag4nUk6gl+l7I=
 MARKETING_VERSION = 1.0.0
 CURRENT_PROJECT_VERSION = 1
 SWIFT_VERSION = 6.0
