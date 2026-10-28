@@ -114,6 +114,28 @@ final class DragSafetyTests: XCTestCase {
         XCTAssertTrue(events.contains(.button(kind: .left, phase: .up, clickCount: 1)))
     }
 
+    func testRepeatedTapsBesideAHeldFingerNeverClickAndStayBounded() {
+        // A finger held mid-pad (never a resting thumb: it is not in the bottom 18 mm) keeps the tap set open.
+        // Thirty quick taps with fresh contact IDs beside it must produce no click (another contact was
+        // present during each tap's life, §6.5.5) and must not grow the engine's tap table (§6.5.1).
+        let engine = engine(TrackpadSettings())
+        process(engine, frame(0, [(1, .began, 30, 60)]))
+        var clicks = 0
+        for tap in 0..<30 {
+            let id = UInt8(2 + tap)
+            let began = UInt64(500 + tap * 400) * ms
+            process(engine, frame(began, [(1, .stationary, 30, 60), (id, .began, 50, 60)]))
+            let events = process(engine, frame(began + 40 * ms, [(1, .stationary, 30, 60), (id, .ended, 50, 60)]))
+            clicks += events.filter { if case .button = $0 { return true } else { return false } }.count
+            _ = tick(engine, began + 48 * ms)
+        }
+        XCTAssertEqual(clicks, 0)
+        let lift = process(engine, frame(13_000 * ms, [(1, .ended, 30, 60)]))
+        XCTAssertFalse(lift.contains { if case .button = $0 { return true } else { return false } },
+                       "a 13 s hold is not a tap: \(lift)")
+        XCTAssertFalse(engine.hasActiveContacts)
+    }
+
     func testSlowMotionAccumulatesInsteadOfBeingDropped() {
         let engine = engine(TrackpadSettings())
         process(engine, frame(0, [(1, .began, 30, 50)]))

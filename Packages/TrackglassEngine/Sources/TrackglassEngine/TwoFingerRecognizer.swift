@@ -57,8 +57,10 @@ struct TwoFingerRecognizer {
         totalAngle += angleDelta
         let pinch = settings.pinchEnabled && previousDistance > 0.0001 &&
             (pinchActive || abs(distance - startDistance) > 2.5)
-        let rotate = settings.rotateEnabled && distance > 15 &&
-            (rotateActive || abs(totalAngle) > 5 * .pi / 180)
+        // §6.5.7: the 15 mm spread (ROTATE_MIN_SPREAD) is an activation precondition; an activated
+        // rotation stays active until lift even if the fingers close up afterwards.
+        let rotate = settings.rotateEnabled &&
+            (rotateActive || (distance > 15 && abs(totalAngle) > 5 * .pi / 180))
         if (pinch || rotate) && !bracketOpen { events.append(.gestureBegin); bracketOpen = true }
         if pinch {
             let delta = distance / previousDistance - 1
