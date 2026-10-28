@@ -1,5 +1,13 @@
 # Implementation log
 
+- [2026-10-28 17:05 CET]: Owner decisions batch — pinch arbitration, staggered lift-off, Dock fallback threshold, legacy dock trial, pairing hardening, Sparkle key, Apache-2.0 (CI green 17:30)
+  - *Details*: Engine: 4/5-finger swipe lock uses the travel every finger shares (`commonTravel`), so thumb-anchored pinches stay pinches; `EngineMode.releasing` holds a 3+ finger set until the last finger lifts. Mac: keyboard Dock fallback only at |progress| ≥ 0.5; `TGTryLegacyDockSwipes` trial; HIDEvent read-back helpers and attached-path assertions; listen-only event-tap capture test; injector queue confinement. Pairing: X25519 ephemeral keys in PAIR_REQUEST/RESPONSE, LTK derived on both sides (`KeyDerivation.pairingLTK`, Python known-answer vector), "Allow “<phone>”?" on the Mac before anything is stored or sent. Config: Sparkle public key in `Shared.xcconfig`; `LICENSE` (Apache-2.0); release notes rendered to an HTML fragment for `generate_appcast`; draft 1.0.0 notes. SPEC §3.2, §3.4, §4.5, §6.5.8, §6.9.4, §6.11, §11 amended.
+  - *Tech Notes*: Both prerelease apps must be updated together before pairing a new phone (wire change); stored pairings are unaffected. The event-tap test skips unless the test host has Input Monitoring, which the app never requests (§6.2).
+
+- [2026-10-28 16:20 CET]: Spec-gap batch from five read-only audits (CI green 17:30)
+  - *Details*: Monotonic phone frame times (keep-alive could make the Mac drop a lift-off), consecutive-miss PING liveness, immediate preference read on HELLO, `.noMac` lists all paired Macs with the last outcome, download links → `releases/latest`, iPad catalog, shared pairID identity helper, bounded tap table, rotate spread as activation-only, one process event source, pure tested display clamp, private symbols resolved once, `tgreplay invariants` emulating the pipeline's tick and lift-off timeout, release-mode performance tests in CI, `docs/Calibration.md` and `docs/Latency.md` skeletons.
+  - *Tech Notes*: See `docs/PROGRESS.md` → Decisions for the full list.
+
 - [2026-10-28 15:00 CET]: M11.1 — Sparkle updates (uncompiled)
   - *Details*: Sparkle 2.10.1 added as the one permitted Mac dependency (`project.yml` remote package); Info.plist carries `SUFeedURL`, `SUPublicEDKey` (from the gitignored `Config/Local.xcconfig`), `SUEnableAutomaticChecks`, `SUScheduledCheckInterval = 86400`; `UpdateController` wraps `SPUStandardUpdaterController` (not started under XCTest) for the menu item and the General tab; THIRD-PARTY updated.
   - *Tech Notes*: First build needs network for SwiftPM to resolve Sparkle (also on the hosted CI runner). The end-to-end update test is part of the first release (`Scripts/release-mac.sh 0.9.0 --pre-release`). No other dependencies.

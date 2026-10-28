@@ -1,6 +1,19 @@
-# TO_SIMO_DO — manual actions still open (2026-10-28)
+# TO_SIMO_DO — manual actions still open (2026-10-28, updated after the owner-decisions batch)
 
-Everything the agent can do without you is done and committed (`1187695`). This file lists only what needs your hands, your devices or your decision. Reply with results in the order you like; nothing here blocks the others. History of earlier requests is in git (`git log -p TO_SIMO_DO.md`).
+Everything the agent can do without you is done; the two 2026-10-28 batches passed CI and are committed (section 0). This file lists only what needs your hands, your devices or your decision. Reply with results in the order you like; nothing here blocks the others. History of earlier requests is in git (`git log -p TO_SIMO_DO.md`).
+
+## 0. The two 2026-10-28 batches — CI green at 17:30, committed
+
+1. **Update both apps together before pairing anything new:** the pairing messages changed (X25519 keys + Allow click). Existing pairings keep working.
+2. Optional tidy-ups: delete the `TG_SPARKLE_PUBLIC_KEY` line from your `Config/Local.xcconfig` (the tracked `Shared.xcconfig` has it; the release script stops if the two differ); re-run `Scripts/make-icons.py` so the DMG caption reads "Drag Trackglass for Mac to Applications"; `output.txt` now holds your CI log (`git checkout output.txt` or `git rm output.txt`, your call).
+3. Quick physical checks (when you next have the phone): pair once and click **Allow** on the Mac; pair again and click **Don't Allow** (the phone says pairing was not allowed); a four-finger pinch with the thumb held still opens Launchpad / Apps; after a three-finger Spaces swipe, lifting the fingers one at a time does not scroll or move the pointer.
+4. CI now builds the soak UI test, which shows five pre-existing main-actor warnings in `Tests/TrackglassiOSUITests/SoakUITests.swift` (not an error; packages stay warning-free). Say if you want them fixed.
+
+## A2. Legacy dock-swipe trial on macOS 27 — two minutes
+
+1. `defaults write app.trackglass.mac TGTryLegacyDockSwipes -bool YES`, quit and reopen the Mac app. "Reduced gesture mode" lists "…legacy dock-swipe trial (macOS 27)".
+2. Three-finger swipe slowly left/right: does the Space follow your fingers live (or switch at all)? Four-finger swipe up: Mission Control?
+3. `defaults delete app.trackglass.mac TGTryLegacyDockSwipes`. Reply "live", "switches but not live" or "nothing" — I make it the default on macOS 27 if it works.
 
 ## A. Gate G-NC — two minutes, waiting on you
 
@@ -13,10 +26,18 @@ G-FORCE (M7.7) cannot run on this Mac: the private force path needs `CGEventSetH
 
 ## B. Decisions (SPEC or legal — yours)
 
-1. **PIN pairing security (SPEC §3.4, HIGH).** A passive Wi-Fi capture of one PIN pairing can be brute-forced offline (10⁶ PINs) to recover the phone's long-term key; QR pairing is unaffected. Options: (a) X25519 ephemeral keys in PAIR_REQUEST/RESPONSE, LTK from the ECDH secret + transcript; (b) an "Allow <phone> to pair?" click on the Mac before PAIR_RESPONSE; (c) keep PIN as a documented fallback, QR recommended. Recommendation: (a)+(b). Say which.
-2. **LICENSE** for the public repo: MIT or Apache-2.0 (SPEC §11).
+1. ~~PIN pairing security~~ — done 2026-10-28 (X25519 + Allow click).
+2. ~~LICENSE~~ — Apache-2.0, added 2026-10-28.
 3. **SPEC §2.3 layout** no longer matches the tree (`Mac/Networking` instead of `Mac/Server`/`Preferences`/`Permissions`; iOS screens under `iOS/Surface`). Approve a doc update or a file move.
 4. Optional, affects feel: (i) let pointer motion continue while a bottom-edge thumb is being classified (SPEC §6.5.3; fixture `resting_thumb_ignored` is then regenerated); (ii) whether the engine should read `HIDTrackpadScrollAcceleration`/`HIDScrollResolution`/`HIDScrollReportRate` for scroll acceleration (SPEC §6.8) — decide after `tgaccel` dumps them during C4.
+
+5. ~~4/5-finger pinch arbitration~~ — done 2026-10-28 (bigger change wins).
+6. ~~Staggered lift-off~~ — done 2026-10-28 (hold mode until the last finger).
+7. ~~Dock fallback threshold~~ — done 2026-10-28 (0.5).
+8. ~~macOS 27 legacy dock trial~~ — wired 2026-10-28; run it (section A2).
+9. **`releases/latest` vs the 0.9.0 pre-release.** GitHub's `/releases/latest` never resolves to a pre-release, but PLAN M11.2 publishes 0.9.0 as one and M11.3/APPSTORE.md send the reviewer to `releases/latest`. Either publish 0.9.0 as a normal release, or accept that the download links work from 1.0.0 (then the M11.3 test text changes).
+10. ~~Sparkle public key placement~~ — done 2026-10-28 (Shared.xcconfig).
+11. **Small spec clarifications to ratify or revert** (each is one line of code or spec): the per-frame `Data` copy at `NWConnection.send` (public API needs an owned `Data`; §7 says zero allocations — record as an accepted deviation in Appendix A, or I try `DispatchData`-backed sends); `tcp.noDelay` on the control channel (§3.3 lists plain `NWParameters(tls:)`); SURFACE carries four fields (§4.5 wording "same geometry fields as HELLO"); the §5.3 "iPad mini 326" fallback cannot be derived from an unknown identifier (table-based only); the scroll-acceleration curve index follows the pointer tracking speed (macOS's scroll gain does not — affects C4); the Diagnostics "Coalesced touch samples" toggle is user-visible (§5.1 does not list it — keep as a debug switch until M10.3 decides, or hide it).
 
 ## C. Release plumbing (before any public build)
 
