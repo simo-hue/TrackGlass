@@ -113,34 +113,70 @@
           <div class="monitor" id="heroDisplay">
             <div class="monitor__screen">
               <div class="desk" id="desk">
+                <!-- Space A: Safari → github.com/simo-hue -->
                 <div class="space space--a">
-                  <div class="menubar"><span class="menubar__dot"></span><span class="menubar__t">Finder</span><span class="menubar__r"><i class="tg-icon"></i></span></div>
-                  <div class="win win--photos" id="winPhotos">
-                    <div class="win__bar"><span></span><span></span><span></span><b>Library</b></div>
-                    <div class="win__body" id="photoScroll">
-                      <div class="grid" id="photoGrid"></div>
+                  <div class="menubar"><span class="menubar__dot"></span><span class="menubar__t">Safari</span><span class="menubar__r"><i class="tg-icon"></i></span></div>
+                  <div class="win win--browser" id="winGithub">
+                    <div class="win__bar"><span></span><span></span><span></span><b class="url"><i></i>github.com/simo-hue</b></div>
+                    <div class="win__body ghp" id="pageScroll">
+                      <div class="gh__page" id="page">
+                        <div class="gh__top"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg><span>Platform</span><span>Solutions</span><span>Resources</span><span>Open Source</span><span>Enterprise</span><span>Pricing</span><em>Sign in</em></div>
+                        <div class="gh__tabs"><span class="is-on">Overview</span><span>Repositories <b>64</b></span><span>Projects</span><span>Packages</span><span>Stars <b>17</b></span></div>
+                        <div class="gh__cols">
+                          <aside class="gh__side">
+                            <img class="gh__avatar" src="data:image/jpeg;base64,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" alt="" width="176" height="176">
+                            <div class="gh__name">Mattioli Simone</div>
+                            <div class="gh__login">simo-hue</div>
+                            <button class="gh__follow win__btn" id="demoBtn" tabindex="-1">Follow</button>
+                            <p class="gh__bio">CS UniVR grad. Enrolled in AUSIR path of EIT Digital Master School. Scaling Mountain Fauna Lover while shipping App Store apps like EVOLVE.</p>
+                            <div class="gh__meta"><span><b>22</b> followers · <b>14</b> following</span><span>Trentino Alto Adige, Italy</span><span>simo-hue.github.io</span></div>
+                          </aside>
+                          <div class="gh__main">
+                            <div class="gh__readme">
+                              <div class="gh__readme-path">simo-hue / README<span>.md</span></div>
+                              <div class="gh__readme-title">Hi, I'm Mattioli Simone</div>
+                              <div class="gh__readme-sub">28DGTL at ELTE &amp; KTH University</div>
+                              <div class="gh__readme-text">Passionate about the intersection of <b>technology</b>, <b>creativity</b>, and <b>real-world impact</b>.</div>
+                              <span class="gh__chip">Visit my website</span>
+                            </div>
+                            <div class="gh__h">Popular repositories</div>
+                            <div class="gh__repos">
+                              <div class="gh__repo"><b>simo-hue.github.io</b><s>Public</s><p>Personal website, portfolio and blog.</p><u><i style="--c:#f1e05a"></i>JavaScript</u></div>
+                              <div class="gh__repo"><b>TrackGlass</b><s>Public</s><p>Your Mac's trackpad, on glass. iPhone/iPad app + Mac companion.</p><u><i style="--c:#f05138"></i>Swift</u></div>
+                              <div class="gh__repo"><b>YouTube-Translator</b><s>Public</s><p>Automatic translation into every YouTube-supported language via Google APIs.</p><u><i style="--c:#3572a5"></i>Python</u></div>
+                              <div class="gh__repo"><b>Corso-Programmazione-Sicurezza-delle-Reti</b><s>Public</s><p>Materials for the network security programming course at UniVR.</p><u><i style="--c:#555"></i>C <em>★ 3</em></u></div>
+                              <div class="gh__repo"><b>Laboratorio-Basi-di-Dati</b><s>Public</s><p>Exercises and notes for the databases lab course.</p><u><i style="--c:#3572a5"></i>Python</u></div>
+                              <div class="gh__repo"><b>LLM-Tourism-Mobility-Predictor-HPC-A100</b><s>Public</s><p>Tourist mobility prediction with LLMs on HPC infrastructure.</p><u><i style="--c:#da5b0b"></i>Jupyter Notebook <em>★ 1</em></u></div>
+                            </div>
+                            <div class="gh__h">3,074 contributions in the last year</div>
+                            <div class="gh__contrib" id="contrib"></div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <div class="win win--small" id="winSide">
-                    <div class="win__bar"><span></span><span></span><span></span><b>Notes</b></div>
-                    <div class="win__lines">
-                      <i style="width:72%"></i><i style="width:54%"></i><i style="width:88%"></i><i style="width:40%"></i><i style="width:66%"></i>
-                    </div>
-                    <button class="win__btn" id="demoBtn" tabindex="-1">Share</button>
                   </div>
                 </div>
+                <!-- Space B: Safari → simo-hue.github.io -->
                 <div class="space space--b">
-                  <div class="menubar"><span class="menubar__dot"></span><span class="menubar__t">Mail</span><span class="menubar__r"><i class="tg-icon"></i></span></div>
-                  <div class="win win--mail">
-                    <div class="win__bar"><span></span><span></span><span></span><b>Inbox</b></div>
-                    <div class="mail">
-                      <div class="mail__row"><i></i><b style="width:46%"></b><s style="width:62%"></s></div>
-                      <div class="mail__row"><i></i><b style="width:30%"></b><s style="width:70%"></s></div>
-                      <div class="mail__row"><i></i><b style="width:58%"></b><s style="width:48%"></s></div>
-                      <div class="mail__row"><i></i><b style="width:36%"></b><s style="width:80%"></s></div>
-                      <div class="mail__row"><i></i><b style="width:52%"></b><s style="width:56%"></s></div>
-                      <div class="mail__row"><i></i><b style="width:40%"></b><s style="width:74%"></s></div>
-                      <div class="mail__row"><i></i><b style="width:64%"></b><s style="width:50%"></s></div>
+                  <div class="menubar"><span class="menubar__dot"></span><span class="menubar__t">Safari</span><span class="menubar__r"><i class="tg-icon"></i></span></div>
+                  <div class="win win--browser">
+                    <div class="win__bar"><span></span><span></span><span></span><b class="url"><i></i>simo-hue.github.io</b></div>
+                    <div class="win__body sm">
+                      <div class="sm__nav"><span>/ Simone Mattioli</span><i></i><i></i><i></i></div>
+                      <div class="sm__hero">
+                        <div class="sm__eyebrow">Technology &amp; humanity</div>
+                        <div class="sm__title">Simone Mattioli.</div>
+                        <div class="sm__tag">Computer scientist, builder, and curious human. Exploring AI and high-performance computing, and life beyond the screen.</div>
+                        <div class="sm__btns"><b>Explore my work</b><span>Read my stories</span></div>
+                        <div class="sm__photo"><span>From the mountains of Trentino to wherever curiosity leads.</span></div>
+                      </div>
+                      <div class="sm__sec"><span>01 / Selected work</span><b>Ideas put into practice.</b></div>
+                      <div class="sm__cards">
+                        <div class="sm__card"><i style="--g:linear-gradient(135deg,#1f3a5f,#5b7bd5)"></i><s>Personal finance</s><b>Wealth Compass Tracker</b></div>
+                        <div class="sm__card"><i style="--g:linear-gradient(135deg,#3a2a5f,#c3a6ff)"></i><s>Habits &amp; goals</s><b>Evolve</b></div>
+                        <div class="sm__card"><i style="--g:linear-gradient(135deg,#1f4a2f,#43e97b)"></i><s>Wildlife &amp; film</s><b>Mountain Fauna Lover</b></div>
+                        <div class="sm__card"><i style="--g:linear-gradient(135deg,#5f3a1f,#fda085)"></i><s>Campsite management</s><b>CampFlow</b></div>
+                      </div>
                     </div>
                   </div>
                 </div>
