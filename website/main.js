@@ -188,8 +188,11 @@
       h.classList.toggle("is-on", on);
     };
     const hideHalos = () => halos.forEach(h => h.classList.remove("is-on"));
-    const setPointer = (x, y) => { pointer.style.setProperty("--px", x + "px"); pointer.style.setProperty("--py", y + "px"); };
+    let px = 300, py = 200;                   // current pointer position on the desk (design px)
+    const setPointer = (x, y) => { px = x; py = y; pointer.style.setProperty("--px", x + "px"); pointer.style.setProperty("--py", y + "px"); };
     const fingerToPointer = (x, y) => { const p = toDesk(x, y); setPointer(p.x, p.y); };
+    // Like a real trackpad: the pointer follows the *motion* of the finger, not its absolute position.
+    const movePointerBy = (dx, dy) => setPointer(clamp(px + dx, 0, D.w - 4), clamp(py + dy, 0, D.h - 4));
     const click = (x, y) => {
       ripple.style.setProperty("--x", x + "px"); ripple.style.setProperty("--y", y + "px");
       ripple.classList.remove("go"); void ripple.offsetWidth; ripple.classList.add("go");
@@ -205,20 +208,31 @@
 
     // User interaction: hover / touch on the glass drives the pointer live
     glass.style.touchAction = "none";
+    // The glass is drawn in perspective, so absolute positions on it map to the screen non-linearly.
+    // The user's own cursor therefore drives the pointer by its screen-space *delta* (scaled back to design
+    // pixels by the stage scale) with a fixed gain, exactly like a trackpad; the halo still sits under the
+    // cursor at the element's own (untransformed) coordinates.
+    const stageWrap = glass.closest(".stage-wrap");
+    const GAIN = 1.7;                          // desk px per glass px of finger travel
+    let last = null;
     const onMove = e => {
-      const r = glass.getBoundingClientRect();
-      // offsetX/Y are in the element's own (untransformed) coordinate space
       const x = clamp(e.offsetX, 0, G.w), y = clamp(e.offsetY, 0, G.h);
       userActiveUntil = performance.now() + 2200;
       hideHalos(); halo(0, x, y, true, 1);
-      fingerToPointer(x, y);
+      if (last) {
+        const s = parseFloat(stageWrap?.style.getPropertyValue("--s")) || 1;
+        movePointerBy((e.clientX - last.x) / s * GAIN, (e.clientY - last.y) / s * GAIN);
+      }
+      last = { x: e.clientX, y: e.clientY };
       hint.classList.add("is-hidden");
       setStep(0);
-      void r;
     };
+    glass.addEventListener("pointerenter", e => { last = { x: e.clientX, y: e.clientY }; });
     glass.addEventListener("pointermove", onMove);
-    glass.addEventListener("pointerdown", e => { onMove(e); click(e.offsetX, e.offsetY); setStep(1); userActiveUntil = performance.now() + 2200; });
-    glass.addEventListener("pointerleave", () => { userActiveUntil = performance.now() + 900; });
+    glass.addEventListener("pointerdown", e => { last = { x: e.clientX, y: e.clientY }; onMove(e); click(e.offsetX, e.offsetY); setStep(1); userActiveUntil = performance.now() + 2200; });
+    glass.addEventListener("pointerup", () => { last = null; });
+    glass.addEventListener("pointercancel", () => { last = null; });
+    glass.addEventListener("pointerleave", () => { last = null; userActiveUntil = performance.now() + 900; });
 
     new IntersectionObserver(([e]) => { visible = e.isIntersecting; }, { threshold: .05 }).observe(glass);
 
