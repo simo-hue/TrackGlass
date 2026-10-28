@@ -117,6 +117,16 @@ public final class GestureEngine: @unchecked Sendable {
     private var threeFingerDragActive = false
     public private(set) var needsTick = false
     public var hasActiveContacts: Bool { tracker.trackedCount > 0 }
+    /// STATUS `engineState` (§4.5): 0 idle, 1 pointer, 2 scroll, 3 gesture, 4 drag.
+    public var diagnosticState: UInt8 {
+        if dragButtonHeld { return 4 }
+        switch mode {
+        case .idle: return momentum.active ? 2 : 0
+        case .pointer: return 1
+        case .pendingScroll: return twoFinger.scrollActive ? 2 : (twoFinger.hasActiveGesture ? 3 : 1)
+        case .multiFinger: return 3
+        }
+    }
 
     public init(settings: TrackpadSettings = TrackpadSettings(), geometry: EngineGeometry,
                 acceleration: (any AccelerationModel)? = nil,

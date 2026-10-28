@@ -11,6 +11,7 @@ final class TouchSurfaceView: UIView {
     private let ppi = DevicePPI.lookup(modelIdentifier: TouchSurfaceView.modelIdentifier())
     private var sequence: UInt32 = 0
     private var lastEmitTimeNs: UInt64 = 0
+    private var lastEmitContactCount = 0
     private let displayLinkDriver = DisplayLinkDriver()
 
     override init(frame: CGRect) {
@@ -98,6 +99,10 @@ final class TouchSurfaceView: UIView {
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         displayLinkDriver.recordMovedEvent()
+        // UIKit splits one UIEvent into began/moved/ended calls; a frame for this event with the same
+        // contacts was already emitted by `touchesBegan`, so sending it again would only double the traffic.
+        if let event, TouchSample.timestampNanoseconds(event.timestamp) == lastEmitTimeNs,
+           contacts.count == lastEmitContactCount { return }
         emit(event: event)
     }
 
@@ -134,6 +139,7 @@ final class TouchSurfaceView: UIView {
         guard touchFrame.contactCount > 0 else { return }
         sequence &+= 1
         lastEmitTimeNs = touchFrame.frameTime
+        lastEmitContactCount = contacts.count
         frameSender.enqueue(touchFrame)
     }
 

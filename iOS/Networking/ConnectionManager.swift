@@ -182,15 +182,9 @@ actor ConnectionManager {
     private func refreshState() async {
         let macs = await browser.macs
         let discoveryStatus = await browser.status
-        let isConnected = await session.isConnected
-        let status = await session.status
-        let macName = await session.macName
-        let rttMicros = await session.rttMicros
-        let settings = await session.settings
-        let diagnostics = await session.diagnostics
-        let diagnosticsSequence = await session.diagnosticsSequence
+        // One hop for the whole session state; `apply` drops a snapshot overtaken by a newer one.
+        let snapshot = await session.snapshot()
         await state.updateDiscovery(macs: macs, pairedMacs: pairedMacs, status: discoveryStatus)
-        await state.updateSession(isConnected: isConnected, status: status, macName: macName,
-                                  rttMicros: rttMicros, settings: settings, diagnostics: diagnostics, diagnosticsSequence: diagnosticsSequence)
+        await state.apply(snapshot)
     }
 }

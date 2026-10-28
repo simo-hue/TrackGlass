@@ -12,11 +12,14 @@ final class InputPipeline: @unchecked Sendable {
     private var geometry: EngineGeometry
     private var recorder: ReplayRecorder?
     private var events = EventBuffer()
-    private var timer: DispatchSourceTimer?
+    /// One timer per pipeline (§2.4), resumed while the engine or injector needs ticks and suspended otherwise.
+    private let timer: DispatchSourceTimer
+    private var timerRunning = false
+    var onRecordingChanged: ((Bool) -> Void)?
     private var lastFrameTime: UInt64?
     private var lastReceiveTime: UInt64 = 0
     private var lastInputUptime: UInt64 = 0
-    var diagnosticEngineState: UInt8 { engine.hasActiveContacts ? 1 : 0 }
+    var diagnosticEngineState: UInt8 { engine.diagnosticState }
     var onHaptic: ((HapticKind) -> Void)?
     var onEstimatedTick: ((UInt64) -> Void)?
     private(set) var outOfOrderFrames = 0
@@ -31,15 +34,21 @@ final class InputPipeline: @unchecked Sendable {
         self.engine = GestureEngine(settings: settings, geometry: geometry, acceleration: accelerationModel,
             scrollAcceleration: PointerAccelerationProvider.makeScroll(settings: settings))
         self.injector = injector
+        timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(8))
+        timer.setEventHandler { [weak self] in self?.tick() }
+        // Created suspended; `updateTimer` resumes it. A suspended source must be resumed before release.
+    }
+
+    deinit {
+        if !timerRunning { timer.resume() }
+        timer.cancel()
     }
     func consume(_ data: Data) {
         dispatchPrecondition(condition: .onQueue(queue))
         let receiveTime = DispatchTime.now().uptimeNanoseconds
         guard let frame = try? data.withUnsafeBytes({ try TouchFrameDecoder.decode($0) }) else { return }
-        if let lastSequence {
-            let sequenceDelta = frame.header.sequence &- lastSequence
-            if sequenceDelta == 0 || sequenceDelta >= 0x8000_0000 { outOfOrderFrames += 1; return }
-        }
+        if let lastSequence, !MessageHeader.sequence(frame.header.sequence, isNewerThan: lastSequence) { outOfOrderFrames += 1; return }
         if let lastFrameTime {
             if frame.frameTime < lastFrameTime { backwardsTimeFrames += 1; return }
         }
@@ -76,6 +85,7 @@ final class InputPipeline: @unchecked Sendable {
         do {
             recorder = try ReplayRecorder(geometry: geometry)
             logger.info("recording input session to \(self.recorder!.url.path, privacy: .private)")
+            onRecordingChanged?(true)
         } catch {
             logger.error("cannot start input recording: \(error.localizedDescription, privacy: .public)")
         }
@@ -84,6 +94,7 @@ final class InputPipeline: @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         guard let recorder else { return }
         self.recorder = nil
+        onRecordingChanged?(false)
         do {
             try recorder.finish()
             logger.info("saved input recording to \(recorder.url.path, privacy: .private)")
@@ -92,9 +103,20 @@ final class InputPipeline: @unchecked Sendable {
         }
     }
     func stop() {
-        dispatchPrecondition(condition: .onQueue(queue)); timer?.cancel(); timer = nil
+        dispatchPrecondition(condition: .onQueue(queue))
+        if timerRunning { timer.suspend(); timerRunning = false }
         events.clear(); engine.forceLiftoff(releaseDragLock: true, into: &events); injectEvents()
         stopRecording()
+    }
+
+    /// §6.3: three seconds without any datagram (frame or heartbeat) while connected means the engine
+    /// is reset and STATUS reports idle; the 1.5 s lift-off timeout in `tick` covers tracked contacts,
+    /// this covers everything else (momentum, grace windows, pending taps, a deliberate drag lock).
+    func idleCheck() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard lastInputUptime != 0, DispatchTime.now().uptimeNanoseconds &- lastInputUptime >= 3_000_000_000,
+              engine.needsTick || engine.hasActiveContacts || engine.diagnosticState != 0 else { return }
+        events.clear(); engine.forceLiftoff(releaseDragLock: true, into: &events); injectEvents(); updateTimer()
     }
     private func injectEvents() {
         for index in 0..<events.count {
@@ -103,12 +125,13 @@ final class InputPipeline: @unchecked Sendable {
         }
     }
     private func updateTimer() {
-        if (engine.needsTick || injector.needsTick) && timer == nil {
-            let source = DispatchSource.makeTimerSource(queue: queue)
-            source.schedule(deadline: .now(), repeating: .milliseconds(8))
-            source.setEventHandler { [weak self] in self?.tick() }
-            timer = source; source.resume()
-        } else if !engine.needsTick && !injector.needsTick { timer?.cancel(); timer = nil }
+        let needed = engine.needsTick || injector.needsTick
+        if needed && !timerRunning {
+            timer.schedule(deadline: .now(), repeating: .milliseconds(8))
+            timer.resume(); timerRunning = true
+        } else if !needed && timerRunning {
+            timer.suspend(); timerRunning = false
+        }
     }
     private func tick() {
         dispatchPrecondition(condition: .onQueue(queue))

@@ -15,6 +15,10 @@ private struct ReplaySettings: Decodable {
 private struct AccelerationSettings: Decodable {
     let model: String
     let pointsPerMM: Double?
+    /// `parametric` only: path (relative to the settings file) of a `tgaccel` registry archive such as
+    /// `Mac/Resources/DefaultAccelCurves.json`, plus the tracking speed to select the curve with.
+    let curvesFile: String?
+    let trackingSpeed: Double?
 }
 
 private struct GeometryChange: Decodable {
@@ -85,13 +89,36 @@ private enum TGReplay {
                                forceFinalLiftoff: Bool = false) throws -> ReplayResult {
         let configuration = try JSONDecoder().decode(ReplaySettings.self, from: Data(contentsOf: settingsURL))
         let acceleration: any AccelerationModel
+        var scrollAcceleration: any AccelerationModel
         switch configuration.acceleration.model {
-        case "unitGain": acceleration = UnitGainAcceleration()
-        case "constant": acceleration = ConstantGainAcceleration(pointsPerMM: configuration.acceleration.pointsPerMM ?? 4)
+        case "unitGain": acceleration = UnitGainAcceleration(); scrollAcceleration = acceleration
+        case "constant":
+            acceleration = ConstantGainAcceleration(pointsPerMM: configuration.acceleration.pointsPerMM ?? 4)
+            scrollAcceleration = acceleration
+        case "parametric":
+            // SPEC §6.10: the real Apple curves, for tests of the models themselves (fixtures stay unitGain).
+            guard let file = configuration.acceleration.curvesFile else {
+                throw ReplayError.usage("parametric acceleration needs \"curvesFile\" in the settings file")
+            }
+            let archiveURL = URL(fileURLWithPath: file, relativeTo: settingsURL.deletingLastPathComponent())
+            let archive = try Data(contentsOf: archiveURL)
+            guard let root = try JSONSerialization.jsonObject(with: archive) as? [String: Any],
+                  let rawResolution = (root["HIDPointerResolution"] as? NSNumber)?.doubleValue,
+                  let reportRate = (root["HIDPointerReportRate"] as? NSNumber)?.doubleValue else {
+                throw ReplayError.usage("\(file) lacks HIDPointerResolution / HIDPointerReportRate")
+            }
+            let trackingSpeed = configuration.acceleration.trackingSpeed ?? configuration.settings.trackingSpeed
+            acceleration = try PointerAccelerator(registryJSON: archive, resolution: rawResolution / 65_536,
+                                                  reportRate: reportRate, trackingSpeed: trackingSpeed)
+            if let scrollCurves = try? ParametricAccelerationCurve.decodeScrollCurves(from: archive),
+               let scroll = try? ScrollAccelerator(curves: scrollCurves, resolution: rawResolution / 65_536,
+                                                   reportRate: reportRate, trackingSpeed: trackingSpeed) {
+                scrollAcceleration = scroll
+            } else { scrollAcceleration = acceleration }
         default: throw ReplayError.unsupportedAcceleration(configuration.acceleration.model)
         }
         var reader = try TGRecReader(contentsOf: recording)
-        let engine = GestureEngine(settings: configuration.settings, geometry: configuration.geometry, acceleration: acceleration, scrollAcceleration: acceleration)
+        let engine = GestureEngine(settings: configuration.settings, geometry: configuration.geometry, acceleration: acceleration, scrollAcceleration: scrollAcceleration)
         var events: [GestureEvent] = []
         var frames: [TouchFrame] = []
         let ticks = (configuration.ticks ?? []).sorted()

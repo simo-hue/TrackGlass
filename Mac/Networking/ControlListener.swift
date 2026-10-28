@@ -25,7 +25,7 @@ final class ControlListener {
     private var rttByChannel: [UUID: UInt32] = [:]
     private var admitted: [UUID: UUID] = [:]
     private var generation = UUID()
-    private let logger = Logger(subsystem: "app.trackglass.mac", category: "Control")
+    private let logger = Logger(subsystem: "app.trackglass.mac", category: "net")
     // Appendix A defaults until TrackpadPreferences is introduced in M4.4.
     static let defaultSettings = SettingsMessage(naturalScrolling: 1, tapToClick: 1,
         forceClickEnabled: 1, hapticsSuggested: 1, trackingSpeed: 0.6875, secondaryClickMode: 1)

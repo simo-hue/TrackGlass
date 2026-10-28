@@ -39,4 +39,14 @@ final class PointerInjectorTests: XCTestCase {
         XCTAssertEqual(pointerEvents.count, 1)
         XCTAssertEqual(pointerEvents.first?.getIntegerValueField(.mouseEventDeltaX), 1)
     }
+
+    func testDegradedListReportsTheFallbacksTheInjectorActuallyUses() {
+        // Even with every private symbol resolved, force click and Notification Center use their fallbacks today (G-FORCE/G-NC pending).
+        var full = PrivateAPICapabilities()
+        full.gestureEvents = true; full.dockSwipe = true; full.forceEvent = true; full.fluidTouchGesture = true
+        let list = QuartzInjector.degradedGestures(capabilities: full, path: .legacyFields)
+        XCTAssertTrue(list.contains("Force click uses Look Up"))
+        XCTAssertTrue(list.contains("Notification Center uses Accessibility"))
+        XCTAssertFalse(list.contains { $0.hasPrefix("Spaces") })
+    }
 }

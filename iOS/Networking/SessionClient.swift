@@ -30,6 +30,25 @@ final class SessionClient {
 
     init(inputSink: UDPFrameSink) { self.inputSink = inputSink }
 
+    /// Everything the UI mirrors, read in one actor hop. `sequence` increases with every snapshot so a
+    /// consumer can discard one that was taken earlier but delivered later (actor reentrancy).
+    struct Snapshot: Sendable {
+        let isConnected: Bool
+        let status: String
+        let macName: String
+        let rttMicros: UInt32
+        let settings: SettingsMessage?
+        let diagnostics: StatusMessage?
+        let diagnosticsSequence: UInt64
+        let sequence: UInt64
+    }
+    private var snapshotSequence: UInt64 = 0
+    func snapshot() -> Snapshot {
+        snapshotSequence &+= 1
+        return Snapshot(isConnected: isConnected, status: status, macName: macName, rttMicros: rttMicros, settings: settings,
+                        diagnostics: diagnostics, diagnosticsSequence: diagnosticsSequence, sequence: snapshotSequence)
+    }
+
     func setCallbacks(connectionChanged: (@MainActor @Sendable () -> Void)?,
                       sessionClosed: (@MainActor @Sendable () -> Void)?) {
         self.connectionChanged = connectionChanged

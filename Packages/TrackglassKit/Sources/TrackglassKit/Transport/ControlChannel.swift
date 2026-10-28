@@ -14,6 +14,10 @@ public final class ControlChannel {
     private var nonce: UInt32 = 0
     private var pending: [UInt32: UInt64] = [:]
     private var timer: Task<Void, Never>?
+    private var watchdog: Task<Void, Never>?
+    /// A connection that never becomes ready or never completes HELLO/WELCOME (i.e. `startHeartbeat()`
+    /// is never called) is closed after this long; before the heartbeat there is no other liveness check.
+    public var handshakeTimeout: Duration = .seconds(10)
     private var closed = false
     private var closing = false
     private var unknownTypes: Set<UInt8> = []
@@ -24,6 +28,11 @@ public final class ControlChannel {
     deinit { connection.cancel() }
 
     public func start() {
+        watchdog = Task { [weak self] in
+            guard let timeout = self?.handshakeTimeout else { return }
+            do { try await Task.sleep(for: timeout) } catch { return }
+            self?.close("Connection timed out")
+        }
         connection.stateUpdateHandler = { [weak self] state in
             Task { @MainActor in
                 guard let self, !self.closed else { return }
@@ -69,6 +78,7 @@ public final class ControlChannel {
 
     public func startHeartbeat() {
         guard timer == nil, !closed else { return }
+        watchdog?.cancel(); watchdog = nil
         timer = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
@@ -121,6 +131,7 @@ public final class ControlChannel {
         guard !closed else { return }
         closed = true
         timer?.cancel(); timer = nil
+        watchdog?.cancel(); watchdog = nil
         pending.removeAll()
         connection.stateUpdateHandler = nil
         connection.cancel()

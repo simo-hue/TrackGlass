@@ -119,14 +119,19 @@ final class QuartzInjector: InputInjector {
         if UserDefaults.standard.bool(forKey: "TGDisablePrivateGestures") { return PrivateAPICapabilities() }
         return TGPrivateAPIGetCapabilities()
     }
+    /// Gates G-FORCE / G-NC (M7.6, M7.7): the private force and fluid-gesture paths are not implemented,
+    /// so `inject` always takes the fallbacks regardless of the resolved capability flags. The degraded
+    /// list must describe what `inject` does, not what the symbols would allow.
+    static let forceClickUsesFallback = true
+    static let notificationCenterUsesFallback = true
     static func degradedGestures(capabilities: PrivateAPICapabilities = runtimeCapabilities, path: DockSwipePath = .current) -> [String] {
         var result = [String]()
         if !capabilities.gestureEvents || (path == .attachedHIDEvent && !capabilities.dockSwipe) {
             result.append("Spaces, Mission Control, App Exposé and Show Desktop use shortcuts")
             result.append("Launchpad / Apps gesture unavailable")
         }
-        if !capabilities.forceEvent { result.append("Force click uses Look Up") }
-        if !capabilities.fluidTouchGesture { result.append("Notification Center uses Accessibility") }
+        if forceClickUsesFallback || !capabilities.forceEvent { result.append("Force click uses Look Up") }
+        if notificationCenterUsesFallback || !capabilities.fluidTouchGesture { result.append("Notification Center uses Accessibility") }
         if !capabilities.gestureEvents { result.append("Scroll zoom gestures unavailable") }
         return result
     }

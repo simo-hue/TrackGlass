@@ -21,7 +21,7 @@ final class BonjourAdvertiser {
     private var admittedInputPeer: UUID?
     private var ready = Set<String>()
     private var registered = Set<String>()
-    private let logger = Logger(subsystem: "app.trackglass.mac", category: "Input")
+    private let logger = Logger(subsystem: "app.trackglass.mac", category: "net")
 
     init(defaults: UserDefaults = .standard, store: PairingStore = PairingStore()) {
         self.store = store

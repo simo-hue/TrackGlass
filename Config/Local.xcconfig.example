@@ -1,1 +1,3 @@
 DEVELOPMENT_TEAM =
+// Sparkle EdDSA public key from `generate_keys` (the private key stays in your Keychain). Used by M11.1/M11.2.
+TG_SPARKLE_PUBLIC_KEY =

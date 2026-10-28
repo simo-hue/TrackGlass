@@ -5,7 +5,7 @@ import TrackglassKit
 
 final class ReplayRecorder {
     let url: URL
-    private var writer: TGRecWriter
+    private let writer: TGRecFileWriter
     private let logger = Logger(subsystem: "app.trackglass.mac", category: "engine")
 
     init(geometry: EngineGeometry) throws {
@@ -17,8 +17,9 @@ final class ReplayRecorder {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let filename = formatter.string(from: Date()).replacingOccurrences(of: ":", with: "-") + ".tgrec"
         url = directory.appendingPathComponent(filename)
-        writer = TGRecWriter(header: try TGRecHeader(origin: .mac,
-            surfaceWidthMM: geometry.widthMM, surfaceHeightMM: geometry.heightMM))
+        // Streamed to disk as frames arrive: a crash keeps what was recorded and memory stays flat (§7).
+        writer = try TGRecFileWriter(header: try TGRecHeader(origin: .mac,
+            surfaceWidthMM: geometry.widthMM, surfaceHeightMM: geometry.heightMM), url: url)
     }
 
     func append(frameBytes: Data, captureTimeNs: UInt64) {
@@ -26,5 +27,5 @@ final class ReplayRecorder {
         catch { logger.error("cannot append replay frame: \(error.localizedDescription, privacy: .public)") }
     }
 
-    func finish() throws { try writer.write(to: url) }
+    func finish() throws { try writer.finish() }
 }

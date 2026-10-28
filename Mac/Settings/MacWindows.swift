@@ -33,6 +33,10 @@ final class MacWindowCoordinator {
     private let input: InputListener
     init(permission: AccessibilityPermission, pairing: PairingService, control: ControlListener, input: InputListener) {
         self.permission = permission; self.pairing = pairing; self.control = control; self.input = input
+        // The button label follows the pipeline's real state (a session end also ends the recording).
+        input.onRecordingChanged = { [weak model] recording in
+            Task { @MainActor in model?.isRecording = recording }
+        }
     }
     func showWelcomeIfNeeded(force: Bool = false) {
         guard force || !UserDefaults.standard.bool(forKey: "welcomeCompleted") else { return }
@@ -54,7 +58,6 @@ final class MacWindowCoordinator {
     }
     func toggleRecording() {
         if model.isRecording { input.stopRecording() } else { input.startRecording() }
-        model.isRecording.toggle()
     }
     private func window<V: View>(title: String, size: NSSize, content: V) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)

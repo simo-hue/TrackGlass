@@ -47,3 +47,17 @@ public struct MessageHeader: Equatable, Sendable {
         )
     }
 }
+
+public extension MessageHeader {
+    /// SPEC §4.7: `seq <= lastSeq` modulo wrap is stale. Half-range comparison so a wrap from 0xFFFF_FFFF to 0 is "newer".
+    static func sequence(_ sequence: UInt32, isNewerThan last: UInt32) -> Bool {
+        let delta = sequence &- last
+        return delta != 0 && delta < 0x8000_0000
+    }
+
+    /// Number of frames missing between `last` and a newer `sequence` (0 when consecutive); nil when not newer.
+    static func gap(from last: UInt32, to sequence: UInt32) -> Int? {
+        guard Self.sequence(sequence, isNewerThan: last) else { return nil }
+        return Int(sequence &- last) - 1
+    }
+}

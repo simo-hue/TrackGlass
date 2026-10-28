@@ -339,3 +339,15 @@ Improvements recorded but not done (no decision needed; scheduled after CI is gr
 2. Mac: the menu bar now shows the two-outline template icon instead of the word; confirm it adapts to light/dark menu bars and that the app icon appears in Finder/Dock during Settings. iOS: the home-screen icon is the brand mark on near-black.
 3. VoiceOver on the iPhone: pair and change a setting using only VoiceOver (grip button is "Open settings"; the surface reads "Trackpad" and passes touches straight through; the PIN list announces the selected Mac).
 4. Settings → Accessibility → Larger Text at the maximum size on an iPhone SE: onboarding, the Macs list and Settings must not clip text.
+
+## 2026-10-27 (evening) — Release groundwork + backlog: CI, then what only you can provide
+
+1. `xcodegen generate && Scripts/ci.sh` — new Kit tests use loopback TCP (no TLS); expect ~1 s more. Paste failures back.
+2. When convenient, provide or decide (none of it blocks development):
+   - `SUPPORT_EMAIL` and, once the App Store page exists, `APPSTORE_URL` in `website/*.html` (search for the two words).
+   - The repository LICENSE (MIT or Apache-2.0 per SPEC §11).
+   - Sparkle: run `generate_keys` from the Sparkle 2 release archive; put the printed public key into `Config/Local.xcconfig` as `TG_SPARKLE_PUBLIC_KEY` (the private key stays in your Keychain). Then I wire M11.1.
+   - Notarization: `xcrun notarytool store-credentials trackglass-notary` with an App Store Connect API key or app-specific password; `gh auth login`.
+   - GitHub → Settings → Pages → Source: GitHub Actions (the workflow is already in `.github/workflows/pages.yml`).
+3. `Scripts/release-mac.sh 0.9.0 --pre-release --dry-run` is the first thing to try once the Developer ID certificate is installed: it archives, exports, builds the DMG and stops before notarization. Note that it refuses a dirty tree and that `MARKETING_VERSION` in `Config/Shared.xcconfig` must be set to `0.9.0` for the pre-release (it is `1.0.0` today).
+4. Mac logs: the categories are now `net`, `engine`, `inject`, `prefs` (SPEC §6.10); earlier notes that say "Input log"/"Control log" mean `net`.

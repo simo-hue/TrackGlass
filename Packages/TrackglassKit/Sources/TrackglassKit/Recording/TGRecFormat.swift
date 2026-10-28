@@ -104,3 +104,59 @@ public struct TGRecReader {
         return record
     }
 }
+
+/// Streams a recording to disk as frames arrive (SPEC §6.10): the header is written when the file is
+/// opened and every record is appended through a bounded buffer, so a long session neither grows memory
+/// nor is lost when the process dies before `finish()`. One owner, one queue; not thread-safe.
+public final class TGRecFileWriter {
+    public let url: URL
+    public private(set) var recordCount = 0
+    private let handle: FileHandle
+    private var buffer = Data()
+    private var closed = false
+    private static let flushThreshold = 64 * 1_024
+
+    public init(header: TGRecHeader, url: URL) throws {
+        self.url = url
+        let writer = TGRecWriter(header: header)
+        try writer.data.write(to: url, options: .atomic)
+        handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        buffer.reserveCapacity(Self.flushThreshold + 10 + TouchFrame.maximumByteCount)
+    }
+
+    deinit { try? handle.close() }
+
+    /// Appends one validated TOUCH_FRAME without copying it into a `Data` first.
+    public func append(captureTimeNs: UInt64, frameBytes: UnsafeRawBufferPointer) throws {
+        guard !closed else { throw TGRecError.truncated }
+        guard (28...TouchFrame.maximumByteCount).contains(frameBytes.count) else { throw TGRecError.invalidFrameLength }
+        _ = try TouchFrameDecoder.decode(frameBytes)
+        var timestamp = captureTimeNs.littleEndian
+        var length = UInt16(frameBytes.count).littleEndian
+        withUnsafeBytes(of: &timestamp) { buffer.append(contentsOf: $0) }
+        withUnsafeBytes(of: &length) { buffer.append(contentsOf: $0) }
+        buffer.append(contentsOf: frameBytes)
+        recordCount += 1
+        if buffer.count >= Self.flushThreshold { try flush() }
+    }
+
+    public func append(captureTimeNs: UInt64, frameBytes: Data) throws {
+        try frameBytes.withUnsafeBytes { try append(captureTimeNs: captureTimeNs, frameBytes: $0) }
+    }
+
+    /// Flushes, syncs and closes the file. Idempotent.
+    public func finish() throws {
+        guard !closed else { return }
+        try flush()
+        try handle.synchronize()
+        try handle.close()
+        closed = true
+    }
+
+    private func flush() throws {
+        guard !buffer.isEmpty else { return }
+        try handle.write(contentsOf: buffer)
+        buffer.removeAll(keepingCapacity: true)
+    }
+}

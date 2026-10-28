@@ -36,7 +36,7 @@ final class FrameSender: @unchecked Sendable {
     private var hasContacts = false
     private var latestSequence: UInt32 = 0
     private let queue: DispatchQueue
-    private var recording: TGRecWriter?
+    private var recording: TGRecFileWriter?
     private let sink: any FrameSink
     private let source: any DispatchSourceUserDataAdd
     private let heartbeatTimer: DispatchSourceTimer
@@ -80,9 +80,8 @@ final class FrameSender: @unchecked Sendable {
                 try buffer.withUnsafeMutableBytes { bytes in
                     let count = try TouchFrameEncoder(frame: frame).encode(into: bytes)
                     sink.consume(UnsafeRawBufferPointer(rebasing: bytes[..<count]))
-                    if recording != nil {
-                        try recording?.append(captureTimeNs: frame.frameTime, frameBytes: Data(bytes: bytes.baseAddress!, count: count))
-                    }
+                    // Streamed straight from the encode buffer: no per-frame `Data` even while recording (§7).
+                    try recording?.append(captureTimeNs: frame.frameTime, frameBytes: UnsafeRawBufferPointer(rebasing: bytes[..<count]))
                 }
             } catch {
                 logger.error("Touch frame encoding failed")
@@ -92,10 +91,16 @@ final class FrameSender: @unchecked Sendable {
 
     func startRecording(widthMM: Double, heightMM: Double) async throws {
         let header = try TGRecHeader(origin: .phone, surfaceWidthMM: widthMM, surfaceHeightMM: heightMM)
-        await withCheckedContinuation { continuation in
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("TrackglassRecordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("Trackglass-\(UUID().uuidString).tgrec")
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             queue.async { [self] in
-                recording = TGRecWriter(header: header)
-                continuation.resume()
+                do {
+                    try recording?.finish()
+                    recording = try TGRecFileWriter(header: header, url: url)
+                    continuation.resume()
+                } catch { continuation.resume(throwing: error) }
             }
         }
     }
@@ -108,11 +113,8 @@ final class FrameSender: @unchecked Sendable {
                 }
                 recording = nil
                 do {
-                    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("TrackglassRecordings", isDirectory: true)
-                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                    let url = directory.appendingPathComponent("Trackglass-\(UUID().uuidString).tgrec")
-                    try writer.write(to: url)
-                    continuation.resume(returning: url)
+                    try writer.finish()
+                    continuation.resume(returning: writer.url)
                 } catch { continuation.resume(throwing: error) }
             }
         }

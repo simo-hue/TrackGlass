@@ -45,11 +45,16 @@ public final class ScrollAccelerator: AccelerationModel, @unchecked Sendable {
         private var intervals = [Double](repeating: 0, count: 9)
         private var next = 0, count = 0
         private var positive: Bool?
-        mutating func reset() { next = 0; count = 0; positive = nil }
+        /// Frame time that passed while this axis produced no counts; Apple's history interval is the time since
+        /// the previous event *on this axis*, not the previous frame.
+        private var idleMs = 0.0
+        mutating func reset() { next = 0; count = 0; positive = nil; idleMs = 0 }
 
-        mutating func points(counts: Double, ms: Double, rate: Double, curve: ParametricAccelerationCurve) -> Double {
+        mutating func points(counts: Double, ms frameMs: Double, rate: Double, curve: ParametricAccelerationCurve) -> Double {
+            guard counts != 0 else { idleMs += frameMs; return 0 }
+            let ms = frameMs + idleMs
+            idleMs = 0
             if ms > 500 { reset() }
-            guard counts != 0 else { return 0 }
             if let positive, positive != (counts > 0) { reset() }
             positive = counts > 0
             amounts[next] = abs(counts); intervals[next] = ms

@@ -22,6 +22,8 @@ targets:
       - iOS/Networking
       - iOS/Pairing
       - iOS/Resources/Assets.xcassets
+      - path: iOS/Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - package: TrackglassKit
     configFiles:

@@ -19,6 +19,17 @@ final class ConnectionState {
     /// The Mac the app connects to automatically (§3.5 "last used Mac"); drives the `.noMac` overlay text.
     private(set) var lastMacName = ""
 
+    private var appliedSnapshot: UInt64 = 0
+
+    /// Applies a session snapshot unless an older one arrives after a newer one was already applied.
+    func apply(_ snapshot: SessionClient.Snapshot) {
+        guard snapshot.sequence > appliedSnapshot else { return }
+        appliedSnapshot = snapshot.sequence
+        updateSession(isConnected: snapshot.isConnected, status: snapshot.status, macName: snapshot.macName,
+                      rttMicros: snapshot.rttMicros, settings: snapshot.settings,
+                      diagnostics: snapshot.diagnostics, diagnosticsSequence: snapshot.diagnosticsSequence)
+    }
+
     func updateSession(isConnected: Bool, status: String, macName: String, rttMicros: UInt32,
                        settings: SettingsMessage?, diagnostics: StatusMessage? = nil, diagnosticsSequence: UInt64 = 0) {
         self.diagnostics = diagnostics

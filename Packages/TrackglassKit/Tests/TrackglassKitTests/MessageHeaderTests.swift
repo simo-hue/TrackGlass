@@ -62,4 +62,17 @@ final class MessageHeaderTests: XCTestCase {
         XCTAssertGreaterThan(end, start)
         XCTAssertGreaterThanOrEqual(end - start, 2_000_000)
     }
+
+    func testSequenceOrderingAndGapsAcrossWrap() {
+        XCTAssertTrue(MessageHeader.sequence(1, isNewerThan: 0))
+        XCTAssertTrue(MessageHeader.sequence(0, isNewerThan: 0xFFFF_FFFF))
+        XCTAssertFalse(MessageHeader.sequence(5, isNewerThan: 5))
+        XCTAssertFalse(MessageHeader.sequence(4, isNewerThan: 5))
+        XCTAssertFalse(MessageHeader.sequence(0xFFFF_FFFF, isNewerThan: 0))
+        XCTAssertEqual(MessageHeader.gap(from: 10, to: 11), 0)
+        XCTAssertEqual(MessageHeader.gap(from: 10, to: 14), 3)
+        XCTAssertEqual(MessageHeader.gap(from: 0xFFFF_FFFE, to: 1), 2)
+        XCTAssertNil(MessageHeader.gap(from: 7, to: 7))
+        XCTAssertNil(MessageHeader.gap(from: 7, to: 3))
+    }
 }

@@ -18,6 +18,9 @@ final class UDPFrameSink: FrameSink, @unchecked Sendable {
 
     func consume(_ bytes: UnsafeRawBufferPointer) {
         guard let connection = currentConnection() else { return }
+        // Network.framework takes ownership of a `Data`, so this copy (≤ 188 bytes) is the one allocation
+        // at the transport boundary that §7 cannot avoid; everything upstream reuses fixed storage.
+        // A no-copy pool would hand NW a buffer it may still be reading when the slot is reused.
         let content = Data(bytes)
         connection.send(content: content, completion: .idempotent)
     }

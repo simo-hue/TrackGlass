@@ -7,7 +7,9 @@ import TrackglassEngine
 /// All receive and counter state is confined to the input queue.
 final class InputListener: @unchecked Sendable {
     private let queue = DispatchQueue(label: "input-pipeline", qos: .userInteractive)
-    private let logger = Logger(subsystem: "app.trackglass.mac", category: "Input")
+    private let logger = Logger(subsystem: "app.trackglass.mac", category: "net")
+    /// Fires on the input queue whenever a pipeline starts or stops recording (including when it is torn down).
+    var onRecordingChanged: (@Sendable (Bool) -> Void)?
     private var admittedPeerID: UUID?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
     private var lastSequence: UInt32?
@@ -42,6 +44,7 @@ final class InputListener: @unchecked Sendable {
             if let peerID, let geometry {
                 let pipeline = InputPipeline(queue: self.queue, geometry: geometry)
                 pipeline.onHaptic = { [onHaptic = self.onHaptic] kind in onHaptic(peerID, kind) }
+                pipeline.onRecordingChanged = { [weak self] recording in self?.onRecordingChanged?(recording) }
                 self.pipeline = pipeline
             }
             for connection in self.connections.values { connection.cancel() }
@@ -84,10 +87,7 @@ final class InputListener: @unchecked Sendable {
                 }
                 pipeline?.heartbeat()
             case .touchFrame:
-                if let lastSequence {
-                    let delta = header.sequence &- lastSequence
-                    if delta > 1 && delta < 0x8000_0000 { missingFrames += Int(delta - 1) }
-                }
+                if let lastSequence, let gap = MessageHeader.gap(from: lastSequence, to: header.sequence) { missingFrames += gap }
                 lastSequence = header.sequence
                 receivedFrames += 1
                 pipeline?.consume(data)
@@ -101,6 +101,7 @@ final class InputListener: @unchecked Sendable {
 
     private func logStats() {
         guard let peerID = admittedPeerID else { return }
+        pipeline?.idleCheck()   // §6.3: 3 s without datagrams → engine reset, state reported idle
         let expectedFrames = receivedFrames + missingFrames
         let lossPermille = expectedFrames == 0 ? 0 : (missingFrames * 1_000 / expectedFrames)
         let p50 = pipeline?.latency.p50Micros ?? 0
