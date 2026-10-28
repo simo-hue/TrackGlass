@@ -73,9 +73,64 @@ private enum TGReplay {
                                     forceFinalLiftoff: true)
             try checkInvariants(result)
             print("invariants passed (drop=\(fraction), seed=\(seed))")
+        case "velocity-stats":
+            guard arguments.count >= 2 else { throw ReplayError.usage(usage) }
+            for path in arguments.dropFirst() {
+                let stats = try velocityStatistics(recording: URL(fileURLWithPath: path))
+                print("\(path): frames=\(stats.frames) meanDtMs=\(format(stats.meanDtMs)) meanSpeedMMs=\(format(stats.meanSpeed)) "
+                      + "stdDevSpeedMMs=\(format(stats.standardDeviation)) coefficientOfVariation=\(format(stats.coefficientOfVariation)) "
+                      + "meanAbsAcceleration=\(format(stats.meanAbsoluteAcceleration))")
+            }
         case "help", "--help", "-h": print(usage)
         default: throw ReplayError.usage(usage)
         }
+    }
+
+    private static func format(_ value: Double) -> String { String(format: "%.4f", value) }
+
+    /// M10.3: frame-to-frame speed of the first contact, so two recordings of the same motion (coalesced samples
+    /// on vs off) can be compared for smoothness — a lower coefficient of variation and mean |acceleration|
+    /// mean the engine sees a smoother velocity.
+    private struct VelocityStatistics {
+        var frames = 0
+        var meanDtMs = 0.0
+        var meanSpeed = 0.0
+        var standardDeviation = 0.0
+        var coefficientOfVariation = 0.0
+        var meanAbsoluteAcceleration = 0.0
+    }
+
+    private static func velocityStatistics(recording: URL) throws -> VelocityStatistics {
+        var reader = try TGRecReader(contentsOf: recording)
+        var speeds: [Double] = []
+        var intervals: [Double] = []
+        var previous: (x: Double, y: Double, time: UInt64, id: UInt8)?
+        var stats = VelocityStatistics()
+        while let record = try reader.next() {
+            stats.frames += 1
+            let frame = try record.frameBytes.withUnsafeBytes { try TouchFrameDecoder.decode($0) }
+            guard frame.contactCount > 0 else { previous = nil; continue }
+            let contact = frame[0]
+            guard contact.kind == .finger else { continue }
+            if let last = previous, last.id == contact.contactID, frame.frameTime > last.time, contact.phase != .began {
+                let dt = Double(frame.frameTime - last.time) / 1_000_000   // ms
+                let distance = ((Double(contact.x) - last.x) * (Double(contact.x) - last.x)
+                                + (Double(contact.y) - last.y) * (Double(contact.y) - last.y)).squareRoot()
+                speeds.append(distance / dt * 1_000)   // mm/s
+                intervals.append(dt)
+            }
+            previous = (Double(contact.x), Double(contact.y), frame.frameTime, contact.contactID)
+        }
+        guard speeds.count > 1 else { return stats }
+        stats.meanDtMs = intervals.reduce(0, +) / Double(intervals.count)
+        stats.meanSpeed = speeds.reduce(0, +) / Double(speeds.count)
+        let variance = speeds.reduce(0) { $0 + ($1 - stats.meanSpeed) * ($1 - stats.meanSpeed) } / Double(speeds.count - 1)
+        stats.standardDeviation = variance.squareRoot()
+        stats.coefficientOfVariation = stats.meanSpeed > 0 ? stats.standardDeviation / stats.meanSpeed : 0
+        var accelerations = 0.0
+        for index in 1..<speeds.count { accelerations += abs(speeds[index] - speeds[index - 1]) / max(intervals[index], 0.001) }
+        stats.meanAbsoluteAcceleration = accelerations / Double(speeds.count - 1)
+        return stats
     }
 
     private static let usage = """
@@ -83,6 +138,7 @@ private enum TGReplay {
       tgreplay run <name.tgrec> --settings <name.settings.json>
       tgreplay verify-dir <fixture-directory>
       tgreplay invariants <name.tgrec> --settings <name.settings.json> --drop <fraction> --seed <integer>
+      tgreplay velocity-stats <a.tgrec> [<b.tgrec> ...]   (M10.3: compare velocity smoothness of recordings)
     """
 
     private static func replay(recording: URL, settingsURL: URL, dropFraction: Double = 0, seed: UInt64 = 1,

@@ -26,6 +26,9 @@ final class PhoneIdentityStore {
     }
 
     nonisolated static func modelIdentifier() -> String {
+        #if targetEnvironment(simulator)
+        if let simulated = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] { return simulated }
+        #endif
         var system = utsname()
         uname(&system)
         return withUnsafeBytes(of: &system.machine) { bytes in

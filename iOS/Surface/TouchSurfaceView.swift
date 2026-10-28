@@ -7,7 +7,7 @@ final class TouchSurfaceView: UIView {
     private var lastGeometry: SurfaceGeometry?
     let frameSender: FrameSender
     private var touchFrame = TouchFrame()
-    private let contacts = LiveContactTable<UITouch>()
+    private let contacts = LiveContactTable<any TouchLike>()
     private let ppi = DevicePPI.lookup(modelIdentifier: TouchSurfaceView.modelIdentifier())
     private var sequence: UInt32 = 0
     private var lastEmitTimeNs: UInt64 = 0
@@ -48,7 +48,12 @@ final class TouchSurfaceView: UIView {
         isMultipleTouchEnabled = true
         isExclusiveTouch = true
         isUserInteractionEnabled = true
+        // The Diagnostics toggle changes the default; refresh the cached flag off the touch path.
+        defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.coalescedSamplesEnabled = UserDefaults.standard.bool(forKey: "coalescedSamples") }
+        }
     }
+    private var defaultsObserver: NSObjectProtocol?
 
     func suspend() {
         displayLinkDriver.stop()
@@ -82,61 +87,111 @@ final class TouchSurfaceView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         guard let screen = window?.screen else { return }
-        let geometry = SurfaceGeometry(ppi: ppi, nativeScale: screen.nativeScale,
-                                       boundsInPoints: SurfaceSize(width: bounds.width, height: bounds.height))
+        updateGeometry(SurfaceGeometry(ppi: ppi, nativeScale: screen.nativeScale,
+                                       boundsInPoints: SurfaceSize(width: bounds.width, height: bounds.height)))
+    }
+
+    /// Tests have no window/screen; they inject the geometry the surface would derive from one.
+    func updateGeometry(_ geometry: SurfaceGeometry) {
         renderer.layout(bounds: bounds, mmPerPoint: geometry.mmPerPoint)
         guard geometry != lastGeometry else { return }
         lastGeometry = geometry
         geometryDidChange?(geometry)
     }
 
+    // MARK: UIKit entry points — thin wrappers over the testable ingest API below.
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for touch in touches where TouchSample.kind(touch.type) != nil && TouchSample.phase(touch.phase) != nil {
-            contacts.insert(touch)
-        }
-        emit(event: event)
+        ingestBegan(touches, at: event?.timestamp ?? ProcessInfo.processInfo.systemUptime)
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         displayLinkDriver.recordMovedEvent()
-        // UIKit splits one UIEvent into began/moved/ended calls; a frame for this event with the same
-        // contacts was already emitted by `touchesBegan`, so sending it again would only double the traffic.
-        if let event, TouchSample.timestampNanoseconds(event.timestamp) == lastEmitTimeNs,
-           contacts.count == lastEmitContactCount { return }
-        emit(event: event)
+        if coalescedSamplesEnabled, let event, ingestCoalesced(touches, event: event) { return }
+        ingestMoved(touches, at: event?.timestamp ?? ProcessInfo.processInfo.systemUptime)
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        let hadContacts = contacts.count > 0
-        emit(event: event)
-        for touch in touches { contacts.remove(touch) }
-        if hadContacts && contacts.count == 0 { emitSyntheticLiftoff(event: event) }
+        ingestEnded(touches, at: event?.timestamp ?? ProcessInfo.processInfo.systemUptime)
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        let hadContacts = contacts.count > 0
-        emit(event: event)
-        for touch in touches { contacts.remove(touch) }
-        if hadContacts && contacts.count == 0 { emitSyntheticLiftoff(event: event) }
+        ingestEnded(touches, at: event?.timestamp ?? ProcessInfo.processInfo.systemUptime)
     }
 
-    private func emit(event: UIEvent?) {
-        guard let event, let screen = window?.screen, contacts.count > 0 else { return }
-        let geometry = SurfaceGeometry(ppi: ppi, nativeScale: screen.nativeScale,
-                                       boundsInPoints: SurfaceSize(width: bounds.width, height: bounds.height))
+    // MARK: Ingest API (generic over the sequence so UIKit's `Set<UITouch>` is iterated without copying)
+
+    func ingestBegan<S: Sequence>(_ touches: S, at timestamp: TimeInterval) where S.Element: TouchLike {
+        for touch in touches where TouchSample.kind(touch.type) != nil && TouchSample.phase(touch.phase) != nil {
+            contacts.insert(touch)
+        }
+        emitCurrentContacts(timeNs: TouchSample.timestampNanoseconds(timestamp))
+    }
+
+    func ingestMoved<S: Sequence>(_ touches: S, at timestamp: TimeInterval) where S.Element: TouchLike {
+        // UIKit splits one UIEvent into began/moved/ended calls; a frame for this event with the same
+        // contacts was already emitted by `ingestBegan`, so sending it again would only double the traffic.
+        let timeNs = TouchSample.timestampNanoseconds(timestamp)
+        if timeNs == lastEmitTimeNs, contacts.count == lastEmitContactCount { return }
+        emitCurrentContacts(timeNs: timeNs)
+    }
+
+    /// Ended and cancelled alike: the terminal phases ship in a frame first, then the contacts are
+    /// released and, when none remain, the synthetic lift-off follows (§5.2).
+    func ingestEnded<S: Sequence>(_ touches: S, at timestamp: TimeInterval) where S.Element: TouchLike {
+        let hadContacts = contacts.count > 0
+        let timeNs = TouchSample.timestampNanoseconds(timestamp)
+        emitCurrentContacts(timeNs: timeNs)
+        for touch in touches { contacts.remove(touch) }
+        if hadContacts && contacts.count == 0 { emitSyntheticLiftoff(timeNs: timeNs) }
+    }
+
+    /// M10.3 (capability bit 1): when the touch digitizer runs faster than the display, UIKit coalesces the
+    /// intermediate samples into the delivered touch. Opt-in until the owner's velocity comparison decides.
+    var coalescedSamplesEnabled = UserDefaults.standard.bool(forKey: "coalescedSamples")
+
+    /// Emits one frame per coalesced sample index. Returns false when no touch carried extra samples,
+    /// so the caller falls back to the plain path. UIKit allocates the sample arrays; our frames do not.
+    private func ingestCoalesced(_ touches: Set<UITouch>, event: UIEvent) -> Bool {
+        var sampleCount = 0
+        for touch in touches { sampleCount = max(sampleCount, event.coalescedTouches(for: touch)?.count ?? 0) }
+        guard sampleCount > 1 else { return false }
+        for sampleIndex in 0..<sampleCount {
+            var timeNs: UInt64 = 0
+            emitFrame(timeNs: { timeNs == 0 ? TouchSample.timestampNanoseconds(event.timestamp) : timeNs }) { entry in
+                guard let touch = entry.touch as? UITouch, touches.contains(touch),
+                      let samples = event.coalescedTouches(for: touch), !samples.isEmpty else {
+                    return (entry.touch.preciseLocation(in: self), entry.touch.phase, entry.touch.majorRadius)
+                }
+                let sample = samples[min(sampleIndex, samples.count - 1)]
+                timeNs = TouchSample.timestampNanoseconds(sample.timestamp)
+                return (sample.preciseLocation(in: self), sample.phase, sample.majorRadius)
+            }
+        }
+        return true
+    }
+
+    private func emitCurrentContacts(timeNs: UInt64) {
+        emitFrame(timeNs: { timeNs }) { entry in (entry.touch.preciseLocation(in: self), entry.touch.phase, entry.touch.majorRadius) }
+    }
+
+    /// Builds and sends one frame from the live table. `sample` is non-escaping, so neither closure allocates.
+    private func emitFrame(timeNs: () -> UInt64,
+                           sample: (LiveContactTable<any TouchLike>.Entry) -> (CGPoint, UITouch.Phase, CGFloat)) {
+        guard let geometry = lastGeometry, contacts.count > 0 else { return }
         touchFrame.removeAllContacts()
         touchFrame.isSyntheticLiftoff = false
         touchFrame.header.sequence = sequence
-        touchFrame.frameTime = TouchSample.timestampNanoseconds(event.timestamp)
         touchFrame.surfaceIsLandscape = bounds.width > bounds.height
-        for index in 0..<LiveContactTable<UITouch>.capacity {
-            guard let entry = contacts[index], let phase = TouchSample.phase(entry.touch.phase),
-                  let kind = TouchSample.kind(entry.touch.type) else { continue }
+        for index in 0..<LiveContactTable<any TouchLike>.capacity {
+            guard let entry = contacts[index], let kind = TouchSample.kind(entry.touch.type) else { continue }
+            let (location, uiPhase, radius) = sample(entry)
+            guard let phase = TouchSample.phase(uiPhase) else { continue }
             touchFrame.append(TouchSample.contact(id: entry.contactID, phase: phase, kind: kind,
-                                             location: entry.touch.preciseLocation(in: self),
-                                             majorRadius: entry.touch.majorRadius, geometry: geometry))
+                                             location: location, majorRadius: radius, geometry: geometry))
         }
         guard touchFrame.contactCount > 0 else { return }
+        touchFrame.frameTime = timeNs()
         sequence &+= 1
         lastEmitTimeNs = touchFrame.frameTime
         lastEmitContactCount = contacts.count
@@ -147,44 +202,27 @@ final class TouchSurfaceView: UIView {
     /// contacts are tracked, and UIKit delivers nothing for a finger that holds still. While any contact
     /// is down, a frame with every contact marked `.stationary` goes out at least every 0.5 s.
     /// Runs on the display-link tick; reuses `touchFrame`, so it allocates nothing.
-    private func emitStationaryKeepAliveIfNeeded() {
-        guard contacts.count > 0, let screen = window?.screen else { return }
-        let now = MonotonicClock.nanoseconds()
-        guard now &- lastEmitTimeNs >= 500_000_000 else { return }
-        let geometry = SurfaceGeometry(ppi: ppi, nativeScale: screen.nativeScale,
-                                       boundsInPoints: SurfaceSize(width: bounds.width, height: bounds.height))
-        touchFrame.removeAllContacts()
-        touchFrame.isSyntheticLiftoff = false
-        touchFrame.header.sequence = sequence
-        touchFrame.frameTime = now
-        touchFrame.surfaceIsLandscape = bounds.width > bounds.height
-        for index in 0..<LiveContactTable<UITouch>.capacity {
-            guard let entry = contacts[index], TouchSample.phase(entry.touch.phase) != nil,
-                  let kind = TouchSample.kind(entry.touch.type) else { continue }
-            // The UIKit phase may still read `.began`/`.moved`; `.stationary` keeps the Mac's contact ages intact.
-            touchFrame.append(TouchSample.contact(id: entry.contactID, phase: .stationary, kind: kind,
-                                             location: entry.touch.preciseLocation(in: self),
-                                             majorRadius: entry.touch.majorRadius, geometry: geometry))
-        }
-        guard touchFrame.contactCount > 0 else { return }
-        sequence &+= 1
-        lastEmitTimeNs = now
-        frameSender.enqueue(touchFrame)
+    func emitStationaryKeepAliveIfNeeded(now: UInt64 = MonotonicClock.nanoseconds()) {
+        guard contacts.count > 0, now &- lastEmitTimeNs >= 500_000_000 else { return }
+        // The UIKit phase may still read `.began`/`.moved`; `.stationary` keeps the Mac's contact ages intact.
+        emitFrame(timeNs: { now }) { entry in (entry.touch.preciseLocation(in: self), .stationary, entry.touch.majorRadius) }
     }
 
-    private func emitSyntheticLiftoff(event: UIEvent?) {
-        guard let event else { return }
+    private func emitSyntheticLiftoff(timeNs: UInt64) {
         touchFrame.removeAllContacts()
         touchFrame.header.sequence = sequence
-        touchFrame.frameTime = TouchSample.timestampNanoseconds(event.timestamp)
+        touchFrame.frameTime = timeNs
         touchFrame.surfaceIsLandscape = bounds.width > bounds.height
         touchFrame.isSyntheticLiftoff = true
         sequence &+= 1
-        lastEmitTimeNs = touchFrame.frameTime
+        lastEmitTimeNs = timeNs
         frameSender.enqueue(touchFrame)
     }
 
     private static func modelIdentifier() -> String {
+        #if targetEnvironment(simulator)
+        if let simulated = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] { return simulated }
+        #endif
         var system = utsname()
         uname(&system)
         return withUnsafeBytes(of: &system.machine) { bytes in

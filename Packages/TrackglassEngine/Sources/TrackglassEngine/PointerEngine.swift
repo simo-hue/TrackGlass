@@ -170,6 +170,19 @@ public final class GestureEngine: @unchecked Sendable {
             guard let index = slotIndex else { continue }
             if contact.phase == .ended || contact.phase == .cancelled {
                 contactCancelled = contactCancelled || contact.phase == .cancelled
+                // UIKit's terminal sample routinely moves a little past the last `moved` one: fold it into the
+                // path (so a tap that only moved on lift is not a tap) and into a held drag's delta.
+                let previous = tracker.slots[index]
+                if previous.active, frame.frameTime > previous.time, !previous.palm, !previous.resting,
+                   x != previous.x || y != previous.y {
+                    tracker.slots[index].pathLength += hypot(x - previous.x, y - previous.y)
+                    if dragButtonHeld && dragContactID == contact.contactID {
+                        dragDX += x - previous.x; dragDY += y - previous.y
+                        dragDT = frame.frameTime - previous.time; hasDragDelta = true
+                    }
+                    // Plain pointer motion on the lift frame is not emitted: the mode leaves `.pointer` in the
+                    // same frame and a sub-frame jump at lift-off is not what a trackpad does either.
+                }
                 let pathLength = tracker.slots[index].pathLength
                 if contact.phase == .ended, let tapIndex = tapContacts.firstIndex(where: { $0.id == contact.contactID }) {
                     tapContacts[tapIndex].endedAt = frame.frameTime

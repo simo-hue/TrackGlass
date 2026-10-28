@@ -9,7 +9,8 @@ final class GestureFixtureTests: XCTestCase {
                      "tap", "two_finger_tap", "corner_tap_left", "corner_tap_right",
                      "double_tap", "triple_tap", "double_tap_dragging_on", "tap_drag", "tap_drag_lock",
                      "three_finger_drag", "three_finger_tap_lookup", "liftoff_timeout",
-                     "liftoff_timeout_releases_drag_lock", "contact_vanishes", "contact_id_reused", "scroll_vertical", "scroll_horizontal_disabled", "momentum_decay", "momentum_cancelled_by_touch", "pinch_only", "rotate_only", "scroll_then_pinch", "smart_zoom", "two_finger_tap_pending_then_click", "three_finger_swipe_spaces", "four_finger_mission_control", "four_finger_app_expose", "four_finger_pinch_launchpad", "four_finger_spread_desktop", "three_finger_swipe_nav", "rotation_cancels_gesture", "edge_swipe_notification_center", "force_click", "settings_change_deferred"] {
+                     "liftoff_timeout_releases_drag_lock", "contact_vanishes", "contact_id_reused", "scroll_vertical", "scroll_horizontal_disabled", "momentum_decay", "momentum_cancelled_by_touch", "pinch_only", "rotate_only", "scroll_then_pinch", "smart_zoom", "two_finger_tap_pending_then_click", "three_finger_swipe_spaces", "four_finger_mission_control", "four_finger_app_expose", "four_finger_pinch_launchpad", "four_finger_spread_desktop", "three_finger_swipe_nav", "rotation_cancels_gesture", "edge_swipe_notification_center", "force_click", "settings_change_deferred",
+                     "synthetic_liftoff_keeps_drag_lock", "stylus_ignored"] {
             let fixture = try load(name)
             let expected = try JSONDecoder().decode([GestureEvent].self, from: Data(contentsOf: fixture.expectedURL))
             let settings = try JSONDecoder().decode(FixtureSettings.self, from: Data(contentsOf: fixture.settingsURL))

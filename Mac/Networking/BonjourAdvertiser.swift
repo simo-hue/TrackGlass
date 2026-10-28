@@ -18,7 +18,7 @@ final class BonjourAdvertiser {
     private var control: NWListener?
     private var input: NWListener?
     /// The phone whose LTK the input listener carries; survives listener restarts (§6.3).
-    private var admittedInputPeer: UUID?
+    private(set) var admittedInputPeer: UUID?
     private var ready = Set<String>()
     private var registered = Set<String>()
     private let logger = Logger(subsystem: "app.trackglass.mac", category: "net")

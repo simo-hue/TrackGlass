@@ -37,6 +37,20 @@ final class QRScannerController: UIViewController {
         view.accessibilityHint = "The code is read automatically when it is in view."
     }
 
+    private func showSettingsButton() {
+        var configuration = UIButton.Configuration.filled()
+        configuration.title = "Open Settings"
+        let button = UIButton(configuration: configuration, primaryAction: UIAction { _ in
+            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+        })
+        button.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(button)
+        NSLayoutConstraint.activate([
+            button.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            button.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -40)
+        ])
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         Task { [weak self] in
@@ -44,6 +58,7 @@ final class QRScannerController: UIViewController {
             guard let self, self.view.window != nil, self.pipeline == nil else { return }
             guard granted else {
                 self.message.text = "Camera access is required. Enable it for Trackglass in Settings, then scan again."
+                self.showSettingsButton()
                 return
             }
             let pipeline = CameraPipeline { [weak self] text, error in

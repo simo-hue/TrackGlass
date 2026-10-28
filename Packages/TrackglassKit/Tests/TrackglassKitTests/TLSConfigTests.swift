@@ -86,6 +86,15 @@ private final class TLSHarness: @unchecked Sendable {
                         self.finish()
                         return
                     }
+                    // SPEC §3.3: only the PSK suite over TLS 1.2 may ever be negotiated — no certificate suite can
+                    // sneak in through Network.framework's default list.
+                    if let metadata = client.metadata(definition: NWProtocolTLS.definition) as? NWProtocolTLS.Metadata {
+                        let suite = sec_protocol_metadata_get_negotiated_tls_ciphersuite(metadata.securityProtocolMetadata)
+                        XCTAssertEqual(suite.rawValue, UInt16(TLS_PSK_WITH_AES_128_GCM_SHA256))
+                        XCTAssertEqual(sec_protocol_metadata_get_negotiated_tls_protocol_version(metadata.securityProtocolMetadata), .TLSv12)
+                    } else {
+                        XCTFail("TLS metadata unavailable on a ready connection")
+                    }
                     let context = NWConnection.ContentContext(identifier: "ping", metadata: [
                         NWProtocolFramer.Message(definition: TGControlFramer.definition)
                     ])

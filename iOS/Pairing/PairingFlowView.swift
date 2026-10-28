@@ -12,9 +12,12 @@ struct PairingFlowView: View {
     @State private var status = "Open ‘Pair a device…’ in Trackglass for Mac."
     @State private var exchange: Task<Void, Never>?
     @Environment(\.dismiss) private var dismiss
+    /// Called once a Mac has been paired, so the caller can connect to it right away.
+    private let onPaired: ((PairedPeer) -> Void)?
 
-    init(payload: PairingPayload? = nil) {
+    init(payload: PairingPayload? = nil, onPaired: ((PairedPeer) -> Void)? = nil) {
         _pending = State(initialValue: payload)
+        self.onPaired = onPaired
     }
 
     var body: some View {
@@ -39,7 +42,7 @@ struct PairingFlowView: View {
             .toolbar { Button("Done") { dismiss() } }
         }
         .sheet(isPresented: $showPIN) {
-            PINEntryView(phoneName: name) { peer in status = "Paired with \(peer.name)" }
+            PINEntryView(phoneName: name) { peer in status = "Paired with \(peer.name)"; onPaired?(peer) }
         }
         .fullScreenCover(isPresented: $scanner) {
             ZStack(alignment: .topTrailing) {
@@ -83,6 +86,7 @@ struct PairingFlowView: View {
             do {
                 let peer = try await client.pair(payload: payload, endpoint: mac.endpoint, expectedMacID: mac.peerID, request: request)
                 status = "Paired with \(peer.name)"
+                onPaired?(peer)
             } catch is CancellationError { status = "Pairing cancelled." }
             catch { status = error.localizedDescription }
         }

@@ -1,7 +1,7 @@
 // Algorithm reproduced from Apple's IOHIDFamily (IOHIDAccelerationAlgorithm.cpp), Apple Public Source License 2.0. See docs/THIRD-PARTY.md.
 import Foundation
 
-public struct ParametricAccelerationCurve: AccelerationModel, Sendable {
+public struct ParametricAccelerationCurve: Sendable {
     public struct Parameters: Sendable, Equatable {
         public var index: Double
         public var gainLinear: Double
@@ -145,15 +145,9 @@ public struct ParametricAccelerationCurve: AccelerationModel, Sendable {
         multiplier(forDeviceVelocity: speed * deviceScale)
     }
 
-    /// Compatibility implementation for the engine protocol. M5.3 adds the count and report-rate normalization path.
-    public func accelerate(dxMM: Double, dyMM: Double, dtNanoseconds: UInt64) -> (Double, Double) {
-        guard dtNanoseconds > 0 else { return (dxMM, dyMM) }
-        let seconds = Double(dtNanoseconds) / 1_000_000_000
-        let speed = (dxMM * dxMM + dyMM * dyMM).squareRoot() / seconds / 25.4
-        guard speed > 0 else { return (dxMM, dyMM) }
-        let multiplier = multiplier(forSpeedInchesPerSecond: speed)
-        return (dxMM * multiplier, dyMM * multiplier)
-    }
+    // Deliberately not an `AccelerationModel`: the curve is only the multiplier. Feeding it to the engine
+    // directly would skip the report-rate normalization and mm→count conversion that `PointerAccelerator`
+    // performs (§6.6) and silently produce a different gain.
 
     @inline(__always)
     private static func firstSegment(_ x: Double, _ p: Parameters) -> Double {

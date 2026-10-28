@@ -102,13 +102,47 @@ else
 fi
 
 step "Building $DMG_NAME"
+VOLUME_NAME="$PRODUCT_NAME for Mac"
 cp -R "$APP" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
 if [[ -f Design/dmg-background.png ]]; then
   mkdir -p "$STAGING/.background"; cp Design/dmg-background.png "$STAGING/.background/background.png"
 fi
 rm -f "Releases/$DMG_NAME"
-hdiutil create -volname "$PRODUCT_NAME for Mac" -srcfolder "$STAGING" -ov -format UDZO -fs HFS+ "Releases/$DMG_NAME" >/dev/null
+# 1. A read-write image that Finder can lay out (background, icon positions, window size)…
+RW_IMAGE="$BUILD_DIR/rw.dmg"
+hdiutil create -volname "$VOLUME_NAME" -srcfolder "$STAGING" -ov -format UDRW -fs HFS+ "$RW_IMAGE" >/dev/null
+MOUNT_POINT="/Volumes/$VOLUME_NAME"
+hdiutil attach "$RW_IMAGE" -mountpoint "$MOUNT_POINT" -nobrowse -noautoopen >/dev/null
+if [[ -f "$STAGING/.background/background.png" ]]; then
+  # Finder writes the view options into the volume's .DS_Store; that is what the final image carries.
+  osascript <<APPLESCRIPT || echo "note: Finder layout step failed; the DMG works but opens without the custom layout"
+tell application "Finder"
+  tell disk "$VOLUME_NAME"
+    open
+    set current view of container window to icon view
+    set toolbar visible of container window to false
+    set statusbar visible of container window to false
+    set the bounds of container window to {200, 120, 860, 520}
+    set viewOptions to the icon view options of container window
+    set arrangement of viewOptions to not arranged
+    set icon size of viewOptions to 128
+    set background picture of viewOptions to file ".background:background.png"
+    set position of item "$(basename "$APP")" of container window to {180, 190}
+    set position of item "Applications" of container window to {480, 190}
+    close
+    open
+    update without registering applications
+    delay 2
+    close
+  end tell
+end tell
+APPLESCRIPT
+fi
+sync
+hdiutil detach "$MOUNT_POINT" -quiet || { sleep 2; hdiutil detach "$MOUNT_POINT" -force -quiet; }
+# 2. …converted to the compressed, read-only image that ships.
+hdiutil convert "$RW_IMAGE" -format UDZO -imagekey zlib-level=9 -o "Releases/$DMG_NAME" >/dev/null
 codesign --force --sign "Developer ID Application" --timestamp "Releases/$DMG_NAME"
 
 if [[ "$DRY_RUN" == 1 ]]; then

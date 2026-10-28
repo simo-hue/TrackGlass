@@ -52,7 +52,20 @@ final class ThemeStore {
     }
     func select(_ theme: Theme) {
         self.theme = theme
-        if let data = try? JSONEncoder().encode(theme) { defaults.set(data, forKey: "surfaceTheme") }
+        if let data = try? JSONEncoder().encode(theme) {
+            defaults.set(data, forKey: "surfaceTheme")
+            if theme.id == .custom { defaults.set(data, forKey: "customTheme") }   // edits survive switching away
+        }
         onChange?(theme)
+    }
+
+    /// Selects a preset, or the user's last edited Custom theme when one was saved.
+    func select(id: Theme.ID) {
+        if id == .custom, let data = defaults.data(forKey: "customTheme"),
+           let saved = try? JSONDecoder().decode(Theme.self, from: data), saved.id == .custom {
+            select(saved)
+        } else {
+            select(.preset(id))
+        }
     }
 }

@@ -18,6 +18,7 @@ struct SettingsSheet: View {
     @AppStorage("trackingOverride") private var trackingOverride = 0.0
     @AppStorage("showsHUD") private var showsHUD = true
     @AppStorage("showsLatencyOverlay") private var showsLatencyOverlay = false
+    @AppStorage("coalescedSamples") private var coalescedSamples = false
     @Bindable var recordingState: SurfaceRecordingState
     @State private var busy = false
     @State private var share: RecordingShare?
@@ -30,7 +31,7 @@ struct SettingsSheet: View {
                     MacsListView(state: connection, manager: manager, connect: connect, pair: openMacs)
                 }
                 Section("Appearance") {
-                    Picker("Theme", selection: Binding(get: { themes.theme.id }, set: { themes.select(.preset($0)) })) {
+                    Picker("Theme", selection: Binding(get: { themes.theme.id }, set: { themes.select(id: $0) })) {
                         ForEach(Theme.ID.allCases, id: \.self) { id in Text(Theme.preset(id).name).tag(id) }
                     }
                     ColorPicker("Accent", selection: colorBinding(background: false), supportsOpacity: false)
@@ -60,6 +61,9 @@ struct SettingsSheet: View {
                 }
                 Section("Diagnostics") {
                     Toggle("Latency overlay", isOn: $showsLatencyOverlay)
+                    Toggle("Coalesced touch samples", isOn: $coalescedSamples)
+                    Text("Experimental: sends every digitizer sample when the touch rate exceeds the display rate. Takes effect on the next connection.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Button(recordingState.isRecording ? "Stop and share recording" : "Record session") {
                         busy = true
                         Task {

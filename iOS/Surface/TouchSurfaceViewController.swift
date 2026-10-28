@@ -20,6 +20,11 @@ final class TouchSurfaceViewController: UIViewController {
     private var tapToClickNoticePending = false
     private var thermalObserver: NSObjectProtocol?
 
+    /// HELLO `caps` (§4.5): bit 0 haptics, bit 1 coalesced samples (M10.3).
+    nonisolated static func capabilities(defaults: UserDefaults = .standard) -> UInt32 {
+        (HapticEngine.supportsHaptics ? 1 : 0) | (defaults.bool(forKey: "coalescedSamples") ? 2 : 0)
+    }
+
     nonisolated static func suppressesHalos(for state: ProcessInfo.ThermalState) -> Bool {
         state == .serious || state == .critical
     }
@@ -46,6 +51,7 @@ final class TouchSurfaceViewController: UIViewController {
         }
         // Container has no gestures; the touch surface and status controls are siblings.
         let host = UIHostingController(rootView: SessionStatusView(state: connectionState, open: { [weak self] in self?.showDiscoveryIfNeeded() }))
+        host.safeAreaRegions = []   // pinned to the safe-area guide already; avoid a second inset
         addChild(host)
         host.view.backgroundColor = .clear
         host.view.translatesAutoresizingMaskIntoConstraints = false
@@ -58,6 +64,7 @@ final class TouchSurfaceViewController: UIViewController {
         host.didMove(toParent: self)
         statusHost = host
         let grip = UIHostingController(rootView: GripButton { [weak self] in self?.showSettings() })
+        grip.safeAreaRegions = []   // pinned to the safe-area guide already; avoid a second inset
         addChild(grip); grip.view.backgroundColor = .clear; grip.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(grip.view)
         NSLayoutConstraint.activate([
@@ -68,6 +75,7 @@ final class TouchSurfaceViewController: UIViewController {
         grip.didMove(toParent: self)
         let noMac = UIHostingController(rootView: NoMacView(state: connectionState,
             open: { [weak self] in self?.showDiscoveryIfNeeded() }, connect: { [weak self] mac in self?.connect(mac) }))
+        noMac.safeAreaRegions = []   // pinned to the safe-area guide already; avoid a second inset
         addChild(noMac); noMac.view.backgroundColor = .clear; noMac.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(noMac.view)
         NSLayoutConstraint.activate([
@@ -151,7 +159,15 @@ final class TouchSurfaceViewController: UIViewController {
         }
     }
 
-    func sceneDidEnterBackground() { touchSurface?.suspend(); Task { await connectionManager.sceneDidEnterBackground() } }
+    func sceneDidEnterBackground() {
+        touchSurface?.suspend()
+        // §5.9: BYE(user) must leave the device before suspension; a background task keeps the app running for it.
+        let task = UIApplication.shared.beginBackgroundTask(withName: "Trackglass BYE")
+        Task {
+            await connectionManager.sceneDidEnterBackground()
+            if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
+        }
+    }
     func sceneDidBecomeActive() { touchSurface?.resume(); Task { await connectionManager.sceneDidBecomeActive() } }
 
     private func showOnboarding() {
@@ -205,7 +221,7 @@ final class TouchSurfaceViewController: UIViewController {
         return HelloMessage(protocolVersion: 1, peerID: identity.peerID, name: identity.name,
             modelIdentifier: PhoneIdentityStore.modelIdentifier(), surfaceWidthMM: Float(geometry.widthMM),
             surfaceHeightMM: Float(geometry.heightMM), ppi: Float(DevicePPI.lookup(modelIdentifier: PhoneIdentityStore.modelIdentifier())),
-            maxContacts: 10, displayHz: UInt16(screen.maximumFramesPerSecond), caps: HapticEngine.supportsHaptics ? 1 : 0,
+            maxContacts: 10, displayHz: UInt16(screen.maximumFramesPerSecond), caps: Self.capabilities(),
             trackingOverride: UserDefaults.standard.float(forKey: "trackingOverride"))
     }
 

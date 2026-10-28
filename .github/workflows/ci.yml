@@ -1,0 +1,56 @@
+name: CI
+
+# The owner's verification (Scripts/ci.sh) on a hosted macOS runner, unsigned: package tests, iOS simulator
+# tests, both app builds, fixture replay and loss invariants. The Mac-hosted test bundle needs a signed host
+# (data-protection Keychain), so it runs only on the release Mac, as do device tests and notarization.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["website/**", "docs/**", "*.md", "Design/**"]
+  pull_request:
+    paths-ignore: ["website/**", "docs/**", "*.md", "Design/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    # Needs the Xcode that ships the iOS 17+ SDK with Swift 6; pick the newest image GitHub offers.
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      TG_CI_UNSIGNED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          xcodebuild -version
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Local signing placeholder
+        run: cp Config/Local.xcconfig.example Config/Local.xcconfig
+      - name: Generate project
+        run: xcodegen generate
+      - name: Pick an installed iPhone simulator
+        id: sim
+        run: |
+          NAME=$(xcrun simctl list devices available | grep -oE 'iPhone [0-9]+( Pro)?' | sort -V | tail -1)
+          echo "destination=platform=iOS Simulator,name=${NAME:-iPhone 17}" >> "$GITHUB_OUTPUT"
+          echo "using ${NAME:-iPhone 17}"
+      - name: Verify
+        env:
+          TG_IOS_TEST_DESTINATION: ${{ steps.sim.outputs.destination }}
+        run: Scripts/ci.sh
+      - name: Keep test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcresult
+          path: ~/Library/Developer/Xcode/DerivedData/**/Logs/Test/*.xcresult
+          if-no-files-found: ignore

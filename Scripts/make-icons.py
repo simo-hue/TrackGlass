@@ -13,7 +13,7 @@ import json
 import os
 import sys
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCE = os.path.join(ROOT, "Design", "Brand", "trackglass-logo-v1.png")
@@ -117,6 +117,37 @@ def menu_bar_icon():
     })
 
 
+DMG_BACKGROUND = os.path.join(ROOT, "Design", "dmg-background.png")
+
+
+def dmg_background(source):
+    """660×400 pt window (1320×800 px @2x): app icon slot on the left, Applications on the right, an arrow between."""
+    width, height, scale = 660, 400, 2
+    image = Image.new("RGB", (width * scale, height * scale), BACKGROUND)
+    draw = ImageDraw.Draw(image)
+    accent = (143, 211, 255)
+    lavender = (195, 166, 255)
+    # Arrow from the app slot (x≈180) to the Applications slot (x≈480), vertically centred on the icons (y≈190).
+    y = 190 * scale
+    draw.line((245 * scale, y, 405 * scale, y), fill=accent, width=6 * scale)
+    draw.polygon([(405 * scale, y - 16 * scale), (435 * scale, y), (405 * scale, y + 16 * scale)], fill=lavender)
+    caption = "Drag Trackglass to Applications"
+    font = None
+    for candidate in ("/System/Library/Fonts/SFNS.ttf", "/System/Library/Fonts/Helvetica.ttc",
+                      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
+        if os.path.exists(candidate):
+            try:
+                font = ImageFont.truetype(candidate, 15 * scale)
+                break
+            except OSError:
+                continue
+    if font is None:
+        font = ImageFont.load_default(size=15 * scale)
+    bbox = draw.textbbox((0, 0), caption, font=font)
+    draw.text(((width * scale - (bbox[2] - bbox[0])) // 2, 300 * scale), caption, fill=(200, 200, 210), font=font)
+    image.save(DMG_BACKGROUND, optimize=True, dpi=(144, 144))
+
+
 def main():
     if not os.path.exists(SOURCE):
         sys.exit(f"missing brand source {SOURCE}")
@@ -124,6 +155,7 @@ def main():
     ios_icon(source)
     mac_icon(source)
     menu_bar_icon()
+    dmg_background(source)
     print("icons written")
 
 

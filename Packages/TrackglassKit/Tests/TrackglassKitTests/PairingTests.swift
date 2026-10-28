@@ -16,6 +16,41 @@ final class PairingTests: XCTestCase {
         XCTAssertThrowsError(try PairingPayload(pairID: Data(count: 8), pairSecret: Data(count: 31), macName: "", bonjourInstanceName: ""))
     }
 
+    func testMalformedPairingURLsAreRejected() throws {
+        let good = try PairingPayload(pairID: Data(0..<8), pairSecret: Data(0..<32), macName: "Mac", bonjourInstanceName: "Mac (pairing)").url.absoluteString
+        let cases: [(String, String)] = [
+            ("missing name", good.replacingOccurrences(of: "n=Mac", with: "n2=Mac")),
+            ("missing host", good.replacingOccurrences(of: "h=", with: "x=")),
+            ("wrong host", good.replacingOccurrences(of: "://pair", with: "://pairing")),
+            ("non-canonical base64url id (trailing bits set)", good.replacingOccurrences(of: "id=AAECAwQFBgc", with: "id=AAECAwQFBgd")),
+            ("standard base64 alphabet", good.replacingOccurrences(of: "id=AAECAwQFBgc", with: "id=AAECAwQFBg+")),
+            ("id too short", good.replacingOccurrences(of: "id=AAECAwQFBgc", with: "id=AAECAwQF")),
+            ("fragment", good + "#x"),
+        ]
+        for (label, text) in cases {
+            guard let url = URL(string: text) else { continue }   // an unparsable string is rejected before us
+            XCTAssertThrowsError(try PairingPayload(url: url), label)
+        }
+        XCTAssertNoThrow(try PairingPayload(url: URL(string: good)!))
+    }
+
+    func testPINKeyRejectsBadInputs() {
+        XCTAssertThrowsError(try KeyDerivation.pinKey(pin: "001234", pairID: Data(count: 7)))
+        XCTAssertThrowsError(try KeyDerivation.pinKey(pin: "001234", pairID: Data(count: 9)))
+        XCTAssertThrowsError(try KeyDerivation.pinKey(pin: "12345", pairID: Data(count: 8)))
+        XCTAssertThrowsError(try KeyDerivation.pinKey(pin: "1234567", pairID: Data(count: 8)))
+        XCTAssertThrowsError(try KeyDerivation.pinKey(pin: "12345a", pairID: Data(count: 8)))
+        XCTAssertThrowsError(try KeyDerivation.pinKey(pin: "１２３４５６", pairID: Data(count: 8)), "full-width digits are not ASCII digits")
+        XCTAssertNoThrow(try KeyDerivation.pinKey(pin: "000000", pairID: Data(count: 8)))
+    }
+
+    func testMonotonicClockAgreesWithDispatchUptime() {
+        // InputPipeline mixes both clocks (frame stamps vs receive stamps); they must share a base.
+        let dispatch = DispatchTime.now().uptimeNanoseconds
+        let clock = MonotonicClock.nanoseconds()
+        XCTAssertLessThan(abs(Int64(clock) - Int64(dispatch)), 50_000_000, "clocks differ by more than 50 ms")
+    }
+
     func testHKDFKnownAnswer() throws {
         // Computed independently with Python hashlib/hmac: extract(salt=00..07, IKM="001234"),
         // then expand with info="trackglass-pair-v1" and counter=01, one SHA-256 block.

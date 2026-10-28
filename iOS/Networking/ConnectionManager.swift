@@ -52,7 +52,10 @@ actor ConnectionManager {
 
     func refreshPairedMacs() async {
         do { pairedMacs = try pairStore.all() }
-        catch { await state.updateDiscovery(macs: browser.macs, pairedMacs: []) }
+        catch {
+            pairedMacs = []
+            await state.showNotice("Cannot read paired Macs: \(error.localizedDescription)")
+        }
         await refreshState()
     }
 

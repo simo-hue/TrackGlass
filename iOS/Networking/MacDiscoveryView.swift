@@ -7,6 +7,7 @@ struct MacDiscoveryView: View {
     var connect: (DiscoveredMac) -> Void
     @Bindable var links: PairingLinkRouter
     @Environment(\.dismiss) private var dismiss
+    @State private var justPaired: UUID?
 
     var body: some View {
         NavigationStack {
@@ -33,8 +34,21 @@ struct MacDiscoveryView: View {
             .navigationTitle("Macs")
             .toolbar { Button("Done") { dismiss() } }
         }
-        .sheet(item: $links.presentation, onDismiss: { Task { await manager.refreshPairedMacs() } }) { item in
-            PairingFlowView(payload: item.payload)
+        .sheet(item: $links.presentation, onDismiss: {
+            Task {
+                await manager.refreshPairedMacs()
+                // A freshly paired Mac becomes the connection target as soon as its session service shows up.
+                guard let peerID = justPaired else { return }
+                justPaired = nil
+                for _ in 0..<15 {
+                    if let mac = state.macs.first(where: { !$0.isPairing && $0.peerID == peerID }) {
+                        connect(mac); dismiss(); return
+                    }
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+            }
+        }) { item in
+            PairingFlowView(payload: item.payload) { justPaired = $0.peerID }
         }
         .onAppear { Task { await manager.startDiscovery(); await manager.refreshPairedMacs() } }
     }

@@ -58,4 +58,5 @@ final class ConnectionState {
     }
 
     func updateLastMac(name: String) { lastMacName = name }
+    func showNotice(_ text: String) { notice = text }
 }

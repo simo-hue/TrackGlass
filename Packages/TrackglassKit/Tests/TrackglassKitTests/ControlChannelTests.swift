@@ -70,6 +70,29 @@ final class ControlChannelTests: XCTestCase {
         XCTAssertEqual(closeCount, 1)
     }
 
+    func testOversizedLengthPrefixFailsTheConnection() async throws {
+        // §4.3: the framer rejects a prefix above 64 KiB (and below the header size) by failing the connection,
+        // so a malformed peer cannot make the receiver allocate.
+        let box = Box()
+        let (listener, endpoint) = try await listener { connection in
+            Task { @MainActor in
+                let server = ControlChannel(connection: connection)
+                server.onMessage = { _ in }
+                server.onClose = { box.serverClosedWith = $0 }
+                server.start()
+                box.servers.append(server)
+            }
+        }
+        defer { listener.cancel(); box.servers.forEach { $0.close() } }
+        let raw = NWConnection(to: endpoint, using: .tcp)   // no framer: we write the prefix ourselves
+        raw.start(queue: .main)
+        try await eventually { raw.state == .ready }
+        raw.send(content: Data([0xFF, 0xFF, 0xFF, 0xFF, 0x54, 0x47, 0x01, 0x05]), completion: .idempotent)
+        try await eventually { box.serverClosedWith != nil }
+        XCTAssertNotNil(box.serverClosedWith)
+        raw.cancel()
+    }
+
     func testByeReasonsMapToUserFacingMessagesOnThePeer() async throws {
         // reason 1 → "Incompatible version", reason 3 → "Pair again", anything else → "Disconnected".
         for (reason, expected) in [(UInt8(1), "Incompatible version"), (3, "Pair again"), (4, "Disconnected")] {

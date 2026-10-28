@@ -33,3 +33,15 @@ enum TouchSample {
         UInt64(seconds * 1_000_000_000)
     }
 }
+
+/// The slice of `UITouch` the surface reads. `UITouch` conforms as-is (same selectors); tests drive the
+/// pipeline with fakes. `@objc` so that `any TouchLike` is a class reference the contact table can hold,
+/// `@MainActor` because UIKit's touch properties are main-actor-isolated.
+@MainActor @objc protocol TouchLike: AnyObject {
+    var phase: UITouch.Phase { get }
+    var type: UITouch.TouchType { get }
+    var majorRadius: CGFloat { get }
+    @objc(preciseLocationInView:) func preciseLocation(in view: UIView?) -> CGPoint
+}
+
+extension UITouch: TouchLike {}

@@ -351,3 +351,15 @@ Improvements recorded but not done (no decision needed; scheduled after CI is gr
    - GitHub → Settings → Pages → Source: GitHub Actions (the workflow is already in `.github/workflows/pages.yml`).
 3. `Scripts/release-mac.sh 0.9.0 --pre-release --dry-run` is the first thing to try once the Developer ID certificate is installed: it archives, exports, builds the DMG and stops before notarization. Note that it refuses a dirty tree and that `MARKETING_VERSION` in `Config/Shared.xcconfig` must be set to `0.9.0` for the pre-release (it is `1.0.0` today).
 4. Mac logs: the categories are now `net`, `engine`, `inject`, `prefs` (SPEC §6.10); earlier notes that say "Input log"/"Control log" mean `net`.
+
+## 2026-10-28 — Batch: CI, then the M10.3 comparison when you have the iPad
+
+1. `xcodegen generate && Scripts/ci.sh`. New: 6 `TouchSurfaceTests` (iOS), 4 Kit tests, 2 fixtures, 1 Mac test. Paste failures back.
+2. M10.3 (whenever the iPad is available): on the iPad, Settings → Diagnostics → Record session, draw a few slow circles for 20 s, stop and share the `.tgrec` to the Mac; repeat with Diagnostics → *Coalesced touch samples* on. Then `tgreplay velocity-stats off.tgrec on.tgrec` (build via `Scripts/invariants.sh` or the tgreplay scheme). Lower `coefficientOfVariation` and `meanAbsAcceleration` with the toggle on means it should stay enabled; tell me the two lines and I record the decision in PROGRESS and flip the default.
+3. First-pairing UX changed: after a successful pairing the phone connects to that Mac by itself and closes the Macs list.
+
+## 2026-10-28 (later) — Compile fix + CI workflow
+
+1. `xcodegen generate && Scripts/ci.sh` again (the iOS target failed to compile last time on the new `TouchLike` protocol; fixed).
+2. Nothing else to do: `.github/workflows/ci.yml` runs on the next push to `main` by itself (public repo, free macOS minutes). If the hosted runner's Xcode/simulator differs from your Mac, the job log shows what it selected; tell me and I adjust.
+3. What remains in the plan without your input: nothing. Pending on you — Sparkle keys (M11.1), notarization profile + `gh auth` (M11.2 run), `SUPPORT_EMAIL`/`APPSTORE_URL`, LICENSE, Pages enablement, the PIN-pairing decision, device checks/calibrations/soak/M10.2/M10.3 recordings, and Phase 2's entitlement answer + SIP-disabled test Mac.

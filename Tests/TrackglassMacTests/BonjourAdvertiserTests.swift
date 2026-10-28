@@ -34,4 +34,20 @@ final class BonjourAdvertiserTests: XCTestCase {
         XCTAssertFalse(advertiser.status.hasPrefix("Advertising as"))
     }
 
+    @MainActor func testAdmittedInputPeerSurvivesStopAndPairingSetChanges() throws {
+        // §6.3: the input listener is recreated with the admitted phone's key on every restart; the identity
+        // must therefore outlive the listener objects (a pairing-set change or a sleep/wake cycle).
+        let suite = "TrackglassAdmissionTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let advertiser = BonjourAdvertiser(defaults: defaults)
+        let phone = UUID()
+        advertiser.setInputIdentity(phone)
+        XCTAssertEqual(advertiser.admittedInputPeer, phone)
+        advertiser.pairingSetChanged()   // no listener running: must not clear the admitted identity
+        advertiser.stop()
+        XCTAssertEqual(advertiser.admittedInputPeer, phone)
+        advertiser.setInputIdentity(nil)
+        XCTAssertNil(advertiser.admittedInputPeer)
+    }
 }
