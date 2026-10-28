@@ -35,8 +35,22 @@ final class SurfaceGeometryTests: XCTestCase {
         for (identifier, name) in [("iPhone16,1", "iPhone 15 Pro"), ("iPhone16,2", "iPhone 15 Pro Max"),
                                    ("iPhone13,1", "iPhone 12 mini"), ("iPhone18,3", "iPhone 17"),
                                    ("iPad8,1", "iPad Pro 11-inch (1st generation)"),
+                                   ("iPad13,18", "iPad (10th generation)"), ("iPad14,9", "iPad Air 11-inch (M2)"),
+                                   ("iPad16,6", "iPad Pro 13-inch (M4)"), ("iPad15,8", "iPad (A16)"),
                                    ("iPad99,1", "iPad"), ("iPhone99,1", "iPhone")] {
             XCTAssertEqual(DeviceModelName.marketingName(modelIdentifier: identifier), name)
+        }
+    }
+
+    func testEveryCataloguedNonMiniIPadIs264PPIAndEveryMiniIs326() {
+        // Appendix C: iPad mini 326, every other iPad 264 — the catalog only adds names, never a stray density.
+        for identifier in ["iPad7,1", "iPad8,12", "iPad11,6", "iPad13,16", "iPad14,3", "iPad15,5", "iPad16,3"] {
+            XCTAssertEqual(DevicePPI.lookup(modelIdentifier: identifier), 264, identifier)
+            XCTAssertNotEqual(DeviceModelName.marketingName(modelIdentifier: identifier), "iPad", "\(identifier) should be named")
+        }
+        for identifier in ["iPad11,2", "iPad14,1", "iPad16,2"] {
+            XCTAssertEqual(DevicePPI.lookup(modelIdentifier: identifier), 326, identifier)
+            XCTAssertTrue(DeviceModelName.marketingName(modelIdentifier: identifier).hasPrefix("iPad mini"), identifier)
         }
     }
 }

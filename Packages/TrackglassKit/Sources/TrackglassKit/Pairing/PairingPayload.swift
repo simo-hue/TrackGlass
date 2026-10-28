@@ -22,7 +22,13 @@ public struct PairingPayload: Equatable, Sendable {
         self.bonjourInstanceName = bonjourInstanceName
     }
 
-    public var identity: String { Self.base64URL(pairID) }
+    /// The TLS-PSK identity of both pairing paths (§3.4): the base64url `pairID`, as it appears in the QR URL
+    /// `id=` item and the pairing listener's TXT `pid=`.
+    public var identity: String { Self.identity(forPairID: pairID) }
+
+    /// The PIN path has no secret and therefore no `PairingPayload`; it derives the same identity from the
+    /// `pairID` alone, so the Mac (which registers `payload.identity`) and the phone agree by construction.
+    public static func identity(forPairID pairID: Data) -> String { base64URL(pairID) }
 
     public var url: URL {
         var components = URLComponents()

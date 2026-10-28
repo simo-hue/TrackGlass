@@ -25,5 +25,10 @@ Checked against Apple's specifications on 2026-10-20 for M1.6. Model identifiers
 | iPad (9th generation) / iPad Air (4th generation) | 264 | [iPad 9](https://support.apple.com/en-us/111898), [Air 4](https://support.apple.com/en-qa/111905) |
 | iPad mini (5th generation) | 326 | [mini 5 comparison](https://www.apple.com/ipad/compare/?modelList=ipad-pro-12-9-6th-gen%2Cipad-mini-5th-gen) |
 | iPad mini (6th generation) / mini (A17 Pro) | 326 | [mini 6](https://support.apple.com/en-lamr/111886), [mini A17 Pro](https://support.apple.com/en-us/121456) |
+| iPad (6th–8th, 10th generation), iPad (A16) | 264 | [Identify your iPad model](https://support.apple.com/en-us/108043), [iPad tech specs](https://support.apple.com/specs/ipad) |
+| iPad Air (3rd, 5th generation), iPad Air 11/13-inch (M2, M3) | 264 | same |
+| iPad Pro 10.5-inch, 11-inch (2nd–4th generation, M4), 12.9-inch (2nd–6th generation), 13-inch (M4) | 264 | same |
+
+Added 2026-10-28 (all 264 ppi, so only the §3.2 marketing name changes for them; the family fallback already gave the right density). Model identifiers were taken from Apple's published model lists and should be re-checked when a device is at hand; an identifier that is wrong falls back to the correct density under the generic "iPad" name.
 
 Geometry uses the caller's actual window bounds and native screen scale, with no UIKit or CoreGraphics dependency. Native scale is injected rather than assumed to be 2 or 3; this also accommodates downsampled display modes. Rotation exchanges width and height; Split View changes the supplied bounds without clamping.

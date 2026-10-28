@@ -70,6 +70,69 @@ final class ControlChannelTests: XCTestCase {
         XCTAssertEqual(closeCount, 1)
     }
 
+    /// A framed peer that answers PINGs only when `answers(nonce)` says so — the channel's own
+    /// `ControlChannel` always answers, so selective loss needs a hand-rolled server.
+    nonisolated private static func selectivePongServer(_ connection: NWConnection, answers: @escaping @Sendable (UInt32) -> Bool) {
+        @Sendable func receive() {
+            connection.receiveMessage { data, _, _, error in
+                guard error == nil, let data, let packet = try? ControlMessage.decode(data) else { return }
+                if case .ping(let ping) = packet.message, answers(ping.nonce) {
+                    let pong = ControlMessage.pong(PongMessage(nonce: ping.nonce, echoSentAt: packet.header.sentAt))
+                    if let bytes = try? pong.encode(sequence: 0, sentAt: MonotonicClock.nanoseconds()) {
+                        let context = NWConnection.ContentContext(identifier: "control", metadata: [
+                            NWProtocolFramer.Message(definition: TGControlFramer.definition)
+                        ])
+                        connection.send(content: bytes, contentContext: context, isComplete: true, completion: .idempotent)
+                    }
+                }
+                receive()
+            }
+        }
+        connection.start(queue: .main)
+        receive()
+    }
+
+    func testEveryOtherPingAnsweredKeepsTheChannelAlive() async throws {
+        // §4.6 / Appendix A: "3 missed = dead" counts consecutive misses. A peer that skips every other
+        // PING never misses three in a row, so the channel must stay open (the old cumulative count
+        // closed it after the third skipped ping).
+        let (listener, endpoint) = try await listener { connection in
+            Self.selectivePongServer(connection) { nonce in nonce.isMultiple(of: 2) }
+        }
+        defer { listener.cancel() }
+        let channel = ControlChannel(connection: NWConnection(to: endpoint, using: Self.parameters()))
+        channel.heartbeatInterval = .milliseconds(100)
+        var closedWith: String?
+        var rtts = 0
+        channel.onReady = { channel.startHeartbeat() }
+        channel.onClose = { closedWith = $0 }
+        channel.onRTT = { _ in rtts += 1 }
+        channel.start()
+        try await Task.sleep(for: .milliseconds(1500))   // ≈ 15 pings, 7 of them skipped
+        XCTAssertNil(closedWith, "alternating misses are never three consecutive misses")
+        XCTAssertGreaterThanOrEqual(rtts, 4)
+        channel.close()
+    }
+
+    func testThreeConsecutiveMissesCloseTheChannel() async throws {
+        // The peer answers the first two pings, then falls silent: closed once the third unanswered
+        // ping is three intervals old, i.e. after about five intervals in total.
+        let (listener, endpoint) = try await listener { connection in
+            Self.selectivePongServer(connection) { nonce in nonce <= 2 }
+        }
+        defer { listener.cancel() }
+        let channel = ControlChannel(connection: NWConnection(to: endpoint, using: Self.parameters()))
+        channel.heartbeatInterval = .milliseconds(100)
+        var closedWith: String?
+        channel.onReady = { channel.startHeartbeat() }
+        channel.onClose = { closedWith = $0 }
+        channel.start()
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertNil(closedWith, "two answered pings and one miss are not a dead link")
+        try await eventually { closedWith != nil }
+        XCTAssertEqual(closedWith, "Connection timed out")
+    }
+
     func testOversizedLengthPrefixFailsTheConnection() async throws {
         // §4.3: the framer rejects a prefix above 64 KiB (and below the header size) by failing the connection,
         // so a malformed peer cannot make the receiver allocate.
@@ -88,6 +151,59 @@ final class ControlChannelTests: XCTestCase {
         raw.start(queue: .main)
         try await eventually { raw.state == .ready }
         raw.send(content: Data([0xFF, 0xFF, 0xFF, 0xFF, 0x54, 0x47, 0x01, 0x05]), completion: .idempotent)
+        try await eventually { box.serverClosedWith != nil }
+        XCTAssertNotNil(box.serverClosedWith)
+        raw.cancel()
+    }
+
+    func testHeaderWithAnotherProtocolVersionGetsAnIncompatibleBye() async throws {
+        // §4.1: a receiver that sees version != 1 sends BYE{reason: incompatible} and disconnects.
+        let box = Box()
+        let (listener, endpoint) = try await listener { connection in
+            Task { @MainActor in
+                let server = ControlChannel(connection: connection)
+                server.onMessage = { _ in }
+                server.onClose = { box.serverClosedWith = $0 }
+                server.start()
+                box.servers.append(server)
+            }
+        }
+        defer { listener.cancel(); box.servers.forEach { $0.close() } }
+        let client = NWConnection(to: endpoint, using: Self.parameters())   // framed, but we write the message bytes ourselves
+        client.start(queue: .main)
+        try await eventually { client.state == .ready }
+        var message = Data([0x54, 0x47, 0x02, MessageType.ping.rawValue])  // magic, version 2, PING
+        message.append(Data(count: 12))                                      // sequence + sentAt
+        message.append(Data([1, 0, 0, 0]))                                   // nonce
+        let context = NWConnection.ContentContext(identifier: "control", metadata: [NWProtocolFramer.Message(definition: TGControlFramer.definition)])
+        client.send(content: message, contentContext: context, isComplete: true, completion: .idempotent)
+        client.receiveMessage { data, _, _, _ in
+            let decoded = data.flatMap { try? ControlMessage.decode($0).message }
+            Task { @MainActor in box.reply = decoded }
+        }
+        try await eventually { box.reply != nil && box.serverClosedWith != nil }
+        XCTAssertEqual(box.reply, .bye(ByeMessage(reason: 1)))
+        XCTAssertEqual(box.serverClosedWith, "Incompatible version")
+        client.cancel()
+    }
+
+    func testLengthPrefixShorterThanAHeaderFailsTheConnection() async throws {
+        // §4.3: a length below the 16-byte header cannot hold a message; the framer fails the connection.
+        let box = Box()
+        let (listener, endpoint) = try await listener { connection in
+            Task { @MainActor in
+                let server = ControlChannel(connection: connection)
+                server.onMessage = { _ in }
+                server.onClose = { box.serverClosedWith = $0 }
+                server.start()
+                box.servers.append(server)
+            }
+        }
+        defer { listener.cancel(); box.servers.forEach { $0.close() } }
+        let raw = NWConnection(to: endpoint, using: .tcp)
+        raw.start(queue: .main)
+        try await eventually { raw.state == .ready }
+        raw.send(content: Data([8, 0, 0, 0, 0x54, 0x47, 0x01, 0x04, 0, 0, 0, 0]), completion: .idempotent)
         try await eventually { box.serverClosedWith != nil }
         XCTAssertNotNil(box.serverClosedWith)
         raw.cancel()
@@ -122,4 +238,5 @@ final class ControlChannelTests: XCTestCase {
 @MainActor private final class Box {
     var servers: [ControlChannel] = []
     var serverClosedWith: String?
+    var reply: ControlMessage?
 }

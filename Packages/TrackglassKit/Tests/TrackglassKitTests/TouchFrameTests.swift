@@ -64,6 +64,24 @@ final class TouchFrameTests: XCTestCase {
         XCTAssertThrowsError(try (valid + Data([0])).withUnsafeBytes { try TouchFrameDecoder.decode($0) })
     }
 
+    func testNonFiniteContactValuesAreRejected() throws {
+        // §8 robustness: NaN/∞ coordinates or radii never reach the engine's arithmetic or CGEvent positions.
+        var frame = TouchFrame(frameTime: 1)
+        frame.append(Contact(contactID: 1, phase: .began, x: 10, y: 20, majorRadius: 4))
+        var valid = Data(count: 44)
+        _ = try valid.withUnsafeMutableBytes { try TouchFrameEncoder(frame: frame).encode(into: $0) }
+        XCTAssertNoThrow(try valid.withUnsafeBytes { try TouchFrameDecoder.decode($0) })
+        for offset in [32, 36, 40] {                       // x, y, majorRadius of the first contact
+            for bits in [Float.nan.bitPattern, Float.infinity.bitPattern, (-Float.infinity).bitPattern] {
+                var bad = valid
+                withUnsafeBytes(of: bits.littleEndian) { bad.replaceSubrange(offset..<(offset + 4), with: $0) }
+                XCTAssertThrowsError(try bad.withUnsafeBytes { try TouchFrameDecoder.decode($0) }, "offset \(offset)") {
+                    XCTAssertEqual($0 as? TouchFrameCodecError, .invalidContact)
+                }
+            }
+        }
+    }
+
     func testFuzz10000Inputs() {
         var state: UInt64 = 0xA172F7
         func next() -> UInt64 {
@@ -97,5 +115,27 @@ final class TouchFrameTests: XCTestCase {
         XCTAssertLessThanOrEqual(Double(elapsed) / Double(iterations), 300)
         #endif
         XCTAssertEqual(buffer[24], 10)
+    }
+
+    /// §10.1: encode **and** decode ≤ 300 ns. The budget applies to optimized code; `Scripts/ci.sh` runs
+    /// the performance tests a second time with `swift test -c release`.
+    func testDecodePerformance() throws {
+        let encoder = TouchFrameEncoder(frame: makeFrame(count: 10))
+        let buffer = UnsafeMutableRawBufferPointer.allocate(byteCount: 188, alignment: 8)
+        defer { buffer.deallocate() }
+        let length = try encoder.encode(into: buffer)
+        let bytes = UnsafeRawBufferPointer(rebasing: UnsafeRawBufferPointer(buffer)[0..<length])
+        let iterations = 100_000
+        var elapsed: UInt64 = 0
+        var contacts = 0
+        measure {
+            let start = MonotonicClock.nanoseconds()
+            for _ in 0..<iterations { contacts &+= try! TouchFrameDecoder.decode(bytes).contactCount }
+            elapsed = MonotonicClock.nanoseconds() - start
+        }
+        #if !DEBUG
+        XCTAssertLessThanOrEqual(Double(elapsed) / Double(iterations), 300)
+        #endif
+        XCTAssertGreaterThan(contacts, 0)
     }
 }

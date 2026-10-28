@@ -18,6 +18,9 @@ public final class ControlChannel {
     /// A connection that never becomes ready or never completes HELLO/WELCOME (i.e. `startHeartbeat()`
     /// is never called) is closed after this long; before the heartbeat there is no other liveness check.
     public var handshakeTimeout: Duration = .seconds(10)
+    /// PING cadence (Appendix A: 1 s). Tests shorten it; the dead threshold is always three missed pings,
+    /// i.e. the oldest of three *consecutive* unanswered pings is ≥ 3 × this interval old (§4.6).
+    public var heartbeatInterval: Duration = .seconds(1)
     private var closed = false
     private var closing = false
     private var unknownTypes: Set<UInt8> = []
@@ -79,20 +82,29 @@ public final class ControlChannel {
     public func startHeartbeat() {
         guard timer == nil, !closed else { return }
         watchdog?.cancel(); watchdog = nil
+        let interval = heartbeatInterval
+        let deadAfterNs = Self.nanoseconds(of: interval) &* 3
         timer = Task { [weak self] in
             while !Task.isCancelled {
-                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                do { try await Task.sleep(for: interval) } catch { return }
                 guard let self, !self.closed, !self.closing else { return }
                 let now = MonotonicClock.nanoseconds()
                 self.nonce &+= 1
                 self.pending[self.nonce] = now
                 self.transmit(.ping(PingMessage(nonce: self.nonce)), sentAt: now)
-                // Appendix A: 1 s pings, three misses — the oldest unanswered ping must be ≥ 3 s old.
-                if self.pending.count >= 3 && self.pending.values.contains(where: { now >= $0 && now - $0 >= 3_000_000_000 }) {
+                // Appendix A: three misses. `pending` holds only the *consecutive* unanswered pings (a PONG
+                // clears every older one, see `receive`), so three entries with the oldest ≥ 3 intervals old
+                // means the last three pings in a row went unanswered.
+                if self.pending.count >= 3 && self.pending.values.contains(where: { now >= $0 && now - $0 >= deadAfterNs }) {
                     self.close("Connection timed out"); return
                 }
             }
         }
+    }
+
+    private static func nanoseconds(of duration: Duration) -> UInt64 {
+        let (seconds, attoseconds) = duration.components
+        return UInt64(max(0, seconds)) &* 1_000_000_000 &+ UInt64(max(0, attoseconds)) / 1_000_000_000
     }
 
     private func receive() {
@@ -108,7 +120,10 @@ public final class ControlChannel {
                         self.send(.pong(PongMessage(nonce: ping.nonce, echoSentAt: packet.header.sentAt)))
                     case .pong(let pong):
                         if self.pending[pong.nonce] == pong.echoSentAt {
-                            self.pending.removeValue(forKey: pong.nonce)
+                            // A PONG proves the peer is alive: it clears its own ping and every older one
+                            // still pending, so misses are counted consecutively (§4.6 "3 missed = dead").
+                            let answered = pong.nonce
+                            self.pending = self.pending.filter { answered &- $0.key >= 0x8000_0000 }
                             let now = MonotonicClock.nanoseconds()
                             if now >= pong.echoSentAt { self.onRTT?(UInt32(clamping: (now - pong.echoSentAt) / 1_000)) }
                         }
