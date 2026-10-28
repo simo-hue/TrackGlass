@@ -9,7 +9,7 @@ final class PINPairingTests: XCTestCase {
         let phoneStore = PairingStore(service: "app.trackglass.tests.pin.phone.\(UUID())")
         let mac = PeerIdentity(name: "PIN Mac")
         let request = PairRequestMessage(peerID: UUID(), name: "PIN Phone", modelIdentifier: "iPhone16,2", protocolVersion: 1)
-        let service = PairingService(identity: mac, store: serverStore, authorized: { true })
+        let service = PairingService(identity: mac, store: serverStore, authorized: { true }, approvalPolicy: { _ in true })
         defer { service.close(); try? serverStore.delete(peerID: request.peerID); try? phoneStore.delete(peerID: mac.peerID) }
         service.open()
         let originalPairID = try XCTUnwrap(service.payload?.pairID)
@@ -29,7 +29,7 @@ final class PINPairingTests: XCTestCase {
     @MainActor func testWrongPINRotatesAndThreeFailuresExhaustWindow() async throws {
         let store = PairingStore(service: "app.trackglass.tests.pin.fail.\(UUID())")
         let mac = PeerIdentity(name: "Rotation Mac")
-        let service = PairingService(identity: mac, store: store, authorized: { true })
+        let service = PairingService(identity: mac, store: store, authorized: { true }, approvalPolicy: { _ in true })
         defer { service.close() }
         service.open()
         service.setMode(.pin)

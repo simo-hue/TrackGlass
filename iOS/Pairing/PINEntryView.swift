@@ -63,7 +63,7 @@ struct PINEntryView: View {
         let enteredPIN = pin
         pin = ""
         inProgress = true
-        status = "Pairing…"
+        status = "Pairing… Click Allow on the Mac when it asks."
         let identity = PhoneIdentityStore()
         identity.name = phoneName
         let request = PairRequestMessage(peerID: identity.peerID, name: phoneName,
@@ -76,6 +76,7 @@ struct PINEntryView: View {
                 status = "Paired with \(peer.name)"
                 paired(peer)
             } catch is CancellationError { status = "Pairing cancelled." }
+            catch PairingClient.Failure.declined { status = PairingClient.Failure.declined.localizedDescription }
             catch { status = "Pairing failed. Check the new code on the Mac and try again." }
         }
     }

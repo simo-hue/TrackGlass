@@ -71,11 +71,13 @@ extension ControlMessage {
             try writer.write(value.name)
             try writer.write(value.modelIdentifier)
             writer.write(value.protocolVersion)
+            guard value.ephemeralPublicKey.count == 32 else { throw ControlCodecError.invalidKeyLength }
+            writer.data.append(value.ephemeralPublicKey)
         case .pairResponse(let value):
             writer.write(value.peerID)
             try writer.write(value.name)
-            guard value.ltk.count == 32 else { throw ControlCodecError.invalidKeyLength }
-            writer.data.append(value.ltk)
+            guard value.ephemeralPublicKey.count == 32 else { throw ControlCodecError.invalidKeyLength }
+            writer.data.append(value.ephemeralPublicKey)
         case .unknown: break
         }
         return writer.data
@@ -151,13 +153,14 @@ extension ControlMessage {
                 peerID: reader.uuid(),
                 name: reader.string(),
                 modelIdentifier: reader.string(),
-                protocolVersion: reader.integer(UInt8.self)
+                protocolVersion: reader.integer(UInt8.self),
+                ephemeralPublicKey: reader.bytes(count: 32)
             ))
         case .pairResponse:
             message = .pairResponse(try PairResponseMessage(
                 peerID: reader.uuid(),
                 name: reader.string(),
-                ltk: reader.bytes(count: 32)
+                ephemeralPublicKey: reader.bytes(count: 32)
             ))
         default:
             return ControlPacket(header: header, message: .unknown(type: header.type))

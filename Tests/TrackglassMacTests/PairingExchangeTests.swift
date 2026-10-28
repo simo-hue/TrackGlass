@@ -10,7 +10,8 @@ final class PairingExchangeTests: XCTestCase {
         let phoneID = UUID()
         let serverStore = PairingStore(service: "app.trackglass.tests.mac.\(UUID())")
         let phoneStore = PairingStore(service: "app.trackglass.tests.phone.\(UUID())")
-        let service = PairingService(identity: PeerIdentity(peerID: macID, name: "Test Mac"), store: serverStore, authorized: { true })
+        let service = PairingService(identity: PeerIdentity(peerID: macID, name: "Test Mac"), store: serverStore, authorized: { true },
+                                     approvalPolicy: { _ in true })
         defer {
             service.close()
             try? serverStore.delete(peerID: phoneID)
@@ -38,10 +39,81 @@ final class PairingExchangeTests: XCTestCase {
         XCTAssertEqual(try serverStore.all().count, 1)
     }
 
+    @MainActor func testPairingWaitsForTheUsersAllowClickBeforeStoringAnything() async throws {
+        // §3.4 hardening (2026-10-28): nothing is stored and no key material leaves the Mac until Allow is clicked.
+        let macID = UUID(), phoneID = UUID()
+        let serverStore = PairingStore(service: "app.trackglass.tests.allow.mac.\(UUID())")
+        let phoneStore = PairingStore(service: "app.trackglass.tests.allow.phone.\(UUID())")
+        let service = PairingService(identity: PeerIdentity(peerID: macID, name: "Asking Mac"), store: serverStore, authorized: { true })
+        defer { service.close(); try? serverStore.delete(peerID: phoneID); try? phoneStore.delete(peerID: macID) }
+        service.open()
+        let endpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: try await port(of: service))
+        let payload = try XCTUnwrap(service.payload)
+        let request = PairRequestMessage(peerID: phoneID, name: "Held Phone", modelIdentifier: "iPhone16,1", protocolVersion: 1)
+        let client = PairingClient(store: phoneStore)
+        let pairing = Task { @MainActor in try await client.pair(payload: payload, endpoint: endpoint, expectedMacID: macID, request: request) }
+        for _ in 0..<250 where service.pendingApproval == nil { try await Task.sleep(for: .milliseconds(20)) }
+        let pending = try XCTUnwrap(service.pendingApproval, "the Mac must ask before answering")
+        XCTAssertEqual(pending.phoneName, "Held Phone")
+        XCTAssertEqual(pending.modelName, "iPhone 15 Pro")
+        XCTAssertTrue(try serverStore.all().isEmpty, "nothing is stored before Allow")
+        XCTAssertNil(try phoneStore.load(peerID: macID))
+        service.respondToPendingPairing(allow: true)
+        let mac = try await pairing.value
+        XCTAssertNil(service.pendingApproval)
+        XCTAssertEqual(try serverStore.load(peerID: phoneID)?.ltk, mac.ltk, "both sides derived the same LTK")
+        XCTAssertEqual(mac.ltk.count, 32)
+    }
+
+    @MainActor func testDeclinedPairingStoresNothingAndTellsThePhone() async throws {
+        let macID = UUID(), phoneID = UUID()
+        let serverStore = PairingStore(service: "app.trackglass.tests.deny.mac.\(UUID())")
+        let phoneStore = PairingStore(service: "app.trackglass.tests.deny.phone.\(UUID())")
+        let service = PairingService(identity: PeerIdentity(peerID: macID, name: "Careful Mac"), store: serverStore,
+                                     authorized: { true }, approvalPolicy: { _ in false })
+        defer { service.close() }
+        service.open()
+        let endpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: try await port(of: service))
+        let payload = try XCTUnwrap(service.payload)
+        let client = PairingClient(store: phoneStore)
+        do {
+            _ = try await client.pair(payload: payload, endpoint: endpoint, expectedMacID: macID,
+                                      request: PairRequestMessage(peerID: phoneID, name: "Stranger", modelIdentifier: "iPhone16,2", protocolVersion: 1))
+            XCTFail("A declined pairing succeeded")
+        } catch PairingClient.Failure.declined {
+        } catch { XCTFail("Expected the declined error, got \(error)") }
+        XCTAssertTrue(try serverStore.all().isEmpty)
+        XCTAssertTrue(try phoneStore.all().isEmpty)
+        XCTAssertFalse(service.isOpen, "a declined attempt spends the window")
+        XCTAssertNil(service.payload)
+    }
+
+    @MainActor func testClosingTheWindowWhileAskingDeclines() async throws {
+        let macID = UUID()
+        let serverStore = PairingStore(service: "app.trackglass.tests.closeask.mac.\(UUID())")
+        let phoneStore = PairingStore(service: "app.trackglass.tests.closeask.phone.\(UUID())")
+        let service = PairingService(identity: PeerIdentity(peerID: macID, name: "Closing Mac"), store: serverStore, authorized: { true })
+        defer { service.close() }
+        service.open()
+        let endpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: try await port(of: service))
+        let payload = try XCTUnwrap(service.payload)
+        let client = PairingClient(store: phoneStore)
+        let pairing = Task { @MainActor in
+            try await client.pair(payload: payload, endpoint: endpoint, expectedMacID: macID,
+                                  request: PairRequestMessage(peerID: UUID(), name: "Phone", modelIdentifier: "iPhone16,2", protocolVersion: 1))
+        }
+        for _ in 0..<250 where service.pendingApproval == nil { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertNotNil(service.pendingApproval)
+        service.close()
+        XCTAssertNil(service.pendingApproval)
+        do { _ = try await pairing.value; XCTFail("Closing the window must not pair") } catch {}
+        XCTAssertTrue(try serverStore.all().isEmpty)
+    }
+
     @MainActor func testClosingWindowRejectsOldCode() async throws {
         let store = PairingStore(service: "app.trackglass.tests.closed.\(UUID())")
         let identity = PeerIdentity(name: "Closed Mac")
-        let service = PairingService(identity: identity, store: store, authorized: { true })
+        let service = PairingService(identity: identity, store: store, authorized: { true }, approvalPolicy: { _ in true })
         service.open()
         let port = try await port(of: service)
         let payload = try XCTUnwrap(service.payload)
@@ -84,7 +156,8 @@ final class PairingExchangeTests: XCTestCase {
         let phoneIDs = [UUID(), UUID()]
         let serverStore = PairingStore(service: "app.trackglass.tests.race.mac.\(UUID())")
         let phoneStore = PairingStore(service: "app.trackglass.tests.race.phone.\(UUID())")
-        let service = PairingService(identity: PeerIdentity(peerID: macID, name: "Race Mac"), store: serverStore, authorized: { true })
+        let service = PairingService(identity: PeerIdentity(peerID: macID, name: "Race Mac"), store: serverStore, authorized: { true },
+                                     approvalPolicy: { _ in true })
         defer {
             service.close()
             for id in phoneIDs { try? serverStore.delete(peerID: id) }

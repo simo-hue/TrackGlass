@@ -21,8 +21,9 @@ final class ControlMessageTests: XCTestCase {
                                   pipelineP50Micros: 400, pipelineP95Micros: 900, engineState: 4)),
             .surface(SurfaceMessage(surfaceWidthMM: 141, surfaceHeightMM: 65, ppi: 460, trackingOverride: 0.5)),
             .bye(ByeMessage(reason: 4)),
-            .pairRequest(PairRequestMessage(peerID: peer, name: "iPad", modelIdentifier: "iPad8,1", protocolVersion: 1)),
-            .pairResponse(PairResponseMessage(peerID: peer, name: "Mac", ltk: Data(0..<32))),
+            .pairRequest(PairRequestMessage(peerID: peer, name: "iPad", modelIdentifier: "iPad8,1", protocolVersion: 1,
+                                            ephemeralPublicKey: Data(32..<64))),
+            .pairResponse(PairResponseMessage(peerID: peer, name: "Mac", ephemeralPublicKey: Data(0..<32))),
             .welcome(WelcomeMessage(status: 1, macPeerID: peer, macName: "Mac", macOSVersion: "27.0.1",
                                     injectorMode: 1, settings: settings, activePhoneName: "Téléphone 📱"))
         ]
@@ -113,15 +114,21 @@ final class ControlMessageTests: XCTestCase {
     func testWireLayout() throws {
         let ping = try ControlMessage.ping(PingMessage(nonce: 0x12345678)).encode(sequence: 0, sentAt: 0)
         XCTAssertEqual(Array(ping.suffix(4)), [0x78, 0x56, 0x34, 0x12])
-        let pair = try ControlMessage.pairRequest(PairRequestMessage(peerID: peer, name: "é", modelIdentifier: "", protocolVersion: 1)).encode(sequence: 0, sentAt: 0)
+        let pair = try ControlMessage.pairRequest(PairRequestMessage(peerID: peer, name: "é", modelIdentifier: "", protocolVersion: 1,
+                                                                     ephemeralPublicKey: Data(repeating: 0xEE, count: 32))).encode(sequence: 0, sentAt: 0)
         XCTAssertEqual(Array(pair[16..<32]), [0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF])
         XCTAssertEqual(Array(pair[32..<36]), [2, 0, 0xC3, 0xA9])
+        // peerID 16 + name 2+2 + model 2+0 + protocolVersion 1, then the 32-byte X25519 key (§4.5, 2026-10-28).
+        XCTAssertEqual(pair.count, 16 + 16 + 4 + 2 + 1 + 32)
+        XCTAssertEqual(pair[38], 1)
+        XCTAssertEqual(Array(pair.suffix(32)), [UInt8](repeating: 0xEE, count: 32))
         let status = try messages[6].encode(sequence: 0, sentAt: 0)
         XCTAssertEqual(status.count, 33)
     }
 
     func testInvalidStringsAndKey() throws {
-        var badUTF8 = try ControlMessage.pairRequest(PairRequestMessage(peerID: peer, name: "a", modelIdentifier: "", protocolVersion: 1)).encode(sequence: 0, sentAt: 0)
+        var badUTF8 = try ControlMessage.pairRequest(PairRequestMessage(peerID: peer, name: "a", modelIdentifier: "", protocolVersion: 1,
+                                                                        ephemeralPublicKey: Data(count: 32))).encode(sequence: 0, sentAt: 0)
         badUTF8[34] = 0xFF
         XCTAssertThrowsError(try ControlMessage.decode(badUTF8)) {
             XCTAssertEqual($0 as? ControlCodecError, .invalidUTF8)
@@ -130,8 +137,15 @@ final class ControlMessageTests: XCTestCase {
         XCTAssertThrowsError(try long.encode(sequence: 0, sentAt: 0)) {
             XCTAssertEqual($0 as? ControlCodecError, .stringTooLong)
         }
-        XCTAssertThrowsError(try ControlMessage.pairResponse(PairResponseMessage(peerID: peer, name: "", ltk: Data(count: 31))).encode(sequence: 0, sentAt: 0)) {
+        XCTAssertThrowsError(try ControlMessage.pairResponse(PairResponseMessage(peerID: peer, name: "", ephemeralPublicKey: Data(count: 31))).encode(sequence: 0, sentAt: 0)) {
             XCTAssertEqual($0 as? ControlCodecError, .invalidKeyLength)
         }
+        // A request without its ephemeral key cannot be sent (PairingClient always fills it).
+        XCTAssertThrowsError(try ControlMessage.pairRequest(PairRequestMessage(peerID: peer, name: "a", modelIdentifier: "", protocolVersion: 1)).encode(sequence: 0, sentAt: 0)) {
+            XCTAssertEqual($0 as? ControlCodecError, .invalidKeyLength)
+        }
+        // A truncated key on the wire is a truncated message.
+        let full = try ControlMessage.pairResponse(PairResponseMessage(peerID: peer, name: "Mac", ephemeralPublicKey: Data(count: 32))).encode(sequence: 0, sentAt: 0)
+        XCTAssertThrowsError(try ControlMessage.decode(full.dropLast()))
     }
 }

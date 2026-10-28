@@ -39,6 +39,33 @@ private struct PairingWindowContent: View {
     let service: PairingService
 
     var body: some View {
+        if let pending = service.pendingApproval {
+            approval(pending)
+        } else {
+            credentials
+        }
+    }
+
+    /// §3.4 (2026-10-28): the phone has proven it knows the code; the user decides whether it may pair.
+    private func approval(_ pending: PairingService.PendingApproval) -> some View {
+        VStack(spacing: 18) {
+            Image(systemName: "iphone.radiowaves.left.and.right").font(.system(size: 48)).accessibilityHidden(true)
+            Text("Allow “\(pending.phoneName)” to pair with this Mac?").font(.title2.weight(.semibold))
+                .multilineTextAlignment(.center)
+            Text("\(pending.modelName) will be able to control this Mac's pointer whenever it is nearby. Only allow a device you are holding.")
+                .multilineTextAlignment(.center).foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Button("Don’t Allow") { service.respondToPendingPairing(allow: false) }
+                    .keyboardShortcut(.cancelAction)
+                Button("Allow") { service.respondToPendingPairing(allow: true) }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(28)
+        .frame(width: 480, height: 360)
+    }
+
+    private var credentials: some View {
         HStack(spacing: 12) {
             if service.mode == .pin, service.isAdvertised, let pin = service.pin {
                 Text(pin).font(.system(size: 48, weight: .semibold, design: .monospaced))

@@ -149,29 +149,36 @@ public struct ByeMessage: Equatable, Sendable {
     }
 }
 
+/// §4.5 PAIR_REQUEST. `ephemeralPublicKey` (owner-approved 2026-10-28, pairing hardening): the phone's one-time
+/// X25519 public key (32 bytes, raw). `PairingClient` fills it per attempt; encoding throws while it is empty.
 public struct PairRequestMessage: Equatable, Sendable {
     public var peerID: UUID
     public var name: String
     public var modelIdentifier: String
     public var protocolVersion: UInt8
+    public var ephemeralPublicKey: Data
 
-    public init(peerID: UUID, name: String, modelIdentifier: String, protocolVersion: UInt8) {
+    public init(peerID: UUID, name: String, modelIdentifier: String, protocolVersion: UInt8, ephemeralPublicKey: Data = Data()) {
         self.peerID = peerID
         self.name = name
         self.modelIdentifier = modelIdentifier
         self.protocolVersion = protocolVersion
+        self.ephemeralPublicKey = ephemeralPublicKey
     }
 }
 
+/// §4.5 PAIR_RESPONSE. The LTK is no longer transmitted: the Mac answers with its own one-time X25519 public key and
+/// both sides derive the LTK with `KeyDerivation.pairingLTK` (§3.4), so a recorded pairing exchange — even one whose
+/// PIN is later brute-forced — does not reveal the long-term key.
 public struct PairResponseMessage: Equatable, Sendable {
     public var peerID: UUID
     public var name: String
-    public var ltk: Data
+    public var ephemeralPublicKey: Data
 
-    public init(peerID: UUID, name: String, ltk: Data) {
+    public init(peerID: UUID, name: String, ephemeralPublicKey: Data) {
         self.peerID = peerID
         self.name = name
-        self.ltk = ltk
+        self.ephemeralPublicKey = ephemeralPublicKey
     }
 }
 

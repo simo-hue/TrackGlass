@@ -76,7 +76,7 @@ struct PairingFlowView: View {
         guard !pairing, let payload = pending,
               let mac = browser.macs.first(where: { $0.instanceName == payload.bonjourInstanceName && $0.isPairing && $0.pairID == payload.pairID }) else { return }
         pairing = true
-        status = "Pairing…"
+        status = "Pairing… Click Allow on the Mac when it asks."
         let identity = PhoneIdentityStore()
         identity.name = name
         let request = PairRequestMessage(peerID: identity.peerID, name: name,
