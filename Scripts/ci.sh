@@ -6,8 +6,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SIGNING=()
+IOS_TEST_SKIPS=()
 if [[ "${TG_CI_UNSIGNED:-0}" == 1 ]]; then
   SIGNING=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="")
+  # The data-protection Keychain refuses an unsigned host (-34018 errSecMissingEntitlement: no
+  # keychain-access-groups), so the Keychain-backed PairingStore tests run only on the signed Mac.
+  IOS_TEST_SKIPS=(-skip-testing:TrackglassiOSTests/PairingStoreTests)
 fi
 # bash 3.2 (macOS) trips `set -u` on an empty array expansion; use the ${arr[@]+"${arr[@]}"} idiom.
 xcb() { xcodebuild "$@" ${SIGNING[@]+"${SIGNING[@]}"}; }
@@ -21,7 +25,8 @@ if [[ "${TG_CI_UNSIGNED:-0}" == 1 ]]; then
 else
   xcb -project Trackglass.xcodeproj -scheme TrackglassMac -destination 'platform=macOS' test
 fi
-xcb -project Trackglass.xcodeproj -scheme TrackglassiOS -destination "${TG_IOS_TEST_DESTINATION:-platform=iOS Simulator,name=iPhone 17}" test
+xcb -project Trackglass.xcodeproj -scheme TrackglassiOS -destination "${TG_IOS_TEST_DESTINATION:-platform=iOS Simulator,name=iPhone 17}" \
+  ${IOS_TEST_SKIPS[@]+"${IOS_TEST_SKIPS[@]}"} test
 xcb -project Trackglass.xcodeproj -scheme TrackglassiOS -destination 'generic/platform=iOS' build
 xcb -project Trackglass.xcodeproj -scheme TrackglassMac -configuration Debug build
 TRACKGLASS_REPLAY_DERIVED_DATA="${TMPDIR:-/tmp}/trackglass-replay-ci"

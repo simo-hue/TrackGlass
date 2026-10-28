@@ -1,8 +1,9 @@
 name: CI
 
 # The owner's verification (Scripts/ci.sh) on a hosted macOS runner, unsigned: package tests, iOS simulator
-# tests, both app builds, fixture replay and loss invariants. The Mac-hosted test bundle needs a signed host
-# (data-protection Keychain), so it runs only on the release Mac, as do device tests and notarization.
+# tests, both app builds, fixture replay and loss invariants. The Mac-hosted test bundle and the Keychain-backed
+# iOS PairingStoreTests need a signed host (data-protection Keychain), so they run only on the release Mac,
+# as do device tests and notarization.
 on:
   push:
     branches: [main]
