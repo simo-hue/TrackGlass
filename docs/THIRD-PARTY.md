@@ -1,5 +1,7 @@
 # Third-party notices
 
+Trackglass itself is licensed under the Apache License 2.0 (`LICENSE` at the repository root). The components below keep their own licenses.
+
 ## Apple IOHIDFamily — APSL-2.0
 
 Apple's [IOHIDFamily](https://github.com/apple-oss-distributions/IOHIDFamily) is the factual reference for the acceleration algorithm specified in SPEC §6.6. The algorithm is independently reproduced in Swift; no Apple source file or function body is copied. Apple retains copyright in its source. The applicable license is the [Apple Public Source License 2.0](https://opensource.apple.com/apsl/).

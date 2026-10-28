@@ -9,7 +9,7 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 | P0.0 entitlement request filed (owner) | ☐ | date filed: |
 | P0.1 scaffold project | ☐ | TG_REPO_URL: https://github.com/simo-hue/TrackGlass (Config/Shared.xcconfig) |
 | P0.2 add packages and ci script | ☐ |  |
-| P0.3 docs: build instructions | ☐ | license chosen: |
+| P0.3 docs: build instructions | ☐ | license chosen: Apache-2.0 (owner, 2026-10-28); `LICENSE`, README license line and THIRD-PARTY note committed. Tick after the next green `Scripts/ci.sh`. |
 | M1.1 kit: message header | ☑ | Six package tests pass; committed as `kit: message header` (a6f81f2). |
 | M1.2 kit: touch frame codec | ☑ | Eleven tests incl. 10 000 fuzz cases; committed as `kit: touch frame codec` (4774038). |
 | M1.3 kit: control messages | ☑ | Sixteen package tests; committed as `kit: control messages` (087e849). |

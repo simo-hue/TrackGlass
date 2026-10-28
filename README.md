@@ -32,6 +32,17 @@ xcodegen generate                                        # edit project.yml, nev
 Scripts/ci.sh                                            # package tests, hosted tests, builds, fixture replay, loss invariants
 ```
 
-Xcode 16 or later with Swift 6 and strict concurrency. `TrackglassKit` (protocol, pairing, transport) and `TrackglassEngine` (gesture engine, acceleration) are Swift packages with warnings treated as errors; the apps are generated from `project.yml` by XcodeGen. Device installs: `xcrun devicectl list devices` then `xcrun devicectl device install app --device <id> <path.app>`. Releases of the Mac app are cut with `Scripts/release-mac.sh <version>` (see `Releases/README.md`).
+The individual steps `Scripts/ci.sh` runs (SPEC §2.5):
 
-Third-party notices: [docs/THIRD-PARTY.md](docs/THIRD-PARTY.md).
+```bash
+swift test --package-path Packages/TrackglassKit
+swift test --package-path Packages/TrackglassEngine
+xcodebuild -project Trackglass.xcodeproj -scheme TrackglassMac -destination 'platform=macOS' test                       # TrackglassMacTests (incl. InjectorTests)
+xcodebuild -project Trackglass.xcodeproj -scheme TrackglassiOS -destination 'platform=iOS Simulator,name=iPhone 17' test  # TrackglassiOSTests
+xcodebuild -project Trackglass.xcodeproj -scheme TrackglassiOS -destination 'generic/platform=iOS' build
+xcodebuild -project Trackglass.xcodeproj -scheme TrackglassMac -configuration Debug build
+```
+
+Xcode 27.1 or later (the toolchain baseline in `docs/SPEC.md`; macOS 14 and iOS 17 deployment targets) with Swift 6 and strict concurrency. `TrackglassKit` (protocol, pairing, transport) and `TrackglassEngine` (gesture engine, acceleration) are Swift packages with warnings treated as errors; the apps are generated from `project.yml` by XcodeGen. Device installs: `xcrun devicectl list devices` then `xcrun devicectl device install app --device <id> <path.app>`. Releases of the Mac app are cut with `Scripts/release-mac.sh <version>` (see `Releases/README.md`).
+
+Licensed under the [Apache License 2.0](LICENSE). Third-party notices: [docs/THIRD-PARTY.md](docs/THIRD-PARTY.md).
