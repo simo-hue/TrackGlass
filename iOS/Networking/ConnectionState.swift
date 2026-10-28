@@ -14,6 +14,8 @@ final class ConnectionState {
     private(set) var latencySamples: [Double] = []
     private var diagnosticsSequence: UInt64 = 0
     private(set) var settings: SettingsMessage?
+    /// §5.5: which injector the connected Mac runs (1 Quartz, 2 driver); 0 while disconnected.
+    private(set) var injectorMode: UInt8 = 0
     private(set) var macs: [DiscoveredMac] = []
     private(set) var pairedMacs: [PairedPeer] = []
     /// The Mac the app connects to automatically (§3.5 "last used Mac"); drives the `.noMac` overlay text.
@@ -27,11 +29,14 @@ final class ConnectionState {
         appliedSnapshot = snapshot.sequence
         updateSession(isConnected: snapshot.isConnected, status: snapshot.status, macName: snapshot.macName,
                       rttMicros: snapshot.rttMicros, settings: snapshot.settings,
-                      diagnostics: snapshot.diagnostics, diagnosticsSequence: snapshot.diagnosticsSequence)
+                      diagnostics: snapshot.diagnostics, diagnosticsSequence: snapshot.diagnosticsSequence,
+                      injectorMode: snapshot.injectorMode)
     }
 
     func updateSession(isConnected: Bool, status: String, macName: String, rttMicros: UInt32,
-                       settings: SettingsMessage?, diagnostics: StatusMessage? = nil, diagnosticsSequence: UInt64 = 0) {
+                       settings: SettingsMessage?, diagnostics: StatusMessage? = nil, diagnosticsSequence: UInt64 = 0,
+                       injectorMode: UInt8 = 0) {
+        self.injectorMode = isConnected ? injectorMode : 0
         self.diagnostics = diagnostics
         if self.diagnosticsSequence != diagnosticsSequence, diagnostics != nil {
             self.diagnosticsSequence = diagnosticsSequence

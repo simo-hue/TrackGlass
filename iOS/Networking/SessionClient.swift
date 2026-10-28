@@ -13,6 +13,8 @@ final class SessionClient {
     private(set) var diagnostics: StatusMessage?
     private(set) var diagnosticsSequence: UInt64 = 0
     private(set) var settings: SettingsMessage?
+    /// WELCOME `injectorMode` (§4.5): 1 Quartz, 2 driver (Phase 2). Mirrored into `ConnectionState` (§5.5).
+    private(set) var injectorMode: UInt8 = 0
     private var connectionChanged: (@MainActor @Sendable () -> Void)?
     private var sessionClosed: (@MainActor @Sendable () -> Void)?
     #if canImport(UIKit)
@@ -41,12 +43,14 @@ final class SessionClient {
         let diagnostics: StatusMessage?
         let diagnosticsSequence: UInt64
         let sequence: UInt64
+        var injectorMode: UInt8 = 0
     }
     private var snapshotSequence: UInt64 = 0
     func snapshot() -> Snapshot {
         snapshotSequence &+= 1
         return Snapshot(isConnected: isConnected, status: status, macName: macName, rttMicros: rttMicros, settings: settings,
-                        diagnostics: diagnostics, diagnosticsSequence: diagnosticsSequence, sequence: snapshotSequence)
+                        diagnostics: diagnostics, diagnosticsSequence: diagnosticsSequence, sequence: snapshotSequence,
+                        injectorMode: injectorMode)
     }
 
     func setCallbacks(connectionChanged: (@MainActor @Sendable () -> Void)?,
@@ -87,7 +91,7 @@ final class SessionClient {
                 switch welcome.status {
                 case 0:
                     self.isConnected = true; self.macName = welcome.macName
-                    self.settings = welcome.settings
+                    self.settings = welcome.settings; self.injectorMode = welcome.injectorMode
     #if canImport(UIKit)
                     self.haptics.start()
     #endif

@@ -23,7 +23,6 @@ struct SettingsSheet: View {
     @State private var busy = false
     @State private var share: RecordingShare?
     @State private var error: String?
-    private var website: URL? { (Bundle.main.object(forInfoDictionaryKey: "TGWebsiteURL") as? String).flatMap(URL.init(string:)) }
     var body: some View {
         NavigationStack {
             Form {
@@ -79,10 +78,10 @@ struct SettingsSheet: View {
                 Section("About") {
                     LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
                     Text("Trackglass never leaves your network")
-                    if let website {
-                        Link("Privacy Policy", destination: website.appendingPathComponent("privacy.html"))
-                        Link("Download the Mac app", destination: website.appendingPathComponent("support.html"))
-                    }
+                    if let privacyPolicy = AppLinks.privacyPolicy { Link("Privacy Policy", destination: privacyPolicy) }
+                    // §1.5 / §5.1: the Mac download page is the newest GitHub release; the support page explains setup.
+                    if let download = AppLinks.macDownload { Link("Download the Mac app", destination: download) }
+                    if let support = AppLinks.support { Link("Setup help and support", destination: support) }
                 }
             }
             .navigationTitle("Settings")

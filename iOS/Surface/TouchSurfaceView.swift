@@ -10,7 +10,11 @@ final class TouchSurfaceView: UIView {
     private let contacts = LiveContactTable<any TouchLike>()
     private let ppi = DevicePPI.lookup(modelIdentifier: TouchSurfaceView.modelIdentifier())
     private var sequence: UInt32 = 0
+    /// Stamp of the last frame sent (monotonic: §4.7 makes the Mac drop any frame whose time goes backwards).
     private var lastEmitTimeNs: UInt64 = 0
+    /// Raw event time of the last frame sent, before the monotonic clamp; used only to spot UIKit's
+    /// began/moved split of one event (`ingestMoved`).
+    private var lastRawEmitTimeNs: UInt64 = 0
     private var lastEmitContactCount = 0
     private let displayLinkDriver = DisplayLinkDriver()
 
@@ -132,7 +136,7 @@ final class TouchSurfaceView: UIView {
         // UIKit splits one UIEvent into began/moved/ended calls; a frame for this event with the same
         // contacts was already emitted by `ingestBegan`, so sending it again would only double the traffic.
         let timeNs = TouchSample.timestampNanoseconds(timestamp)
-        if timeNs == lastEmitTimeNs, contacts.count == lastEmitContactCount { return }
+        if timeNs == lastRawEmitTimeNs, contacts.count == lastEmitContactCount { return }
         emitCurrentContacts(timeNs: timeNs)
     }
 
@@ -191,12 +195,22 @@ final class TouchSurfaceView: UIView {
                                              location: location, majorRadius: radius, geometry: geometry))
         }
         guard touchFrame.contactCount > 0 else { return }
-        touchFrame.frameTime = timeNs()
+        let rawTimeNs = timeNs()
+        touchFrame.frameTime = monotonicFrameTime(rawTimeNs)
         sequence &+= 1
         lastEmitTimeNs = touchFrame.frameTime
+        lastRawEmitTimeNs = rawTimeNs
         lastEmitContactCount = contacts.count
         frameSender.enqueue(touchFrame)
     }
+
+    /// A stationary keep-alive is stamped with the display-link time, which is a few milliseconds *after*
+    /// the digitizer sample of the next UIKit event (`UIEvent.timestamp` is the sample time, delivery comes
+    /// later). The Mac drops a frame whose time is lower than the last accepted one (§4.7, §8.9), and the
+    /// dropped frame may be the `ended` phase plus its synthetic lift-off — a phantom finger until the
+    /// 1.5 s timeout. Frame times therefore never go backwards: a late sample inherits the last stamp (the
+    /// engine then carries its motion into the next frame instead of losing it).
+    private func monotonicFrameTime(_ timeNs: UInt64) -> UInt64 { max(timeNs, lastEmitTimeNs) }
 
     /// §4.7: the Mac force-releases every held button after 1.5 s without a frame or heartbeat while
     /// contacts are tracked, and UIKit delivers nothing for a finger that holds still. While any contact
@@ -211,11 +225,12 @@ final class TouchSurfaceView: UIView {
     private func emitSyntheticLiftoff(timeNs: UInt64) {
         touchFrame.removeAllContacts()
         touchFrame.header.sequence = sequence
-        touchFrame.frameTime = timeNs
+        touchFrame.frameTime = monotonicFrameTime(timeNs)
         touchFrame.surfaceIsLandscape = bounds.width > bounds.height
         touchFrame.isSyntheticLiftoff = true
         sequence &+= 1
-        lastEmitTimeNs = timeNs
+        lastEmitTimeNs = touchFrame.frameTime
+        lastRawEmitTimeNs = timeNs
         frameSender.enqueue(touchFrame)
     }
 

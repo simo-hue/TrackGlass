@@ -5,7 +5,8 @@ struct OnboardingView: View {
     let finish: () -> Void
     @State private var page = 0
     private var lastPage: Int { UIDevice.current.userInterfaceIdiom == .pad ? 3 : 2 }
-    private var website: URL? { (Bundle.main.object(forInfoDictionaryKey: "TGWebsiteURL") as? String).flatMap(URL.init(string:)) }
+    /// §5.1 page 2: the Mac download URL (§1.5 `releases/latest`) as a tappable link plus a Copy button.
+    private var download: URL? { AppLinks.macDownload }
     var body: some View {
         VStack(spacing: 24) {
             TabView(selection: $page) {
@@ -14,9 +15,11 @@ struct OnboardingView: View {
                 VStack(spacing: 24) {
                     pageView(symbol: "desktopcomputer", title: "Install Trackglass for Mac",
                         detail: "Install the companion on your Mac and allow Accessibility when prompted. Keep both devices on the same network.")
-                    if let website {
-                        Link("Download for Mac", destination: website)
-                        Button("Copy download link") { UIPasteboard.general.url = website }
+                    if let download {
+                        Link("Download for Mac", destination: download)
+                        Text(download.absoluteString).font(.footnote.monospaced()).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center).textSelection(.enabled)
+                        Button("Copy download link") { UIPasteboard.general.url = download }
                             .accessibilityHint("Copies the Mac download address so you can paste it on your Mac.")
                     }
                 }.tag(1)

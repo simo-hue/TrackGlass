@@ -125,6 +125,45 @@ final class TouchSurfaceTests: XCTestCase {
         XCTAssertEqual(sink.settle(expecting: 5).count, 4)
     }
 
+    func testFrameTimesNeverGoBackwardsAfterAKeepAlive() {
+        let (surface, sink) = makeSurface()
+        let touch = FakeTouch(at: CGPoint(x: 60, y: 60))
+        surface.ingestBegan([touch], at: 80.0)
+        surface.emitStationaryKeepAliveIfNeeded(now: 80_600_000_000)
+        // The digitizer sampled the lift 2 ms before the display-link tick that sent the keep-alive;
+        // UIKit delivers it afterwards. Without the clamp the Mac would drop both the `ended` frame
+        // and the synthetic lift-off (§4.7) and keep a phantom finger for up to 1.5 s.
+        touch.phase = .ended
+        surface.ingestEnded([touch], at: 80.598)
+        let frames = sink.settle(expecting: 4)
+        XCTAssertEqual(frames.count, 4)
+        XCTAssertEqual(frames.map(\.header.sequence), [0, 1, 2, 3])
+        XCTAssertEqual(frames[1][0].phase, .stationary)
+        XCTAssertEqual(frames[2][0].phase, .ended)
+        XCTAssertGreaterThanOrEqual(frames[2].frameTime, frames[1].frameTime)
+        XCTAssertTrue(frames[3].isSyntheticLiftoff)
+        XCTAssertGreaterThanOrEqual(frames[3].frameTime, frames[2].frameTime)
+        // A later event with a genuinely newer timestamp is stamped as-is again.
+        let next = FakeTouch(at: CGPoint(x: 70, y: 70))
+        surface.ingestBegan([next], at: 81.0)
+        let more = sink.settle(expecting: 5)
+        XCTAssertEqual(more.count, 5)
+        XCTAssertEqual(more[4].frameTime, 81_000_000_000)
+    }
+
+    func testMovedWithAnOlderSampleTimeAfterAKeepAliveIsStillSent() {
+        let (surface, sink) = makeSurface()
+        let touch = FakeTouch(at: CGPoint(x: 60, y: 60))
+        surface.ingestBegan([touch], at: 90.0)
+        surface.emitStationaryKeepAliveIfNeeded(now: 90_600_000_000)
+        touch.phase = .moved; touch.location = CGPoint(x: 64, y: 60)
+        surface.ingestMoved([touch], at: 90.597)
+        let frames = sink.settle(expecting: 3)
+        XCTAssertEqual(frames.count, 3, "an older sample is clamped, not suppressed as a duplicate")
+        XCTAssertEqual(frames[2][0].phase, .moved)
+        XCTAssertEqual(frames[2].frameTime, frames[1].frameTime)
+    }
+
     func testCancelledContactsShipTheirPhaseThenLiftOff() {
         let (surface, sink) = makeSurface()
         let a = FakeTouch(at: CGPoint(x: 30, y: 30)), b = FakeTouch(at: CGPoint(x: 80, y: 30))
