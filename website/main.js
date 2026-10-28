@@ -207,7 +207,7 @@
     const abort = () => userActive() || !visible;
 
     // User interaction: hover / touch on the glass drives the pointer live
-    glass.style.touchAction = "none";
+    glass.style.touchAction = "pan-y";   // horizontal drags drive the pointer; vertical ones still scroll the page
     // The glass is drawn in perspective, so absolute positions on it map to the screen non-linearly.
     // The user's own cursor therefore drives the pointer by its screen-space *delta* (scaled back to design
     // pixels by the stage scale) with a fixed gain, exactly like a trackpad; the halo still sits under the
@@ -523,10 +523,19 @@
   (function themes() {
     const seg = $(".seg"); if (!seg) return;
     const glass = $("#themeGlass"), hero = $("#heroGlass");
-    seg.addEventListener("click", e => {
-      const b = e.target.closest("button[data-theme]"); if (!b) return;
-      $$("button", seg).forEach(x => x.setAttribute("aria-selected", x === b ? "true" : "false"));
+    const buttons = $$("button[data-theme]", seg);
+    const select = (b, focus = false) => {
+      buttons.forEach(x => { const on = x === b; x.setAttribute("aria-checked", String(on)); x.tabIndex = on ? 0 : -1; });
       glass.dataset.theme = b.dataset.theme; if (hero) hero.dataset.theme = b.dataset.theme;
+      if (focus) b.focus();
+    };
+    seg.addEventListener("click", e => { const b = e.target.closest("button[data-theme]"); if (b) select(b); });
+    seg.addEventListener("keydown", e => {
+      const i = buttons.indexOf(document.activeElement); if (i < 0) return;
+      const delta = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+      if (delta) { e.preventDefault(); select(buttons[(i + delta + buttons.length) % buttons.length], true); }
+      if (e.key === "Home") { e.preventDefault(); select(buttons[0], true); }
+      if (e.key === "End") { e.preventDefault(); select(buttons[buttons.length - 1], true); }
     });
   })();
 

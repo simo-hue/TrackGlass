@@ -11,7 +11,11 @@
   <meta property="og:description" content="Turn an iPad or iPhone into a trackpad that behaves exactly like your Mac's. Free, private, open source.">
   <meta property="og:image" content="https://simo-hue.github.io/TrackGlass/assets/og.png">
   <meta name="twitter:card" content="summary_large_image">
+  <meta name="color-scheme" content="dark">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="preload" href="assets/fonts/Inter-Regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/Inter-Bold.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -105,7 +109,7 @@
 
   <!-- Live scene -->
   <div class="scene-wrap reveal" style="--d:.4s">
-    <div class="scene-frame">
+    <div class="scene-frame" aria-hidden="true">
       <div class="stage-wrap" data-stage="1100x770" data-crop="150,800">
         <div class="stage hero-stage" id="heroStage">
 
@@ -123,14 +127,14 @@
                         <div class="gh__top"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg><span>Platform</span><span>Solutions</span><span>Resources</span><span>Open Source</span><span>Enterprise</span><span>Pricing</span><em>Sign in</em></div>
                         <div class="gh__tabs"><span class="is-on">Overview</span><span>Repositories <b>64</b></span><span>Projects</span><span>Packages</span><span>Stars <b>17</b></span></div>
                         <div class="gh__cols">
-                          <aside class="gh__side">
+                          <div class="gh__side">
                             <img class="gh__avatar" src="data:image/jpeg;base64,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" alt="" width="176" height="176">
                             <div class="gh__name">Mattioli Simone</div>
                             <div class="gh__login">simo-hue</div>
                             <button class="gh__follow win__btn" id="demoBtn" tabindex="-1">Follow</button>
                             <p class="gh__bio">CS UniVR grad. Enrolled in AUSIR path of EIT Digital Master School. Scaling Mountain Fauna Lover while shipping App Store apps like EVOLVE.</p>
                             <div class="gh__meta"><span><b>22</b> followers · <b>14</b> following</span><span>Trentino Alto Adige, Italy</span><span>simo-hue.github.io</span></div>
-                          </aside>
+                          </div>
                           <div class="gh__main">
                             <div class="gh__readme">
                               <div class="gh__readme-path">simo-hue / README<span>.md</span></div>
@@ -256,7 +260,7 @@
         <div class="pair__progress" aria-hidden="true"><i id="pairBar"></i></div>
       </div>
 
-      <div class="pair__scene">
+      <div class="pair__scene" aria-hidden="true">
         <div class="panel panel--scene">
           <div class="stage-wrap" data-stage="760x640">
             <div class="stage pair-stage" id="pairStage">
@@ -267,7 +271,7 @@
                     <div class="menubar"><span class="menubar__dot"></span><span class="menubar__t">Trackglass</span><span class="menubar__r"><i class="tg-icon tg-icon--on"></i></span></div>
                     <div class="pairwin" id="pairWin">
                       <div class="pairwin__title">Pair a device</div>
-                      <div class="qr" id="qr" aria-label="Pairing code"></div>
+                      <div class="qr" id="qr"></div>
                       <div class="pairwin__sub">Scan with Trackglass on your iPad<br><span>or use a code · <b>482 915</b></span></div>
                       <div class="pairwin__done" id="pairDone">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -469,14 +473,14 @@
     <p class="eyebrow reveal"><b>06</b> Appearance</p>
     <h2 class="headline reveal" style="--d:.06s">Make it yours.</h2>
     <p class="lede lede--narrow reveal" style="--d:.12s">Pure black glass by default, with a soft glow under your fingers. Or pick a look. Or build your own.</p>
-    <div class="seg reveal" style="--d:.18s" role="tablist" aria-label="Theme">
-      <button role="tab" aria-selected="true" data-theme="glass-black"><i style="--sw:#000"></i>Glass Black</button>
-      <button role="tab" aria-selected="false" data-theme="glass-white"><i style="--sw:#f2f2f7"></i>Glass White</button>
-      <button role="tab" aria-selected="false" data-theme="aluminum"><i style="--sw:linear-gradient(180deg,#d9d9de,#bfbfc4)"></i>Aluminum</button>
-      <button role="tab" aria-selected="false" data-theme="grid"><i style="--sw:radial-gradient(#fff 1px,#000 1.4px)"></i>Midnight Grid</button>
-      <button role="tab" aria-selected="false" data-theme="custom"><i style="--sw:linear-gradient(135deg,#1b2a4a,#ffa078)"></i>Custom</button>
+    <div class="seg reveal" style="--d:.18s" role="radiogroup" aria-label="Theme">
+      <button role="radio" aria-checked="true" tabindex="0" data-theme="glass-black"><i style="--sw:#000"></i>Glass Black</button>
+      <button role="radio" aria-checked="false" tabindex="-1" data-theme="glass-white"><i style="--sw:#f2f2f7"></i>Glass White</button>
+      <button role="radio" aria-checked="false" tabindex="-1" data-theme="aluminum"><i style="--sw:linear-gradient(180deg,#d9d9de,#bfbfc4)"></i>Aluminum</button>
+      <button role="radio" aria-checked="false" tabindex="-1" data-theme="grid"><i style="--sw:radial-gradient(#fff 1px,#000 1.4px)"></i>Midnight Grid</button>
+      <button role="radio" aria-checked="false" tabindex="-1" data-theme="custom"><i style="--sw:linear-gradient(135deg,#1b2a4a,#ffa078)"></i>Custom</button>
     </div>
-    <div class="theme-stage reveal" style="--d:.24s" id="themeStage">
+    <div class="theme-stage reveal" style="--d:.24s" id="themeStage" aria-hidden="true">
       <div class="ipad ipad--theme" id="themeIpad">
         <div class="ipad__glass" id="themeGlass" data-theme="glass-black">
           <div class="halo halo--loop halo--l1"></div>
@@ -530,14 +534,14 @@
       <p>Your Mac's trackpad, on glass. An independent, open-source project.</p>
     </div>
     <nav class="footer__col" aria-label="Product">
-      <h4>Product</h4>
+      <h3>Product</h3>
       <a href="#pair">Pairing</a>
       <a href="#gestures">Gestures</a>
       <a href="#precision">Precision</a>
       <a href="#themes">Themes</a>
     </nav>
     <nav class="footer__col" aria-label="Resources">
-      <h4>Resources</h4>
+      <h3>Resources</h3>
       <a href="https://github.com/simo-hue/TrackGlass/releases/latest">Download for Mac</a>
       <a href="support.html">Support</a>
       <a href="privacy.html">Privacy</a>
