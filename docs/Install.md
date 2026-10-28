@@ -5,7 +5,7 @@ The normal path is the website's download button, which opens the newest GitHub 
 ## Manual install
 
 1. Open https://github.com/simo-hue/TrackGlass/releases/latest and download `Trackglass-for-Mac-<version>.dmg`. The DMG is signed with a Developer ID certificate and notarized by Apple; Gatekeeper opens it without warnings.
-2. Open the DMG and drag **Trackglass** to **Applications**. Eject the DMG.
+2. Open the DMG and drag **Trackglass for Mac** to **Applications**. Eject the DMG.
 3. Launch Trackglass from Applications. It lives in the menu bar (no Dock icon). The Welcome window asks for **Accessibility**: click *Open System Settings*, turn Trackglass on, and the Welcome window updates by itself.
 4. If macOS asks about **Local Network** access, allow it — the phone finds the Mac through Bonjour on your network.
 5. Choose **Pair a device…** in the menu bar icon and pair the phone (QR code, or *Use a code instead*).
@@ -26,4 +26,4 @@ Settings → General → *Start at login* registers Trackglass as a login item. 
 
 ## Uninstall
 
-Quit Trackglass from its menu, delete it from Applications, and remove `~/Library/Application Support/Trackglass` (recordings) if present. Paired phones are stored in the login Keychain under `app.trackglass.pairing` and can be deleted from Keychain Access.
+Quit Trackglass from its menu, delete it from Applications, and remove `~/Library/Application Support/Trackglass` (recordings) if present. Paired phones are stored in the data-protection Keychain under the service `app.trackglass.pairing` (not the login keychain, so Keychain Access does not list them); forget them from Settings → Devices before uninstalling, or reinstall and forget them there.
