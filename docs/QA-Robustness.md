@@ -44,6 +44,6 @@ Run with the latest Mac and phone builds installed together. Tick each item in `
 
 ## 4. 24-hour soak (M9.4)
 
-1. Pair and connect the iPhone, then run `xcodebuild -project Trackglass.xcodeproj -scheme TrackglassiOSSoak -destination 'platform=iOS,id=<device>' test TG_SOAK_SECONDS=86400` (the trailing build-setting override reaches the test runner; use `TG_SOAK_SECONDS=600` for a smoke run) (device id from `xcrun devicectl list devices`). The test drags one finger around the surface continuously.
+1. Pair and connect the iPhone, then run `xcodebuild -project Trackglass.xcodeproj -scheme TrackglassiOSSoak -destination 'platform=iOS,id=<device>' test TG_SOAK_SECONDS=86400 TG_SOAK_EXPECT_CONNECTED=1` (the trailing build-setting overrides reach the test runner; use `TG_SOAK_SECONDS=600` for a smoke run) (device id from `xcrun devicectl list devices`). The test drags one finger around the surface continuously; with `TG_SOAK_EXPECT_CONNECTED=1` it also fails as soon as the session is lost (the No-Mac panel appears), so a passing run proves the phone stayed connected.
 2. Before starting and after 24 h record the Mac app's memory (Activity Monitor → Memory, Real Memory) and run Instruments → Leaks against the running Mac app for one minute each time.
 3. Expected: memory within ±5 MB of the start, no leaks, the Mac log shows one status line per second without errors, and the phone is still connected at the end.

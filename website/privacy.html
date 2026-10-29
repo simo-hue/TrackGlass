@@ -5,7 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Privacy — Trackglass</title>
   <meta name="description" content="Trackglass privacy policy: no accounts, no analytics, no cloud. Touch input goes only to the Mac you paired, encrypted, over your local network.">
+  <meta property="og:description" content="No accounts, no analytics, no cloud. Touch input goes only to the Mac you paired, encrypted, over your local network.">
   <meta name="theme-color" content="#050507">
+  <link rel="canonical" href="https://simo-hue.github.io/TrackGlass/privacy.html">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Privacy — Trackglass">
+  <meta property="og:url" content="https://simo-hue.github.io/TrackGlass/privacy.html">
+  <meta property="og:image" content="https://simo-hue.github.io/TrackGlass/assets/og.png">
+  <meta name="twitter:card" content="summary_large_image">
   <meta name="color-scheme" content="dark">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
@@ -53,22 +60,23 @@
     <a href="index.html#privacy">Privacy <span>04</span></a>
     <a href="index.html#themes">Themes <span>06</span></a>
     <a href="support.html">Support <span>↗</span></a>
+    <a class="nav__sheet-download" href="https://github.com/simo-hue/TrackGlass/releases/latest">Download for Mac <span>↓</span></a>
   </nav>
 </header>
 
 <main id="main" class="page">
   <div class="container">
     <p class="eyebrow"><b>Legal</b> Privacy policy</p>
-    <h1 class="headline">Nothing leaves your network.</h1>
+    <h1 class="headline">Your touches stay between your devices.</h1>
     <div class="prose">
-      <p>Last updated: <time datetime="2026-10-20">October 20, 2026</time></p>
+      <p>Last updated: <time datetime="2026-10-29">October 29, 2026</time></p>
       <p>Trackglass is a free, open-source app that turns an iPad or iPhone into a trackpad for a Mac. This policy describes what the apps do with your data. The short version: they don't collect any.</p>
 
       <h2>What Trackglass does with touch input</h2>
-      <p>When you use the trackpad surface, the iOS app sends your touch positions to the Mac you paired with, over your local Wi‑Fi network or a direct peer-to-peer Wi‑Fi link between the two devices. The Mac app turns them into pointer movement, clicks, scrolling and gestures. Touch data is used only for that purpose and is never sent anywhere else. It is not stored, with one exception you control: the optional <em>Record session</em> diagnostic (Settings → Diagnostics on the phone, Settings → Advanced on the Mac) writes a recording of touch positions to a file on that device, only while you have turned it on, and only you decide whether to share it.</p>
+      <p>When you use the trackpad surface, the iOS app sends your touch positions to the Mac you paired with, over your local network. The Mac app turns them into pointer movement, clicks, scrolling and gestures. Touch data is used only for that purpose and is never sent anywhere else. It is not stored, with one exception you control: the optional <em>Record session</em> diagnostic (Settings → Diagnostics on the phone, Settings → Advanced on the Mac) writes a recording of touch positions to a file on that device, only while you have turned it on, and only you decide whether to share it.</p>
 
       <h2>Encryption and pairing</h2>
-      <p>Pairing happens once, by scanning a code shown on your Mac or typing a 6-digit code. During pairing, both devices exchange a random encryption key that is stored in each device's Keychain. Every later connection is authenticated and encrypted with that key. Keys never leave your devices and are deleted when you unpair.</p>
+      <p>Pairing happens once, by scanning a code shown on your Mac or typing a 6-digit code, and you confirm it by clicking <em>Allow</em> on the Mac. During pairing, both devices work out the same encryption key from a one-time exchange protected by that code; the key itself is never sent over the network. Each device stores it in its Keychain, every later connection is authenticated and encrypted with it, and it is deleted when you unpair.</p>
 
       <h2>What we do not collect</h2>
       <ul>
@@ -79,7 +87,7 @@
       </ul>
 
       <h2>Permissions</h2>
-      <p>On the iPad or iPhone, Trackglass asks for camera access only to scan the pairing code, and for local network access to find your Mac. On the Mac, Trackglass asks for Accessibility permission, which macOS requires for any app that moves the pointer or clicks on your behalf. Trackglass does not read what is on your screen and does not record what you type.</p>
+      <p>On the iPad or iPhone, Trackglass asks for camera access only to scan the pairing code, and for local network access to find your Mac. On the Mac, Trackglass for Mac asks for Accessibility permission, which macOS requires for any app that moves the pointer or clicks on your behalf, and (on macOS 15 or later) for local network access, so your iPad or iPhone can find and reach it. Trackglass does not read what is on your screen and does not record what you type.</p>
 
       <h2>Children</h2>
       <p>Trackglass does not collect personal information from anyone, including children.</p>

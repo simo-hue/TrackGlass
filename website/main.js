@@ -12,6 +12,8 @@
   const easeInOut = t => (t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
   const easeOut = t => 1 - Math.pow(1 - t, 3);
   const easeIn = t => t * t * t;
+  // Pause / play (WCAG 2.2.2): the scripted demos freeze their own clock, CSS loops pause via `html.is-paused`.
+  let paused = false;
 
   /* ------------------------------------------------------------------
      Stages: fixed design coordinates scaled to their container
@@ -129,13 +131,25 @@
   /* ------------------------------------------------------------------
      Timeline helpers
      ------------------------------------------------------------------ */
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // Both helpers count only unpaused time, so a paused demo resumes exactly where it stopped.
+  const sleep = ms => new Promise(resolve => {
+    let left = ms, last = performance.now();
+    const tick = () => {
+      const now = performance.now();
+      if (!paused) left -= now - last;
+      last = now;
+      if (left <= 0) resolve(); else setTimeout(tick, Math.min(left, 120));
+    };
+    setTimeout(tick, Math.min(ms, 120));
+  });
   function tween(ms, fn, ease = easeInOut, shouldAbort = () => false) {
     return new Promise(resolve => {
-      const t0 = performance.now();
+      let elapsed = 0, last = performance.now();
       const step = now => {
         if (shouldAbort()) return resolve(false);
-        const t = clamp((now - t0) / ms, 0, 1);
+        if (!paused) elapsed += now - last;
+        last = now;
+        const t = clamp(elapsed / ms, 0, 1);
         fn(ease(t), t);
         if (t < 1) requestAnimationFrame(step); else resolve(true);
       };
@@ -420,7 +434,7 @@
     const startAuto = () => {
       if (timer) return;
       let i = 0; apply(0, false);
-      timer = setInterval(() => { i = (i + 1) % 4; const idx = Math.min(i, 2); apply(idx, i >= 2); }, 2600);
+      timer = setInterval(() => { if (paused) return; i = (i + 1) % 4; const idx = Math.min(i, 2); apply(idx, i >= 2); }, 2600);
     };
     const stopAuto = () => { clearInterval(timer); timer = 0; };
 
@@ -542,9 +556,24 @@
   /* ------------------------------------------------------------------
      Repo links: <html data-repo="owner/name"> rewrites every OWNER placeholder
      ------------------------------------------------------------------ */
+  (function motion() {
+    const btn = $("#motionToggle"); if (!btn) return;
+    if (reduced) { btn.hidden = true; return; }   // nothing loops: the reduced-motion styles show final states
+    const label = $(".motion-toggle__label", btn);
+    btn.addEventListener("click", () => {
+      paused = !paused;
+      document.documentElement.classList.toggle("is-paused", paused);
+      btn.setAttribute("aria-pressed", String(paused));
+      label.textContent = paused ? "Play animations" : "Pause animations";
+    });
+  })();
+
   (function links() {
-    // App Store buttons stay inert (no broken link) until APPSTORE_URL is filled in.
-    $$("a[href='APPSTORE_URL']").forEach(a => {
+    // App Store buttons: `data-appstore` holds the App Store URL once the owner fills it in (index.html). Until then
+    // they stay inert ("App Store · soon") with JavaScript, and lead to the support page without it.
+    $$("a[data-appstore]").forEach(a => {
+      const url = a.dataset.appstore || "";
+      if (/^https:\/\//.test(url)) { a.href = url; return; }
       a.removeAttribute("href"); a.classList.add("is-soon"); a.setAttribute("aria-disabled", "true"); a.setAttribute("role", "link");
       a.querySelector("svg")?.remove();
       a.insertAdjacentHTML("beforeend", '<span class="btn__soon">App Store · soon</span>');

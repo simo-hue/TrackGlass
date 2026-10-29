@@ -4,11 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Trackglass — Your Mac's trackpad, on glass</title>
-  <meta name="description" content="Trackglass turns an iPad or iPhone into a trackpad that behaves exactly like the one built into a Mac. Same gestures, same settings, same feel. Free and open source.">
+  <meta name="description" content="Trackglass turns an iPad or iPhone into a trackpad that works like the one built into a Mac. Same gestures, same settings, same feel. Free and open source.">
+  <link rel="canonical" href="https://simo-hue.github.io/TrackGlass/">
   <meta name="theme-color" content="#050507">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Trackglass — Your Mac's trackpad, on glass">
-  <meta property="og:description" content="Turn an iPad or iPhone into a trackpad that behaves exactly like your Mac's. Free, private, open source.">
+  <meta property="og:description" content="Turn an iPad or iPhone into a trackpad that works like your Mac's. Free, private, open source.">
+  <meta property="og:url" content="https://simo-hue.github.io/TrackGlass/">
   <meta property="og:image" content="https://simo-hue.github.io/TrackGlass/assets/og.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="color-scheme" content="dark">
@@ -17,6 +19,8 @@
   <link rel="preload" href="assets/fonts/Inter-Regular.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/fonts/Inter-Bold.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
+  <!-- Without JavaScript nothing would ever add `.in`: show every revealed block as it is. -->
+  <noscript><style>.reveal { opacity: 1 !important; transform: none !important; filter: none !important; }</style></noscript>
 </head>
 <body>
 
@@ -64,6 +68,7 @@
     <a href="#privacy">Privacy <span>04</span></a>
     <a href="#themes">Themes <span>06</span></a>
     <a href="support.html">Support <span>↗</span></a>
+    <a class="nav__sheet-download" href="https://github.com/simo-hue/TrackGlass/releases/latest">Download for Mac <span>↓</span></a>
   </nav>
 </header>
 
@@ -86,7 +91,7 @@
       <span class="line line--accent">on glass.</span>
     </h1>
     <p class="lede reveal" style="--d:.18s">
-      Trackglass turns an iPad or iPhone into a trackpad that behaves exactly like the one built into a Mac.
+      Trackglass turns an iPad or iPhone into a trackpad that works like the one built into a Mac.
       Same gestures. Same settings. Same feel.
     </p>
     <div class="cta reveal" style="--d:.26s">
@@ -94,7 +99,7 @@
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9m0 0 3.5-3.5M10 12 6.5 8.5M4 15h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         Download for Mac
       </a>
-      <a class="btn btn--ghost" href="APPSTORE_URL">
+      <a class="btn btn--ghost" href="support.html#get-the-app" data-appstore="APPSTORE_URL">
         Get it for iPad &amp; iPhone
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </a>
@@ -234,12 +239,15 @@
 
       <!-- Floating glass readouts -->
       <div class="float float--a" aria-hidden="true"><b>120<small>Hz</small></b><span>touch sampling</span></div>
-      <div class="float float--b" aria-hidden="true"><b>2<small>ms</small></b><span>round trip</span></div>
       <div class="float float--c" aria-hidden="true"><i class="float__lock"></i><span>TLS · DTLS encrypted</span></div>
     </div>
-    <div class="caption" id="heroCaption" aria-live="polite">
-      <span class="caption__label" id="captionLabel">Point</span>
-      <span class="caption__steps" id="captionSteps"></span>
+    <div class="caption" id="heroCaption">
+      <span class="caption__label" id="captionLabel" aria-hidden="true">Point</span>
+      <span class="caption__steps" id="captionSteps" aria-hidden="true"></span>
+      <button class="motion-toggle" id="motionToggle" type="button" aria-pressed="false">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path class="motion-toggle__pause" d="M5 3v10M11 3v10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path class="motion-toggle__play" d="M5 3l8 5-8 5z" fill="currentColor"/></svg>
+        <span class="motion-toggle__label">Pause animations</span>
+      </button>
     </div>
   </div>
 </section>
@@ -264,15 +272,15 @@
         <ol class="steps" id="pairSteps">
           <li class="step is-active" data-step="0">
             <span class="step__n">1</span>
-            <div><h3>Open Pairing on your Mac.</h3><p>Trackglass for Mac lives in the menu bar. Choose <em>Pair a device</em> and it shows a code.</p></div>
+            <div><h3>Open Pairing on your Mac.</h3><p>Trackglass for Mac lives in the menu bar. Choose <em>Pair a device…</em> and it shows a code.</p></div>
           </li>
           <li class="step" data-step="1">
             <span class="step__n">2</span>
-            <div><h3>Point your iPad at it.</h3><p>The camera reads the code. No typing, no accounts, no passwords. Prefer a 6-digit code? That works too.</p></div>
+            <div><h3>Point your iPad at it.</h3><p>The camera reads the code. No typing, no accounts, no passwords. Prefer a 6-digit code? Tap <em>Use a code instead</em>.</p></div>
           </li>
           <li class="step" data-step="2">
             <span class="step__n">3</span>
-            <div><h3>That's it. Forever.</h3><p>Both devices keep an encrypted key. Next time they simply find each other, even with no router around.</p></div>
+            <div><h3>Allow it on the Mac. That's it.</h3><p>Click <em>Allow</em> when your Mac asks. Both devices work out the same key without ever sending it, and next time they find each other on your Wi‑Fi network.</p></div>
           </li>
         </ol>
         <div class="pair__progress" aria-hidden="true"><i id="pairBar"></i></div>
@@ -337,14 +345,14 @@
       </p>
     </div>
     <ul class="cards" id="gestureCards">
-      <li class="card reveal" data-spot><div class="pad g-tap"><i></i></div><span class="card__tag">1 finger</span><h3>Tap to click</h3><p>One finger. A haptic tick on the glass tells you it landed.</p></li>
+      <li class="card reveal" data-spot><div class="pad g-tap"><i></i></div><span class="card__tag">1 finger</span><h3>Tap to click</h3><p>One finger. On iPhone, a haptic tick tells you it landed.</p></li>
       <li class="card reveal" data-spot style="--d:.05s"><div class="pad g-tap2"><i></i><i></i></div><span class="card__tag">2 fingers</span><h3>Secondary click</h3><p>Two-finger tap, or a corner, whichever your Mac is set to.</p></li>
       <li class="card reveal" data-spot style="--d:.1s"><div class="pad g-scroll"><i></i><i></i></div><span class="card__tag">2 fingers</span><h3>Scroll with momentum</h3><p>Flick and it coasts. Touch and it stops. Natural or not, your call.</p></li>
       <li class="card reveal" data-spot style="--d:.15s"><div class="pad g-pinch"><i></i><i></i></div><span class="card__tag">2 fingers</span><h3>Pinch to zoom</h3><p>Smooth, continuous magnification in Safari, Preview, Maps and more.</p></li>
       <li class="card reveal" data-spot style="--d:.2s"><div class="pad g-rotate"><i></i><i></i></div><span class="card__tag">2 fingers</span><h3>Rotate</h3><p>Turn two fingers and the photo turns with them.</p></li>
-      <li class="card reveal" data-spot style="--d:.25s"><div class="pad g-swipe"><i></i><i></i><i></i></div><span class="card__tag">3–4 fingers</span><h3>Swipe between Spaces</h3><p>Three or four fingers sideways, tracking your hand live.</p></li>
+      <li class="card reveal" data-spot style="--d:.25s"><div class="pad g-swipe"><i></i><i></i><i></i></div><span class="card__tag">3–4 fingers</span><h3>Swipe between Spaces</h3><p>Three or four fingers sideways. On macOS 14–26 the Space follows your hand live; on macOS 27 it switches when you lift.</p></li>
       <li class="card reveal" data-spot style="--d:.3s"><div class="pad g-mission"><i></i><i></i><i></i><i></i></div><span class="card__tag">4 fingers</span><h3>Mission Control</h3><p>Four fingers up to see everything, down for App Exposé.</p></li>
-      <li class="card reveal" data-spot style="--d:.35s"><div class="pad g-force"><i></i></div><span class="card__tag">Press &amp; hold</span><h3>Force click</h3><p>Press and hold for Look Up and Quick Look, with a two-stage haptic.</p></li>
+      <li class="card reveal" data-spot style="--d:.35s"><div class="pad g-force"><i></i></div><span class="card__tag">Hold still</span><h3>Look Up</h3><p>Hold one finger still to look up the word under the pointer. On iPhone a haptic confirms it.</p></li>
     </ul>
   </div>
 </section>
@@ -394,12 +402,12 @@
 </section>
 
 <!-- ============================ SPEED ============================ -->
-<section class="section section--stats" id="speed">
+<section class="section section--stats" id="stats">
   <div class="container">
     <ul class="stats">
       <li class="stat reveal"><b><span data-count="120">0</span><small>Hz</small></b><span>touch sampling on ProMotion displays</span></li>
-      <li class="stat reveal" style="--d:.06s"><b>&lt;<span data-count="12">0</span><small>ms</small></b><span>touch to pointer, on your local network</span></li>
-      <li class="stat reveal" style="--d:.12s"><b><span data-count="0">0</span><small>bytes</small></b><span>leave your network. Ever.</span></li>
+      <li class="stat reveal" style="--d:.06s"><b>TLS<small>+DTLS</small></b><span>every connection encrypted, keys only on your devices</span></li>
+      <li class="stat reveal" style="--d:.12s"><b><span data-count="0">0</span><small>accounts</small></b><span>no sign-up, no cloud, no analytics</span></li>
       <li class="stat reveal" style="--d:.18s"><b>Free</b><span>and open source, for everyone</span></li>
     </ul>
   </div>
@@ -410,10 +418,11 @@
   <div class="container split split--reverse">
     <div class="split__text">
       <p class="eyebrow reveal"><b>04</b> Privacy</p>
-      <h2 class="headline reveal" style="--d:.06s">Nothing leaves your network.</h2>
+      <h2 class="headline reveal" style="--d:.06s">Your touches never leave your network.</h2>
       <p class="lede reveal" style="--d:.12s">
         No account. No cloud. No analytics. Pairing uses a one-time code shown on your Mac, and every session is
-        encrypted with keys only your two devices hold. Peer-to-peer Wi‑Fi means it works even with no router at all.
+        encrypted with keys only your two devices hold. Both devices just need to be on the same Wi‑Fi network.
+        The only other traffic is the Mac app checking GitHub for updates once a day.
       </p>
       <ul class="checks reveal" style="--d:.18s">
         <li>Encrypted on every connection</li>
@@ -522,12 +531,12 @@
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9m0 0 3.5-3.5M10 12 6.5 8.5M4 15h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           Download for Mac
         </a>
-        <a class="btn btn--ghost" href="APPSTORE_URL">Get it for iPad &amp; iPhone</a>
+        <a class="btn btn--ghost" href="support.html#get-the-app" data-appstore="APPSTORE_URL">Get it for iPad &amp; iPhone</a>
       </div>
       <ul class="chips chips--center" aria-label="Requirements">
         <li>macOS 14 Sonoma or later</li>
         <li>iPadOS / iOS 17 or later</li>
-        <li>Signed &amp; notarized by Apple</li>
+        <li>Signed by the developer, notarized by Apple</li>
       </ul>
       <a class="gh" href="https://github.com/simo-hue/TrackGlass">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.4-4-1.4-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.9 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5z"/></svg>

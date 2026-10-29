@@ -336,7 +336,7 @@ Rules: a frame contains **every** currently tracked contact (began/moved/station
 | 0x06 | HAPTIC | TCP | Mac → phone | `kind u8` (1 click, 2 secondaryClick, 3 forceClickStage2, 4 dragLockEngaged, 5 dragLockReleased, 6 spaceSwitched), `intensity u8` 0…255 |
 | 0x07 | STATUS | TCP | Mac → phone | `lossPermille u16`, `rttMicros u32`, `framesPerSecond u16` (frames received in the last second), `pipelineP50Micros u32`, `pipelineP95Micros u32`, `engineState u8` (0 idle, 1 pointer, 2 scroll, 3 gesture, 4 drag); sent once per second while connected |
 | 0x08 | SURFACE | TCP | phone → Mac | same geometry fields as HELLO plus `trackingOverride f32` (sent on rotation / size-class change and whenever the override changes) |
-| 0x09 | BYE | TCP | both | `reason u8` (0 user, 1 incompatible, 2 busy, 3 unpaired, 4 sleeping) |
+| 0x09 | BYE | TCP | both | `reason u8` (0 user, 1 incompatible, 2 busy, 3 unpaired, 4 sleeping, 5 disconnected on the Mac — 2026-10-29: the Mac user chose Disconnect; like 1 and 3 it is final for the phone's reconnect loop, and a manual Reconnect is still accepted) |
 | 0x10 | TOUCH_FRAME | UDP | phone → Mac | §4.4 |
 | 0x11 | INPUT_HEARTBEAT | UDP | phone → Mac | empty; every 500 ms while **no contact is on the glass** (so a heartbeat is also a statement "no fingers down", §4.7) |
 | 0x20 | PAIR_REQUEST | TCP (pairing) | phone → Mac | `peerID 16B`, `name str`, `modelIdentifier str`, `protocolVersion u8`, `ephemeralPublicKey 32B` (X25519 raw; added 2026-10-28, §3.4) |
@@ -468,7 +468,7 @@ Engine is started on connect, stopped on disconnect, and restarted on `CHHapticE
 
 ### 6.1 App shape
 
-- `LSUIElement = YES` (no Dock icon). SwiftUI `MenuBarExtra` with a template-image icon (two rounded rectangles: trackpad outline + phone outline; design it as a 18 × 18 pt SF-Symbol-style PDF). Menu: connection status line, "Pair a device…", paired devices submenu (connect/forget), "Settings…", "Check for Updates…", "Quit".
+- `LSUIElement = YES` (no Dock icon). SwiftUI `MenuBarExtra` with a template-image icon (two rounded rectangles: trackpad outline + phone outline; design it as a 18 × 18 pt SF-Symbol-style PDF). Menu: connection status line, "Pair a device…", paired devices submenu (connect/forget), "Settings…", "Check for Updates…", "Quit". *2026-10-29:* the connected device's submenu (and its row in Settings → Devices) offers **Disconnect**, which sends `BYE{5}`; Forget asks for confirmation.
 - Windows (AppKit `NSWindow` hosting SwiftUI): **Pairing** (the QR code with a "Use a code instead" button that swaps in the PIN view, 480 × 360 pt, non-resizable, floats at `.floating` level), **Settings** (tabs: General, Devices, Advanced, About), **Welcome** (first launch: permissions walkthrough).
 - Login item: `SMAppService.mainApp.register()` toggle in General, default **on** after the user completes Welcome.
 - Single instance: if another copy is running (`NSRunningApplication` with the same bundle ID), activate it and quit.
@@ -492,7 +492,7 @@ Engine is started on connect, stopped on disconnect, and restarted on `CHHapticE
 
 | Setting | Domain → key | Values | Engine use |
 |---|---|---|---|
-| Tap to click | `com.apple.AppleMultitouchTrackpad` → `Clicking` (also `NSGlobalDomain` `com.apple.mouse.tapBehavior`) | bool / 0,1 | If **off**, Trackglass still clicks on tap (there is no physical click on glass) and shows a one-time notice. |
+| Tap to click | `com.apple.AppleMultitouchTrackpad` → `Clicking` (also `NSGlobalDomain` `com.apple.mouse.tapBehavior`) | bool / 0,1 | If **off**, Trackglass still clicks on tap (there is no physical click on glass) and shows a one-time notice. Tap-and-a-half then drags as if `Dragging` were on (2026-10-29): it stands in for the press-and-hold of a physical click, the only other way to drag. |
 | Secondary click | `TrackpadRightClick` (bool) + `TrackpadCornerSecondaryClick` (0 off, 1 bottom-left, 2 bottom-right — verify on the reference Mac in M4 before relying on it; SETTINGS `secondaryClickMode` 2 = bottom-right, 3 = bottom-left) | | 2-finger tap vs corner tap |
 | Look up & data detectors | `NSGlobalDomain -currentHost` `com.apple.trackpad.forceClick` (bool), `TrackpadThreeFingerTapGesture` (0 off, 2 = look up) | | Force click (1 finger) vs 3-finger tap |
 | Force click enabled | `com.apple.trackpad.forceClick` + `ForceSuppressed` | | §6.5.9 |
@@ -565,7 +565,7 @@ public enum GestureEvent: Codable, Equatable {   // Codable with the JSON shape 
 
 #### 6.5.3 Mode selection (the settle window)
 
-When the first contact begins, the engine enters `settling` for **60 ms** (`SETTLE_WINDOW`). Pointer movement is **not** withheld during settling (1-finger pointing must be instant); instead, if a second (or third…) finger arrives inside the window, the engine switches mode to `n` fingers **immediately** (the new mode's own activation thresholds apply from that frame on, including inside the window) and any pointer motion already emitted stays (it is at most ~2 mm of travel and matches how a real trackpad behaves). The window only governs *upward* finger-count changes: after it closes, the mode is fixed by the count at that moment; additional fingers landing later (e.g. a thumb) are treated as resting, except that in `pointer` mode a new finger landing while the primary has travelled less than `TAP_MAX_MOVEMENT` makes the pair a two-finger-tap candidate (§6.5.5). **Late fingers (2026-10-29):** a late finger's motion counts as "another contact moves" for the resting rule (§6.5.2), and when no effective finger remains (the fingers that fixed the mode lifted or rest) the late finger becomes the primary, so the pointer follows the finger left on the glass.
+When the first contact begins, the engine enters `settling` for **60 ms** (`SETTLE_WINDOW`). Pointer movement is **not** withheld during settling (1-finger pointing must be instant); instead, if a second (or third…) finger arrives inside the window, the engine switches mode to `n` fingers **immediately** (the new mode's own activation thresholds apply from that frame on, including inside the window) and any pointer motion already emitted stays (it is at most ~2 mm of travel and matches how a real trackpad behaves). The window only governs *upward* finger-count changes: after it closes, the mode is fixed by the count at that moment; additional fingers landing later (e.g. a thumb) are treated as resting, except that in `pointer` mode a new finger landing while the primary has travelled less than `TAP_MAX_MOVEMENT` makes the pair a two-finger-tap candidate (§6.5.5). **Late fingers (2026-10-29):** a late finger's motion counts as "another contact moves" for the resting rule (§6.5.2), and when no effective finger remains (the fingers that fixed the mode lifted or rest) the late finger becomes the primary, so the pointer follows the finger left on the glass. A late finger that landed outside the resting zone and then moves together with the one pointing finger is a second finger joining to scroll: it becomes effective and the mode re-evaluates to `scroll(2)`; a late finger moving alone keeps the rules above.
 
 Modes: `idle`, `pointer(1)`, `scroll(2)` (also hosts magnify/rotate/smart-zoom/secondary tap), `swipe3`, `swipe4`, `pinch5`, `drag` (any mode can transition into drag per §6.5.6).
 
@@ -578,6 +578,8 @@ Modes: `idle`, `pointer(1)`, `scroll(2)` (also hosts magnify/rotate/smart-zoom/s
 #### 6.5.4 Pointer (1 finger)
 
 Each frame in `pointer` mode: `raw = pos − prevPos` (mm), `dt = time − lastTime`. If `dt ≤ 0` skip. Convert with `PointerAcceleration.accelerate(dxMM, dyMM, dt)` (§6.6) and emit `.pointerMove`. Movement below 0.05 mm is accumulated, not dropped. Velocity for the accelerator is computed from the raw mm deltas and the phone timestamps.
+
+**Touch-down hysteresis (2026-10-29, §6.5.5 "taps never move the pointer"):** the motion of a contact that has travelled less than `TAP_HYSTERESIS = 0.5 mm` (path length, Tunable) is held back; once it travels further the held motion is released unchanged, and if the contact ends as a tap (or a second finger makes it a scroll) the held motion is dropped. Applies to pointer motion and to the motion of a held drag.
 
 #### 6.5.5 Taps and clicks
 
@@ -603,6 +605,8 @@ Enter `scroll(2)` when `n == 2` after settling. Track `centroid`, `distance` (be
 - **Magnify:** requires `TrackpadPinch`. Activates when `|distance − startDistance| > PINCH_ACTIVATION = 2.5 mm`. Per frame `delta = distance / prevDistance − 1`. Emit `.magnify(delta, phase)`.
 - **Rotate:** requires `TrackpadRotate` and `distance > 15 mm`. Activates when `|angle − startAngle| > ROTATE_ACTIVATION = 5°`. Per frame `deltaDegrees = unwrap(angle − prevAngle)`, counter-clockwise positive. Emit `.rotate`.
 - **Smart zoom:** only when `TrackpadTwoFingerDoubleTapGesture` is on: two-finger double tap (two two-finger taps within `doubleClickInterval`, each qualifying as in §6.5.5) → `.smartZoom`. To disambiguate, the first two-finger tap's secondary click is held pending for `doubleClickInterval`; if a second two-finger tap arrives → `.smartZoom` (no secondary click); else the secondary click is emitted late. When smart zoom is off, the secondary click is emitted immediately. Decision: the delay (≤ 0.5 s) is accepted because a real trackpad has the same disambiguation delay.
+- **Arbitration between scroll and pinch (2026-10-29, after the owner's four/five-finger "bigger change wins" rule):** scroll activates only when the centroid path exceeds 1.5 mm **and** is at least the spread change, both measured since the fingers landed; before a scroll, a pinch needs `spreadChange > 2.5 mm` and more spread change than centroid travel; during a scroll it needs more than a quarter of the travel, so a deliberate pinch still joins a scroll (PLAN M6.6) while a long scroll whose finger spacing drifts never zooms. An active sub-gesture stays active until lift. Magnify `.began` carries the change since the fingers landed; later events carry one frame's change.
+- **Staggered two-finger lift (2026-10-29):** when one of two fingers lifts after a sub-gesture activated, or while the pair may still be a two-finger tap, the remaining finger does not point: the engine enters `.releasing` until the last finger lifts (as for three to five fingers, §6.5.8).
 - **Two-finger swipe from right edge:** both contacts begin within `EDGE_ZONE = 3 mm` of the right edge (in the surface's current orientation) and move left > 8 mm → `.notificationCenter` once; the gesture is consumed (no scroll).
 - **Navigation (two-finger)** is not a separate event: when `AppleEnableSwipeNavigateWithScrolls` is on, Safari and others derive it from scroll events plus the type-29 scroll gesture companion (§6.9.3). The engine does nothing special.
 
@@ -619,7 +623,7 @@ Enter `scroll(2)` when `n == 2` after settling. Track `centroid`, `distance` (be
 
 #### 6.5.9 Force click (1 finger, hold)
 
-If `forceClick` is enabled: one finger, stationary (< 1.0 mm travel) for `FORCE_HOLD = 0.60 s` (Tunable) with no other contact → `.forceClick(stage: 2)` + `.haptic(.forceClickStage2)`. The hold is cancelled by movement or by lift. After a force click, the contact is marked `consumed`: lifting it does not produce a click.
+If `forceClick` is enabled: one finger, stationary (< 1.0 mm travel) for `FORCE_HOLD = 0.60 s` (Tunable) with no other contact → `.forceClick(stage: 2)` + `.haptic(.forceClickStage2)`. The hold is cancelled by movement or by lift. After a force click, the contact is marked `consumed`: lifting it does not produce a click. *2026-10-29:* a contact that began in the resting zone (bottom 18 mm, §6.5.2) never force-clicks: that is how a hand holds the phone.
 
 #### 6.5.10 Lift-off and resets
 
@@ -670,8 +674,9 @@ Fallback when neither is available on a given Mac and the bundle JSON fails to p
 ### 6.8 ScrollAcceleration and ScrollMomentum
 
 - **Gain:** if the Mac exposes `HIDScrollAccelCurves` for its trackpad, port Apple's `IOHIDScrollAccelerator` (same file, constants `SCROLL_EVENT_AVARAGE_LENGHT = 9`, `SCROLL_CLEAR_THRESHOLD_MS = 500`, `SCROLL_EVENT_THRESHOLD_MS = 150`, `SCROLL_MULTIPLIER_A = 2/65536`, `B = 0x3bb/65536`, `C = 0x18041/65536`, `SCROLL_PIXEL_TO_WHEEL_SCALE = 0x199a/65536`, `FRAME_RATE = 67`) with the same resolution/rate as the pointer. **Gate G-SCR (M6):** if the property is absent on the reference Mac, use the constant model `points = mm × SCROLL_BASE_GAIN × (1 + SCROLL_ACCEL_GAIN × (1 − e^(−v/SCROLL_ACCEL_V0)))` with `v` in mm/s and `SCROLL_BASE_GAIN = 3.8 pt/mm`, `SCROLL_ACCEL_GAIN = 0.5`, `SCROLL_ACCEL_V0 = 350 mm/s` (Tunable; acceptance C4 in §10.3).
+- **G-SCR status (2026-10-29):** the parametric `IOHIDScrollAccelerator` port is implemented but measured 3–23 × the trackpad's scroll distance and depended on the frame rate, so it is **opt-in** (`defaults write app.trackglass.mac TGUseAppleScrollCurves -bool YES`) until the owner's `tgaccel` data verifies its units; the constant model ships by default.
 - **Events:** every scroll frame posts a continuous scroll-wheel event (§6.9.2). Deltas are in points (`PointDeltaAxis` fields); line deltas = points / 10 with sub-line accumulation; fixed-point deltas = line deltas in 16.16.
-- **Momentum** (when `TrackpadMomentumScroll` is on) is the engine's `ScrollMomentum` recognizer, driven by `tick(now:)` (§6.5.1): on scroll `.ended`, exit velocity = mean velocity (points/s) over the last 3 frames (ignore frames older than 50 ms). If `|v| < MOMENTUM_MIN_START = 60 pt/s` → no momentum. Else on every tick: `dt = now − lastTick`, `delta = v × dt`, `v *= pow(MOMENTUM_DECAY_PER_MS, dt_ms)` (`0.998`, Tunable), stop when `|v| < MOMENTUM_STOP = 5 pt/s`. Emit `.scrollMomentum(.begin)` on the first tick, `.continued` afterwards, `.end` with zero delta at the end. Any new contact (a frame with a `began`) cancels momentum: the engine emits an immediate `.scrollMomentum(.end)` followed by `.scroll(.mayBegin)` and `.scroll(.cancelled)` (prevents app-side auto-momentum from continuing) before processing the new contact. Momentum is fully testable with fixtures because it depends only on frames and ticks.
+- **Momentum** (when `TrackpadMomentumScroll` is on) is the engine's `ScrollMomentum` recognizer, driven by `tick(now:)` (§6.5.1): on scroll `.ended`, exit velocity = the scroll motion of the last 50 ms before the lift divided by that span (2026-10-29; replaces the mean of the last 3 frames, which made fingers that stopped before lifting coast; dock swipes use the same 50 ms window for `exitVelocity`). No momentum follows a gesture in which a zoom or rotation activated. If `|v| < MOMENTUM_MIN_START = 60 pt/s` → no momentum. Else on every tick: `dt = now − lastTick`, `delta = v × dt`, `v *= pow(MOMENTUM_DECAY_PER_MS, dt_ms)` (`0.998`, Tunable), stop when `|v| < MOMENTUM_STOP = 5 pt/s`. Emit `.scrollMomentum(.begin)` on the first tick, `.continued` afterwards, `.end` with zero delta at the end. Any new contact (a frame with a `began`) cancels momentum: the engine emits an immediate `.scrollMomentum(.end)` followed by `.scroll(.mayBegin)` and `.scroll(.cancelled)` (prevents app-side auto-momentum from continuing) before processing the new contact. Momentum is fully testable with fixtures because it depends only on frames and ticks.
 
 ### 6.9 QuartzInjector — exact event construction
 
@@ -908,6 +913,7 @@ On a dedicated test Mac: boot to Recovery, set security to Reduced, disable SIP 
 | SETTLE_WINDOW | 60 ms | yes | §6.5.3 |
 | TAP_MAX_DURATION | 0.30 s | yes | §6.5.5 |
 | TAP_MAX_MOVEMENT | 2.0 mm | yes | §6.5.5 |
+| TAP_HYSTERESIS | 0.5 mm (2026-10-29) | yes | §6.5.4 |
 | MULTI_TAP_SPREAD | 5.0 mm | yes | §6.5.5 |
 | TWO_FINGER_TAP_STAGGER | 0.10 s | yes | §6.5.5 |
 | CORNER_ZONE | 22 × 22 mm | no | §6.5.5 |

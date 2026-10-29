@@ -17,7 +17,7 @@ Static site for Trackglass, built to be hosted on GitHub Pages from the `website
 
 The repository (`simo-hue/TrackGlass`) and the support e-mail are filled in. Still to replace:
 
-1. `APPSTORE_URL` (two buttons in `index.html`) → the App Store link once the iOS app is live. Until then `main.js` turns those buttons into an inert "App Store · soon" state, so nothing links to a 404.
+1. `APPSTORE_URL` → the App Store link once the iOS app is live. The token appears only in the `data-appstore` attribute of the two App Store buttons in `index.html`; replace both with the full `https://apps.apple.com/…` URL. `main.js` copies a `data-appstore` value into the button's `href` only when it starts with `https://`; until then it shows an inert "App Store · soon" state. Each button's own `href` points to `support.html#get-the-app`, so visitors without JavaScript still land on a working page.
 
 ## Deploying on GitHub Pages
 
@@ -37,4 +37,4 @@ The pairing section is driven by scroll position on desktop (`pairing()` in `mai
 
 The visual system (aurora backdrop, grain, glass panels with gradient hairlines, cursor spotlight via `data-spot`, floating readouts, ticker, mobile menu) is all in `styles.css`; the small behaviours (nav indicator and progress, spotlight coordinates, ticker duplication, theme tilt) live at the top of `main.js`.
 
-Everything respects `prefers-reduced-motion`: animations are replaced by their final states.
+Everything respects `prefers-reduced-motion`: animations are replaced by their final states. Otherwise, the pause button under the hero demo (`motion()` in `main.js`, WCAG 2.2.2) freezes the scripted demos, the pairing timer and the CSS loops (`html.is-paused`). Reveal-on-scroll elements have a `<noscript>` fallback so the page is readable without JavaScript.

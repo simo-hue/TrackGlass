@@ -5,7 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Support — Trackglass</title>
   <meta name="description" content="Set up Trackglass in three steps, fix common issues, and get help.">
+  <meta property="og:description" content="Set up Trackglass in three steps, fix common issues, and get help.">
   <meta name="theme-color" content="#050507">
+  <link rel="canonical" href="https://simo-hue.github.io/TrackGlass/support.html">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Support — Trackglass">
+  <meta property="og:url" content="https://simo-hue.github.io/TrackGlass/support.html">
+  <meta property="og:image" content="https://simo-hue.github.io/TrackGlass/assets/og.png">
+  <meta name="twitter:card" content="summary_large_image">
   <meta name="color-scheme" content="dark">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
@@ -53,6 +60,7 @@
     <a href="index.html#privacy">Privacy <span>04</span></a>
     <a href="index.html#themes">Themes <span>06</span></a>
     <a href="support.html">Support <span>↗</span></a>
+    <a class="nav__sheet-download" href="https://github.com/simo-hue/TrackGlass/releases/latest">Download for Mac <span>↓</span></a>
   </nav>
 </header>
 
@@ -63,24 +71,26 @@
     <div class="prose">
       <h2>1. Install Trackglass for Mac</h2>
       <ol>
-        <li>Download the latest <code>.dmg</code> from <a href="https://github.com/simo-hue/TrackGlass/releases/latest">GitHub Releases</a>. It is signed and notarized by Apple.</li>
-        <li>Open it and drag Trackglass to your Applications folder, then launch it. It lives in the menu bar.</li>
-        <li>When asked, grant <strong>Accessibility</strong> permission (System Settings → Privacy &amp; Security → Accessibility). macOS requires it for any app that moves the pointer.</li>
+        <li>Download the latest <code>.dmg</code> from <a href="https://github.com/simo-hue/TrackGlass/releases/latest">GitHub Releases</a>. It is signed by the developer and notarized by Apple.</li>
+        <li>Open it and drag <strong>Trackglass for Mac</strong> to your Applications folder, then launch it. It has no Dock icon: it lives in the menu bar, at the top right of the screen. On a MacBook with a notch, a full menu bar can hide the icon behind the notch; quit or hide a few other menu-bar apps to see it.</li>
+        <li>When asked, grant <strong>Accessibility</strong> permission (System Settings → Privacy &amp; Security → Accessibility → Trackglass for Mac). macOS requires it for any app that moves the pointer.</li>
+        <li>On macOS 15 or later, also allow <strong>Local Network</strong> access when macOS asks (System Settings → Privacy &amp; Security → Local Network → Trackglass for Mac). Without it, your iPad or iPhone cannot find the Mac.</li>
       </ol>
 
-      <h2>2. Get the iPad / iPhone app</h2>
-      <p>Install Trackglass from the App Store. It requires iPadOS or iOS 17 or later.</p>
+      <h2 id="get-the-app">2. Get the iPad / iPhone app</h2>
+      <p>Install Trackglass from the App Store (coming soon). It requires iPadOS or iOS 17 or later. When it first looks for your Mac, iOS asks for <strong>Local Network</strong> access: allow it.</p>
 
       <h2>3. Pair once</h2>
       <ol>
         <li>On the Mac, click the Trackglass menu bar icon and choose <strong>Pair a device…</strong></li>
-        <li>On the iPad or iPhone, open Trackglass and scan the code shown on the Mac, or tap <em>Use a code</em> and type the 6-digit code.</li>
+        <li>On the iPad or iPhone, open Trackglass and tap <em>Scan Mac QR code</em>, or tap <em>Use a code instead</em> and type the 6-digit code. (If you scanned the code with the Camera app instead, Trackglass opens and asks you to confirm the pairing.)</li>
+        <li>On the Mac, click <strong>Allow</strong> when it asks whether the device may pair.</li>
         <li>Done. The devices remember each other. Next time, just open the app.</li>
       </ol>
 
       <h2>Common questions</h2>
-      <p><strong>The iPad can't find my Mac.</strong> Both devices need Wi‑Fi turned on. They do not need to be on the same network: Trackglass also connects directly between the two devices (peer-to-peer). On the Mac, make sure the app is running and that Local Network access was allowed when macOS asked. On corporate or guest networks that block device-to-device traffic, move the devices closer together so the peer-to-peer link can take over.</p>
-      <p><strong>It's connected but the pointer doesn't move.</strong> Accessibility permission is missing or was reset after an update. Open the Trackglass menu on the Mac; it shows the permission status and a button that opens the right System Settings pane.</p>
+      <p><strong>The iPad can't find my Mac.</strong> Both devices need to be on the same Wi‑Fi network, with Wi‑Fi turned on. Make sure Trackglass for Mac is running and that Local Network access is allowed on both devices: on the Mac in System Settings → Privacy &amp; Security → Local Network, on the iPad or iPhone in Settings → Privacy &amp; Security → Local Network. Guest and corporate networks that block traffic between devices will not work.</p>
+      <p><strong>It's connected but the pointer doesn't move.</strong> Accessibility permission is missing or was reset after an update. Open the Trackglass for Mac menu in the menu bar; it shows the permission status and a button that opens the right System Settings pane.</p>
       <p><strong>Gestures behave differently from my trackpad.</strong> Trackglass follows the Mac's own settings in System Settings → Trackpad (tap to click, secondary click, natural scrolling, tracking speed, More Gestures). Change them there and Trackglass follows within a couple of seconds.</p>
       <p><strong>Four-finger gestures don't reach the Mac on iPad.</strong> iPadOS uses four- and five-finger gestures for multitasking. Turn them off in Settings → Multitasking &amp; Gestures → Gestures.</p>
       <p><strong>I see "Pair again".</strong> One side forgot the other (for example after reinstalling). Open Pairing on the Mac and scan again.</p>

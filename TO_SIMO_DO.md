@@ -1,6 +1,16 @@
-# TO_SIMO_DO — manual actions still open (2026-10-29, updated after the review fixes)
+# TO_SIMO_DO — manual actions still open (2026-10-29, updated after round 2)
 
 Everything the agent can do without you is done; the two 2026-10-28 batches passed CI and are committed (section 0). This file lists only what needs your hands, your devices or your decision. Reply with results in the order you like; nothing here blocks the others. History of earlier requests is in git (`git log -p TO_SIMO_DO.md`).
+
+## 000. Round 2 of 2026-10-29 — CI green 13:39, committed
+
+1. ~~Run CI~~ — done (all green).
+2. **Disconnect on the Mac:** menu → Paired devices → <phone> → Disconnect (also in Settings → Devices). The phone shows "<Mac> disconnected this device. Tap Reconnect to use it again." and does not reconnect by itself; Reconnect works. Forget now asks for confirmation.
+3. **Scroll speed (G-SCR):** the constant fallback model now ships by default, because the Apple scroll-curve port scrolled 3–23 × too far. During C4 compare once with `defaults write app.trackglass.mac TGUseAppleScrollCurves -bool YES` (quit/reopen), then `defaults delete app.trackglass.mac TGUseAppleScrollCurves`; send me the `tgaccel` JSON so I can fix the curve units.
+4. **Feel changes to check with the phone:** a tap never nudges the pointer (0.5 mm touch-down hysteresis); fingers that stop before lifting do not coast; a pinch started during a scroll still zooms, a long scroll never zooms by itself; lifting one of two fingers after a scroll/zoom does not move the pointer; resting a thumb at the bottom never force-clicks; a second finger landing late and moving with the first scrolls; with Tap to click off, tap-and-a-half drags.
+5. **Instruments (SPEC §7):** Allocations on the Mac app while scrolling and pointing for 30 s — use "Created & Destroyed": the `input-pipeline` queue should allocate nothing per frame beyond the CGEvents themselves (`PipelineAllocationTests` only catches memory that is kept); on the phone, Allocations while dragging one finger should show only the one `Data` copy per datagram (B11).
+6. The website, README and App Store text no longer promise "works with no router" (peer-to-peer). Try it once (both devices off Wi-Fi networks, Wi-Fi still on, Bluetooth on); if it connects, tell me and I restore the line.
+7. The 24 h soak now takes `TG_SOAK_EXPECT_CONNECTED=1` (`docs/QA-Robustness.md` §4) and fails if the phone drops the session.
 
 ## 00. Review fixes of 2026-10-29
 
@@ -13,7 +23,7 @@ Everything the agent can do without you is done; the two 2026-10-28 batches pass
 1. **Update both apps together before pairing anything new:** the pairing messages changed (X25519 keys + Allow click). Existing pairings keep working.
 2. Optional tidy-ups: delete the `TG_SPARKLE_PUBLIC_KEY` line from your `Config/Local.xcconfig` (the tracked `Shared.xcconfig` has it; the release script stops if the two differ); re-run `Scripts/make-icons.py` so the DMG caption reads "Drag Trackglass for Mac to Applications". (`output.txt` is now untracked and ignored.)
 3. Quick physical checks (when you next have the phone): pair once and click **Allow** on the Mac; pair again and click **Don't Allow** (the phone says pairing was not allowed); a four-finger pinch with the thumb held still opens Launchpad / Apps; after a three-finger Spaces swipe, lifting the fingers one at a time does not scroll or move the pointer.
-4. CI now builds the soak UI test, which shows five pre-existing main-actor warnings in `Tests/TrackglassiOSUITests/SoakUITests.swift` (not an error; packages stay warning-free). Say if you want them fixed.
+4. ~~Soak UI test main-actor warnings~~ — fixed in round 2.
 
 ## A2. Legacy dock-swipe trial on macOS 27 — two minutes
 
@@ -47,7 +57,7 @@ G-FORCE (M7.7) cannot run on this Mac: the private force path needs `CGEventSetH
 
 ## C. Release plumbing (before any public build)
 
-1. `APPSTORE_URL` in `website/index.html` once the App Store page exists (the buttons show "App Store · soon" until then; support e-mail is set).
+1. `APPSTORE_URL` → the full `https://apps.apple.com/…` link in the two `data-appstore` attributes of `website/index.html` once the App Store page exists (until then the buttons show "App Store · soon" and link to `support.html#get-the-app`; support e-mail is set).
 2. Sparkle: back up the private key (`generate_keys -x <file>` → password manager, delete the file); put the Sparkle 2 tools (`generate_appcast`) on your PATH.
 3. `xcrun notarytool store-credentials trackglass-notary` (App Store Connect API key or app-specific password); Developer ID Application certificate installed; `gh auth login`.
 4. GitHub → Settings → Pages → Source: GitHub Actions (`.github/workflows/pages.yml` exists). The CI workflow runs on the next push to `main` by itself.

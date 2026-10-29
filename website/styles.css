@@ -441,7 +441,7 @@ em { font-style: normal; color: var(--fg); }
 .hint__k { font-weight: 600; color: var(--fg-2); padding: 3px 8px; border: 1px solid var(--line-2); border-radius: 6px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; background: var(--glass); }
 .hint.is-hidden { opacity: 0; }
 
-.caption { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 8px; min-height: 28px; }
+.caption { position: relative; z-index: 2; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 16px; margin-top: 8px; min-height: 28px; } /* above the iPad's untransformed box, which extends below the stage */
 .caption__label { font-size: 14px; font-weight: 600; color: var(--fg-2); min-width: 120px; text-align: right; letter-spacing: .02em; }
 .caption__steps { display: flex; gap: 6px; }
 .caption__steps i { width: 24px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.14); transition: background .3s; }
@@ -742,6 +742,8 @@ input[type="range"]::-moz-range-thumb { width: 22px; height: 22px; border: 0; bo
   .stat { border-left: 0; }
   .stat:nth-child(n+2) { border-top: 1px solid var(--line); }
   .cta .btn { width: 100%; justify-content: center; }
+  /* The App Store button carries an "App Store · soon" chip: let it wrap instead of overflowing narrow phones. */
+  .cta .btn { white-space: normal; height: auto; min-height: 50px; padding: 10px 20px; flex-wrap: wrap; row-gap: 6px; text-align: center; }
   .caption__label { min-width: 0; }
   .hint { display: none; }
   .nav__gh { display: none; }
@@ -762,6 +764,29 @@ input[type="range"]::-moz-range-thumb { width: 22px; height: 22px; border: 0; bo
   .display--small br { display: none; }
   .bg__aurora { filter: blur(60px); }
 }
+
+/* Very narrow phones: the brand, the menu button and a download pill do not fit side by side. The pill moves into
+   the menu sheet; the hero's own Download button is right below. */
+@media (max-width: 420px) {
+  .nav__actions .btn--small { display: none; }
+}
+.nav__sheet .nav__sheet-download { display: none; }
+@media (max-width: 420px) {
+  .nav__sheet .nav__sheet-download { display: flex; }
+}
+
+/* Pause / play for the looping demo and ticker (WCAG 2.2.2) */
+.motion-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--glass); color: var(--fg-2); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+.motion-toggle:hover { color: var(--fg); border-color: var(--line-2); }
+.motion-toggle:focus-visible { outline: 2px solid var(--accent-a); outline-offset: 2px; }
+.motion-toggle svg { width: 14px; height: 14px; }
+.motion-toggle__play { display: none; }
+html.is-paused .motion-toggle__pause { display: none; }
+html.is-paused .motion-toggle__play { display: inline; }
+html.is-paused .ticker__track,
+html.is-paused .halo--loop, html.is-paused .pad i, html.is-paused .net__flow, html.is-paused .net__halo,
+html.is-paused .cam__scan, html.is-paused .beam, html.is-paused .float, html.is-paused .badge__dot,
+html.is-paused .bg__aurora, html.is-paused .bg__grain, html.is-paused .line--accent { animation-play-state: paused !important; }
 
 /* Touch devices */
 @media (pointer: coarse) {
