@@ -26,7 +26,7 @@ final class PointerState {
     private var remainderX = 0.0
     private var remainderY = 0.0
     fileprivate let eventSource: CGEventSource
-    private let displayBounds = DisplayBounds()
+    private let displayBounds = DisplayBounds.shared
     private var needsDisplayWake = true
     func displayDidSleep() { needsDisplayWake = true }
     private var lastActivityTime = DispatchTime.now().uptimeNanoseconds
@@ -101,20 +101,16 @@ final class PointerState {
     }
 }
 
+/// One per process, registered once and never freed: the reconfiguration callback runs on the main thread while
+/// pipelines come and go on the input queue, so a per-pipeline instance could be freed under a running callback.
 final class DisplayBounds: @unchecked Sendable {
+    static let shared = DisplayBounds()
     private let lock = NSLock()
     private var displays: [CGRect] = []
-    private var registered = false
 
-    init() {
+    private init() {
         refresh()
-        registered = CGDisplayRegisterReconfigurationCallback(Self.changed, Unmanaged.passUnretained(self).toOpaque()) == .success
-    }
-
-    deinit {
-        if registered {
-            CGDisplayRemoveReconfigurationCallback(Self.changed, Unmanaged.passUnretained(self).toOpaque())
-        }
+        CGDisplayRegisterReconfigurationCallback(Self.changed, Unmanaged.passUnretained(self).toOpaque())
     }
 
     private static let changed: CGDisplayReconfigurationCallBack = { _, _, context in

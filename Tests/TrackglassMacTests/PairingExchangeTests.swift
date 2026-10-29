@@ -110,6 +110,30 @@ final class PairingExchangeTests: XCTestCase {
         XCTAssertTrue(try serverStore.all().isEmpty)
     }
 
+    /// §3.4: the window's expiry also ends an unanswered Allow question (the phone gets BYE{0}, nothing is stored).
+    @MainActor func testExpiryWhileAskingDeclines() async throws {
+        let macID = UUID()
+        let serverStore = PairingStore(service: "app.trackglass.tests.expireask.mac.\(UUID())")
+        let phoneStore = PairingStore(service: "app.trackglass.tests.expireask.phone.\(UUID())")
+        let service = PairingService(identity: PeerIdentity(peerID: macID, name: "Expiring Mac"), store: serverStore,
+                                     authorized: { true }, windowLifetime: .seconds(2))
+        defer { service.close() }
+        service.open()
+        let endpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: try await port(of: service))
+        let payload = try XCTUnwrap(service.payload)
+        let client = PairingClient(store: phoneStore)
+        let pairing = Task { @MainActor in
+            try await client.pair(payload: payload, endpoint: endpoint, expectedMacID: macID,
+                                  request: PairRequestMessage(peerID: UUID(), name: "Phone", modelIdentifier: "iPhone16,2", protocolVersion: 1))
+        }
+        for _ in 0..<100 where service.pendingApproval == nil { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertNotNil(service.pendingApproval)
+        do { _ = try await pairing.value; XCTFail("An unanswered question must expire with the window") } catch {}
+        XCTAssertNil(service.pendingApproval)
+        XCTAssertFalse(service.isOpen)
+        XCTAssertTrue(try serverStore.all().isEmpty)
+    }
+
     @MainActor func testClosingWindowRejectsOldCode() async throws {
         let store = PairingStore(service: "app.trackglass.tests.closed.\(UUID())")
         let identity = PeerIdentity(name: "Closed Mac")

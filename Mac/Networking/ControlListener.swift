@@ -8,6 +8,8 @@ import TrackglassEngine
 @MainActor @Observable
 final class ControlListener {
     private(set) var sessionActive = true
+    /// Set once the app is quitting (`endAllSessionsForQuit`): no new session is admitted after that.
+    private var quitting = false
     private(set) var status = "No phone connected"
     let coordinator = SessionCoordinator()
     var inputIdentityChanged: ((UUID?, EngineGeometry?) -> Void)?
@@ -82,6 +84,7 @@ final class ControlListener {
             guard let self, let channel, self.channels[id] === channel else { return }
             switch packet.message {
             case .hello(let hello):
+                guard !self.quitting else { channel.end(reason: 0, message: "Trackglass for Mac quit"); return }
                 guard self.admitted[id] == nil else { channel.end(reason: 1); return }
                 guard hello.protocolVersion == 1 else { channel.end(reason: 1); return }
                 do {
@@ -107,22 +110,33 @@ final class ControlListener {
                     // instead of waiting for the heartbeat timeout and being told it is busy with itself. A session
                     // that is still talking is not stale: a HELLO cannot prove which paired phone sent it (no
                     // public API exposes the negotiated PSK identity), so it never ends a live session (§3.5).
+                    var supersededStale = false
                     if let stale = self.admitted.first(where: { $0.value == hello.peerID })?.key, stale != id,
                        let staleChannel = self.channels[stale],
                        MonotonicClock.nanoseconds() &- staleChannel.lastReceivedAt >= Self.staleSessionSilenceNs {
                         self.admitted.removeValue(forKey: stale)
                         self.admittedChanged()
+                        supersededStale = true
                         await self.coordinator.release(id: stale)
                         staleChannel.end(reason: 0, message: "Superseded by a reconnect")
                     }
                     let busyName = await self.coordinator.admit(id: id, peer: hello)
-                    guard self.channels[id] === channel, generation == self.generation else {
-                        await self.coordinator.release(id: id); channel.close("Pairing changed"); return
+                    // Busy with this very phone (its previous session has not gone silent long enough to be superseded):
+                    // an empty `activePhoneName` tells it so, and it keeps retrying quietly (§4.5, 2026-10-29). Names
+                    // cannot tell two phones apart (two "iPhone 15"s); peer IDs can.
+                    var busyWithItself = false
+                    if busyName != nil { busyWithItself = await self.coordinator.activeSession?.peer.peerID == hello.peerID }
+                    guard self.channels[id] === channel, generation == self.generation, !self.quitting else {
+                        await self.coordinator.release(id: id); channel.close("Pairing changed")
+                        // The stale session's input side was left for this admission to replace; nothing will now.
+                        if supersededStale, self.admitted.isEmpty { self.resetAdmittedState() }
+                        return
                     }
                     let welcome = WelcomeMessage(status: busyName == nil ? 0 : 1,
                         macPeerID: self.identity.peerID, macName: self.identity.name,
                         macOSVersion: ProcessInfo.processInfo.operatingSystemVersionString,
-                        injectorMode: 1, settings: Self.message(for: self.trackpadSettings), activePhoneName: busyName ?? "")
+                        injectorMode: 1, settings: Self.message(for: self.trackpadSettings),
+                        activePhoneName: busyWithItself ? "" : busyName ?? "")
                     if busyName != nil { channel.send(.welcome(welcome)); channel.end(reason: 2); return }
                     self.admitted[id] = hello.peerID
                     self.admittedChanged()
@@ -149,16 +163,19 @@ final class ControlListener {
             guard let self else { return }
             self.channels.removeValue(forKey: id)
             self.rttByChannel.removeValue(forKey: id)
-            if self.admitted.removeValue(forKey: id) != nil {
-                self.status = "No phone connected"
-                self.trackingOverride = 0
-                self.lastStatus = nil
-                self.inputIdentityChanged?(nil, nil)
-                self.admittedChanged()
-            }
+            if self.admitted.removeValue(forKey: id) != nil { self.resetAdmittedState() }
             Task { await self.coordinator.release(id: id) }
         }
         channel.start()
+    }
+
+    /// No phone is admitted any more: the input side, the status line and the preference poller follow.
+    private func resetAdmittedState() {
+        status = "No phone connected"
+        trackingOverride = 0
+        lastStatus = nil
+        inputIdentityChanged?(nil, nil)
+        admittedChanged()
     }
 
     func stop() {
@@ -183,8 +200,12 @@ final class ControlListener {
 
     func prepareForSleep() { endAllSessions(reason: 4, message: "Mac sleeping") }
 
-    /// The app is quitting (menu, logout, Sparkle relaunch): every phone gets a user BYE.
-    func endAllSessionsForQuit() { endAllSessions(reason: 0, message: "Trackglass for Mac quit") }
+    /// The app is quitting (menu, logout, Sparkle relaunch): every phone gets a user BYE, and a phone whose HELLO
+    /// arrives during the short wait before exit is turned away the same way instead of being admitted (§6.1).
+    func endAllSessionsForQuit() {
+        quitting = true
+        endAllSessions(reason: 0, message: "Trackglass for Mac quit")
+    }
 
     /// Menu / Devices "Disconnect" (§6.1): BYE reason 5, which the phone treats as final — it stops reconnecting by
     /// itself until its user taps Reconnect (§4.5).

@@ -134,6 +134,22 @@ final class ControlSessionTests: XCTestCase {
         try await eventually { client.isConnected && harness.server.connectedPeerID == phone }
     }
 
+    func testHelloArrivingWhileQuittingIsTurnedAway() async throws {
+        // §6.1 quit: during the short wait for the BYEs to leave, a phone's HELLO must not be admitted (it would
+        // get no BYE and could leave a button held when the process exits).
+        let harness = try SessionHarness()
+        defer { harness.stop() }
+        let endpoint = try await harness.start()
+        harness.server.endAllSessionsForQuit()
+        let client = harness.client()
+        defer { client.disconnect() }
+        let connected = await client.connect(endpoint: endpoint, mac: harness.mac(for: 0), hello: harness.hello(0))
+        XCTAssertFalse(connected)
+        XCTAssertNil(harness.server.connectedPeerID)
+        let session = await harness.server.coordinator.activeSession
+        XCTAssertNil(session)
+    }
+
     func testThreeUnansweredPingsDisconnect() async throws {
         let harness = try SessionHarness(silent: true)
         defer { harness.stop() }

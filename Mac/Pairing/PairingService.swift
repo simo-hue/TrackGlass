@@ -289,9 +289,9 @@ final class PairingService {
                         self.remove(connection); return
                     }
                     // Consume on the main actor before any response is queued, excluding concurrent requests.
+                    // The window's 120 s expiry keeps running through the Allow question (§3.4: an unanswered
+                    // question expires with the window and the phone gets BYE{0}).
                     self.consumed = true
-                    // The window's 120 s expiry no longer applies: the outcome of this request decides.
-                    self.deadline?.cancel(); self.deadline = nil
                     self.isAdvertised = false
                     self.listener?.cancel()
                     self.listener = nil
@@ -316,6 +316,8 @@ final class PairingService {
                         self.status = "Pairing with \(request.name) was not allowed. Open a new window to pair again."
                         return
                     }
+                    // Allowed: from here the response decides; the expiry must not cut it off midway.
+                    self.deadline?.cancel(); self.deadline = nil
                     let macKey = Curve25519.KeyAgreement.PrivateKey()
                     let shared = try KeyDerivation.sharedSecret(privateKey: macKey, peerPublicKey: request.ephemeralPublicKey)
                     let macPublicKey = macKey.publicKey.rawRepresentation

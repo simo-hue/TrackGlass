@@ -73,8 +73,9 @@ private struct PairingWindowContent: View {
             HStack(spacing: 12) {
                 Button("Don’t Allow") { service.respondToPendingPairing(allow: false) }
                     .keyboardShortcut(.cancelAction)
+                // No default action: the question comes to the front while the user may be typing elsewhere, and a
+                // Return meant for another app must never approve a pairing (§3.4: the Allow click is the consent).
                 Button("Allow") { service.respondToPendingPairing(allow: true) }
-                    .keyboardShortcut(.defaultAction)
             }
         }
         .padding(28)

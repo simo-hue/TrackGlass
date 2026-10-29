@@ -47,13 +47,17 @@ final class InputPipelineTests: XCTestCase {
             pipeline.consume(Self.data(sequence: 1, time: 1_000_000_000, phase: .began))
             pipeline.consume(Self.data(sequence: 2, time: 1_100_000_000, phase: .ended))
             pipeline.consume(Self.data(sequence: 3, time: 1_200_000_000, phase: .began))
-            XCTAssertTrue(injector.events.contains(.button(kind: .left, phase: .down, clickCount: 2)))
             // Frames 4 (ended) and 5 (lift-off) are lost; the phone's heartbeats name frame 5. The first one is
             // taken for frames still in flight, the second one (0.5 s later) forces the lift-off — before `stop()`.
             pipeline.heartbeat(sequence: 5)
             XCTAssertFalse(injector.events.contains(.button(kind: .left, phase: .up, clickCount: 2)))
             pipeline.heartbeat(sequence: 5)
-            XCTAssertTrue(injector.events.contains(.button(kind: .left, phase: .up, clickCount: 2)))
+            // The forced lift-off is the phone's own lift-off (§4.7): the quick repeat tap — whose press was still
+            // waiting for the settle window (§6.5.6) — is a double-click, pressed and released, nothing left held.
+            let repeatTap = injector.events.filter {
+                if case .button(.left, _, 2) = $0 { return true } else { return false }
+            }
+            XCTAssertEqual(repeatTap, [.button(kind: .left, phase: .down, clickCount: 2), .button(kind: .left, phase: .up, clickCount: 2)])
             pipeline.stop()
         }
     }
