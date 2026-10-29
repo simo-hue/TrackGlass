@@ -11,7 +11,7 @@ public struct EngineGeometry: Sendable, Equatable, Codable {
 }
 
 public struct EventBuffer: Sendable {
-    private var values = [GestureEvent?](repeating: nil, count: 32)
+    private var values = [GestureEvent?](repeating: nil, count: 48)
     public private(set) var count = 0
     public init() {}
     public subscript(_ index: Int) -> GestureEvent { values[index]! }
@@ -20,6 +20,13 @@ public struct EventBuffer: Sendable {
     mutating func append(_ event: GestureEvent) {
         guard count < values.count else { assertionFailure("Gesture event buffer overflow"); return }
         values[count] = event; count += 1
+    }
+    /// Inserts before the event at `index` (fixed storage, no allocation).
+    mutating func insert(_ event: GestureEvent, at index: Int) {
+        guard count < values.count, index <= count else { assertionFailure("Gesture event buffer overflow"); return }
+        var position = count
+        while position > index { values[position] = values[position - 1]; position -= 1 }
+        values[index] = event; count += 1
     }
 }
 
@@ -113,6 +120,10 @@ public final class GestureEngine: @unchecked Sendable {
     private var dragContactID: UInt8?
     private var dragClickCount = 2
     private var dragReleaseDeadline: UInt64?
+    /// Frame time of a drag contact lifted quickly in this frame (§6.5.6 "if that contact ends within
+    /// TAP_MAX_DURATION having moved less than TAP_MAX_MOVEMENT"): `emitTapIfComplete` normally turns it into the
+    /// release; if it does not, the grace window opens after tap evaluation so the button is never left held.
+    private var quickDragLiftAt: UInt64?
     private var threeFingerDragStart: (Double, Double)?
     private var threeFingerDragPrevious: (Double, Double)?
     private var threeFingerDragPreviousTime: UInt64 = 0
@@ -181,6 +192,7 @@ public final class GestureEngine: @unchecked Sendable {
         var contactLifted = false
         var moveDX = 0.0; var moveDY = 0.0; var moveDT: UInt64 = 0; var hasPointerDelta = false
         var dragDX = 0.0; var dragDY = 0.0; var dragDT: UInt64 = 0; var hasDragDelta = false
+        var movingPath = 0.0   // path of the contact driving the pointer this frame (pending secondary click flush)
 
         for i in 0..<frame.contactCount {
             let contact = frame[i]
@@ -255,6 +267,7 @@ public final class GestureEngine: @unchecked Sendable {
                     dragButtonHeld = true; dragContactID = contact.contactID
                     dragClickCount = count; self.previousClickTime = nil
                     tapContacts[tapIndex].dragSequence = true
+                    flushPendingSecondaryClick(into: &events)
                     events.append(.button(kind: .left, phase: .down, clickCount: count))
                 }
                 continue
@@ -281,9 +294,11 @@ public final class GestureEngine: @unchecked Sendable {
                     if dragButtonHeld && dragContactID == contact.contactID {
                         dragDX = x - previous.x; dragDY = y - previous.y
                         dragDT = frame.frameTime - previous.time; hasDragDelta = true
+                        movingPath = tracker.slots[index].pathLength
                     } else if oldEffectiveCount == 1 && mode == .pointer {
                         moveDX = x - previous.x; moveDY = y - previous.y
                         moveDT = frame.frameTime - previous.time; hasPointerDelta = true
+                        movingPath = tracker.slots[index].pathLength
                     }
                 }
                 if hypot(x - previous.startX, y - previous.startY) > 1.5 { tracker.slots[index].restingEligible = false }
@@ -313,6 +328,7 @@ public final class GestureEngine: @unchecked Sendable {
                        lifted: contactLifted, into: &events)
         if mode == .pendingScroll, tracker.effectiveCount == 2, let pair = twoFingerGeometry() {
             let start = events.count
+            let wasActive = twoFinger.hasActiveGesture
             twoFinger.update(x: pair.x, y: pair.y, distance: pair.distance, angle: pair.angle, time: frame.frameTime, settings: settings,
                              acceleration: scrollAcceleration, suppressActivation: hasRestingThumbCandidate, into: &events)
             for index in start..<events.count {
@@ -320,15 +336,32 @@ public final class GestureEngine: @unchecked Sendable {
                     momentum.record(dx: dx, dy: dy, dt: twoFinger.lastDeltaTime, at: frame.frameTime)
                 }
             }
+            // A scroll, pinch, rotation or edge swipe is not a second two-finger tap: the pending secondary click
+            // goes out first, where the first tap was, instead of in the middle of the gesture (§6.5.7).
+            if !wasActive && twoFinger.hasActiveGesture { flushPendingSecondaryClick(into: &events, at: start) }
             tapConsumedByGesture = tapConsumedByGesture || twoFinger.hasActiveGesture
         }
         if mode == .multiFinger, let sample = multiFingerSample() {
+            let start = events.count
+            let wasActive = multiFinger.active
             multiFinger.update(sample, settings: settings, into: &events)
+            if !wasActive && multiFinger.active { flushPendingSecondaryClick(into: &events, at: start) }
             tapConsumedByGesture = tapConsumedByGesture || multiFinger.active
         }
         updateForceClick(now: frame.frameTime, into: &events)
         updateThreeFingerDrag(now: frame.frameTime, oldCentroid: oldCentroid, into: &events)
         emitTapIfComplete(now: frame.frameTime, into: &events)
+        if let liftedAt = quickDragLiftAt {
+            quickDragLiftAt = nil
+            // The quick lift was not turned into the click release (the tap set had other fingers, was consumed
+            // or purged): the button must not stay held with no deadline, so the grace window opens (§6.5.6, §8.8).
+            if dragButtonHeld, !dragLockEngaged, dragContactID == nil, dragReleaseDeadline == nil, !threeFingerDragActive {
+                dragReleaseDeadline = liftedAt &+ 300_000_000
+            }
+        }
+        // Motion beyond TAP_MAX_MOVEMENT cannot be part of a second two-finger tap: a pending secondary click is
+        // emitted before the pointer leaves the place the first tap was made (§6.5.7).
+        if (hasDragDelta || hasPointerDelta), movingPath >= 2.0 { flushPendingSecondaryClick(into: &events) }
         if hasDragDelta, dragButtonHeld, !threeFingerDragActive {
             let delta = acceleration.accelerate(dxMM: dragDX, dyMM: dragDY, dtNanoseconds: dragDT)
             emitAccumulatedPointerMove(dx: delta.0, dy: delta.1, into: &events)
@@ -366,6 +399,7 @@ public final class GestureEngine: @unchecked Sendable {
         if slot.pathLength >= 1 { forceHoldCancelled = true; return }
         guard now >= slot.beganAt, now - slot.beganAt >= 600_000_000 else { return }
         tapConsumedByGesture = true
+        flushPendingSecondaryClick(into: &events)
         events.append(.forceClick(stage: 2)); events.append(.haptic(.forceClickStage2))
     }
 
@@ -533,7 +567,8 @@ public final class GestureEngine: @unchecked Sendable {
     private func endDragContact(id: UInt8, quickTap: Bool, now: UInt64, into events: inout EventBuffer) {
         guard dragContactID == id else { return }
         dragContactID = nil
-        guard dragButtonHeld, !threeFingerDragActive, !quickTap else { return }
+        guard dragButtonHeld, !threeFingerDragActive else { return }
+        if quickTap { quickDragLiftAt = now; return }   // resolved after tap evaluation (`processContacts`)
         engageDragLockOrGrace(now: now, into: &events)
     }
 
@@ -606,6 +641,7 @@ public final class GestureEngine: @unchecked Sendable {
                 if !dragButtonHeld {
                     // Re-landing inside the grace window or on a locked drag continues the held button.
                     dragButtonHeld = true; dragClickCount = 1
+                    flushPendingSecondaryClick(into: &events)
                     events.append(.button(kind: .left, phase: .down, clickCount: 1))
                 }
             }
@@ -627,6 +663,18 @@ public final class GestureEngine: @unchecked Sendable {
         events.append(.button(kind: .right, phase: .down, clickCount: 1))
         events.append(.button(kind: .right, phase: .up, clickCount: 1))
         events.append(.haptic(.secondaryClick))
+    }
+
+    /// Emits a pending two-finger secondary click now (smart zoom on, §6.5.7) — at `index` when given, so it
+    /// precedes the gesture events that made it final — because what follows can no longer be the second tap.
+    private func flushPendingSecondaryClick(into events: inout EventBuffer, at index: Int? = nil) {
+        guard let pending = pendingTwoFingerTap else { return }
+        pendingTwoFingerTap = nil
+        guard pending.secondaryEnabled else { return }
+        guard let index else { appendSecondaryClick(into: &events); return }
+        events.insert(.button(kind: .right, phase: .down, clickCount: 1), at: index)
+        events.insert(.button(kind: .right, phase: .up, clickCount: 1), at: index + 1)
+        events.insert(.haptic(.secondaryClick), at: index + 2)
     }
 
     private func expireTwoFingerTap(now: UInt64, into events: inout EventBuffer) {
@@ -660,6 +708,7 @@ public final class GestureEngine: @unchecked Sendable {
             return
         }
         if count == 3 {
+            flushPendingSecondaryClick(into: &events)
             if settings.threeFingerTapGesture == 2 { events.append(.lookUpAtPointer) }
             tapContacts.removeAll(keepingCapacity: true)
             return
@@ -683,6 +732,8 @@ public final class GestureEngine: @unchecked Sendable {
             return
         }
         guard let contact = tapContacts.first else { tapContacts.removeAll(keepingCapacity: true); return }
+        // A one-finger tap is not the second two-finger tap a pending secondary click waits for (§6.5.7).
+        flushPendingSecondaryClick(into: &events)
         if contact.releasesDragLock {
             events.append(.button(kind: .left, phase: .up, clickCount: dragClickCount))
             events.append(.haptic(.dragLockReleased))
@@ -692,7 +743,8 @@ public final class GestureEngine: @unchecked Sendable {
             return
         }
         if contact.dragSequence {
-            if contact.pathLength < 2.0, let ended = contact.endedAt,
+            // `dragButtonHeld`: the grace window may already have released it (§6.5.6) — never a second up.
+            if dragButtonHeld, contact.pathLength < 2.0, let ended = contact.endedAt,
                ended >= contact.beganAt, ended - contact.beganAt <= 300_000_000 {
                 events.append(.button(kind: .left, phase: .up, clickCount: dragClickCount))
                 events.append(.haptic(.click))
