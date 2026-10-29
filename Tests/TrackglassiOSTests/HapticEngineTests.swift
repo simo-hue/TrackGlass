@@ -23,4 +23,12 @@ final class HapticEngineTests: XCTestCase {
         restored.strength = 2; XCTAssertEqual(restored.strength, 1)
         restored.strength = .nan; XCTAssertEqual(restored.strength, 1)
     }
+
+    func testPlayersAreCachedPerIntensityStep() {
+        XCTAssertEqual(HapticEngine.quantizedScale(0.51), 0.5)
+        XCTAssertEqual(HapticEngine.quantizedScale(0.53), 0.55)
+        XCTAssertEqual(HapticEngine.quantizedScale(2), 1)
+        XCTAssertEqual(HapticEngine.quantizedScale(-1), 0)
+        XCTAssertEqual(HapticEngine.quantizedScale(.nan), 1)
+    }
 }

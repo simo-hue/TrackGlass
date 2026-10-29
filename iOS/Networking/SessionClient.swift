@@ -15,6 +15,8 @@ final class SessionClient {
     private(set) var settings: SettingsMessage?
     /// WELCOME `injectorMode` (§4.5): 1 Quartz, 2 driver (Phase 2). Mirrored into `ConnectionState` (§5.5).
     private(set) var injectorMode: UInt8 = 0
+    /// The paired Mac this session is connected to (nil while disconnected).
+    private(set) var connectedPeerID: UUID?
     private var connectionChanged: (@MainActor @Sendable () -> Void)?
     private var sessionClosed: (@MainActor @Sendable () -> Void)?
     #if canImport(UIKit)
@@ -31,6 +33,8 @@ final class SessionClient {
     private var connectContinuation: CheckedContinuation<Bool, Never>?
     /// The last session ended with a final answer (unpaired, incompatible): retrying cannot succeed.
     private(set) var lastCloseWasFinal = false
+    /// The user chose to reconnect after a final answer; the panel and the loop treat the Mac as reachable again.
+    func clearFinalClose() { lastCloseWasFinal = false }
 
     init(inputSink: UDPFrameSink) { self.inputSink = inputSink }
 
@@ -46,13 +50,15 @@ final class SessionClient {
         let diagnosticsSequence: UInt64
         let sequence: UInt64
         var injectorMode: UInt8 = 0
+        var connectedPeerID: UUID?
+        var lastCloseWasFinal = false
     }
     private var snapshotSequence: UInt64 = 0
     func snapshot() -> Snapshot {
         snapshotSequence &+= 1
         return Snapshot(isConnected: isConnected, status: status, macName: macName, rttMicros: rttMicros, settings: settings,
                         diagnostics: diagnostics, diagnosticsSequence: diagnosticsSequence, sequence: snapshotSequence,
-                        injectorMode: injectorMode)
+                        injectorMode: injectorMode, connectedPeerID: connectedPeerID, lastCloseWasFinal: lastCloseWasFinal)
     }
 
     func setCallbacks(connectionChanged: (@MainActor @Sendable () -> Void)?,
@@ -85,7 +91,7 @@ final class SessionClient {
         haptics.stop()
     #endif
         stopInput()
-        isConnected = false; rttMicros = 0; settings = nil; diagnostics = nil; lastCloseWasFinal = false
+        isConnected = false; connectedPeerID = nil; rttMicros = 0; settings = nil; diagnostics = nil; lastCloseWasFinal = false
         status = "Connecting to \(mac.name)…"
         macName = mac.name
         let options = TLSConfig.tlsOptions(psk: SymmetricKey(data: mac.ltk), identity: hello.peerID.uuidString.lowercased())
@@ -99,7 +105,7 @@ final class SessionClient {
                 guard welcome.macPeerID == mac.peerID else { channel.end(reason: 1, message: "Unexpected Mac identity"); return }
                 switch welcome.status {
                 case 0:
-                    self.isConnected = true; self.macName = welcome.macName
+                    self.isConnected = true; self.connectedPeerID = mac.peerID; self.macName = welcome.macName
                     self.settings = welcome.settings; self.injectorMode = welcome.injectorMode
     #if canImport(UIKit)
                     self.haptics.start()
@@ -132,7 +138,7 @@ final class SessionClient {
         channel.onClose = { [weak self, weak channel] message in
             guard let self, let channel, self.channel === channel else { return }
             self.lastCloseWasFinal = self.lastCloseWasFinal || channel.closedFinally
-            self.isConnected = false; self.status = message; self.channel = nil
+            self.isConnected = false; self.connectedPeerID = nil; self.status = message; self.channel = nil
             self.stopInput()
     #if canImport(UIKit)
             self.haptics.stop()
@@ -160,14 +166,41 @@ final class SessionClient {
     }
 
     func disconnect(reason: UInt8 = 0) {
-        isConnected = false
+        endLocally()
+        channel?.end(reason: reason, message: Self.byeMessage(reason))
+    }
+
+    /// §5.9: the background BYE must leave the device before the app is suspended. Returns once the network stack
+    /// has processed the BYE, or after `timeout` at the latest, so the caller can end its background task right then.
+    func disconnectAndWait(reason: UInt8 = 0, timeout: Duration = .seconds(1)) async {
+        endLocally()
+        guard let channel else { return }
+        let gate = ResumeOnce()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            gate.continuation = continuation
+            channel.end(reason: reason, message: Self.byeMessage(reason)) { gate.resume() }
+            Task { @MainActor in
+                try? await Task.sleep(for: timeout)
+                gate.resume()
+            }
+        }
+    }
+
+    #if canImport(UIKit)
+    /// Starts the haptic engine ahead of the first Mac haptic (first finger down), off the main thread.
+    func prewarmHaptics() { if isConnected { haptics.prewarm() } }
+    #endif
+
+    private func endLocally() {
+        isConnected = false; connectedPeerID = nil
     #if canImport(UIKit)
         haptics.stop()
     #endif
         stopInput()
         connectionChanged?()
-        channel?.end(reason: reason, message: reason == 4 ? "The Mac went to sleep" : "Disconnected")
     }
+
+    private static func byeMessage(_ reason: UInt8) -> String { reason == 4 ? "The Mac went to sleep" : "Disconnected" }
 
     private func startInput(mac: PairedPeer, phonePeerID: UUID) {
         stopInput()
@@ -242,5 +275,15 @@ final class SessionClient {
         inputSink.setConnection(nil)
         inputConnection?.cancel()
         inputConnection = nil
+    }
+}
+
+/// Resumes a continuation exactly once, whichever of its callers (BYE sent, timeout) comes first.
+@MainActor
+private final class ResumeOnce {
+    var continuation: CheckedContinuation<Void, Never>?
+    func resume() {
+        continuation?.resume()
+        continuation = nil
     }
 }

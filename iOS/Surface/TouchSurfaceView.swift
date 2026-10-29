@@ -17,6 +17,13 @@ final class TouchSurfaceView: UIView {
     private var lastRawEmitTimeNs: UInt64 = 0
     private var lastEmitContactCount = 0
     private let displayLinkDriver = DisplayLinkDriver()
+    /// Called when the first finger of a touch sequence lands (the haptic engine starts warming up then).
+    var onFirstContactBegan: (() -> Void)?
+    /// Frame times leave the device as time since this launch, not as device uptime (which would identify the
+    /// device across sessions). Only differences matter to the Mac (§4.7 monotonicity, engine timing).
+    static let launchEpochNs = MonotonicClock.nanoseconds()
+    /// Tests pin it to 0 to assert raw event times.
+    var timeEpochNs = TouchSurfaceView.launchEpochNs
 
     override init(frame: CGRect) {
         frameSender = FrameSender(sink: ConsoleFrameSink())
@@ -61,11 +68,9 @@ final class TouchSurfaceView: UIView {
 
     func suspend() {
         displayLinkDriver.stop()
-        contacts.removeAll(); touchFrame.removeAllContacts()
-        touchFrame.isSyntheticLiftoff = true
-        touchFrame.header.sequence = sequence; sequence &+= 1
-        touchFrame.frameTime = MonotonicClock.nanoseconds()
-        frameSender.enqueue(touchFrame)
+        contacts.removeAll()
+        // Same clock domain and monotonic clamp as every other frame (§4.7).
+        emitSyntheticLiftoff(timeNs: MonotonicClock.nanoseconds())
         if let geometry = lastGeometry { renderer.render(touchFrame, mmPerPoint: geometry.mmPerPoint) }
     }
     func resume() { if let screen = window?.screen { displayLinkDriver.start(screen: screen) } }
@@ -126,10 +131,12 @@ final class TouchSurfaceView: UIView {
     // MARK: Ingest API (generic over the sequence so UIKit's `Set<UITouch>` is iterated without copying)
 
     func ingestBegan<S: Sequence>(_ touches: S, at timestamp: TimeInterval) where S.Element: TouchLike {
+        let wasEmpty = contacts.count == 0
         for touch in touches where TouchSample.kind(touch.type) != nil && TouchSample.phase(touch.phase) != nil {
             contacts.insert(touch)
         }
         emitCurrentContacts(timeNs: TouchSample.timestampNanoseconds(timestamp))
+        if wasEmpty, contacts.count > 0 { onFirstContactBegan?() }
     }
 
     func ingestMoved<S: Sequence>(_ touches: S, at timestamp: TimeInterval) where S.Element: TouchLike {
@@ -188,7 +195,6 @@ final class TouchSurfaceView: UIView {
         guard let geometry = lastGeometry, contacts.count > 0 else { return }
         touchFrame.removeAllContacts()
         touchFrame.isSyntheticLiftoff = false
-        touchFrame.header.sequence = sequence
         touchFrame.surfaceIsLandscape = bounds.width > bounds.height
         for index in 0..<LiveContactTable<any TouchLike>.capacity {
             guard let entry = contacts[index], let kind = TouchSample.kind(entry.touch.type) else { continue }
@@ -198,6 +204,7 @@ final class TouchSurfaceView: UIView {
                                              location: location, majorRadius: radius, geometry: geometry))
         }
         guard touchFrame.contactCount > 0 else { return }
+        touchFrame.header.sequence = sequence
         let rawTimeNs = timeNs()
         touchFrame.frameTime = monotonicFrameTime(rawTimeNs)
         sequence &+= 1
@@ -213,17 +220,38 @@ final class TouchSurfaceView: UIView {
     /// dropped frame may be the `ended` phase plus its synthetic lift-off — a phantom finger until the
     /// 1.5 s timeout. Frame times therefore never go backwards: a late sample inherits the last stamp (the
     /// engine then carries its motion into the next frame instead of losing it).
-    private func monotonicFrameTime(_ timeNs: UInt64) -> UInt64 { max(timeNs, lastEmitTimeNs) }
+    private func monotonicFrameTime(_ timeNs: UInt64) -> UInt64 { max(elapsedSinceEpoch(timeNs), lastEmitTimeNs) }
+
+    private func elapsedSinceEpoch(_ timeNs: UInt64) -> UInt64 { timeNs > timeEpochNs ? timeNs - timeEpochNs : 0 }
 
     /// §4.7: the Mac force-releases every held button after 1.5 s without a frame or heartbeat while
     /// contacts are tracked, and UIKit delivers nothing for a finger that holds still. While any contact
     /// is down, a frame with every contact marked `.stationary` goes out at least every 0.5 s.
     /// Runs on the display-link tick; reuses `touchFrame`, so it allocates nothing.
+    ///
+    /// A contact whose UIKit phase already reads `.ended`/`.cancelled` (UIKit never delivered its end, e.g. the
+    /// view left the window mid-touch) is not kept alive as `.stationary`: its terminal phase goes out once and
+    /// the contact is dropped, followed by the lift-off when it was the last one.
     func emitStationaryKeepAliveIfNeeded(now: UInt64 = MonotonicClock.nanoseconds()) {
-        guard contacts.count > 0, now &- lastEmitTimeNs >= 500_000_000 else { return }
+        let elapsed = elapsedSinceEpoch(now)
+        guard contacts.count > 0, elapsed >= lastEmitTimeNs, elapsed - lastEmitTimeNs >= 500_000_000 else { return }
+        var hasTerminal = false
+        for index in 0..<LiveContactTable<any TouchLike>.capacity {
+            if let entry = contacts[index], Self.isTerminal(entry.touch.phase) { hasTerminal = true; break }
+        }
         // The UIKit phase may still read `.began`/`.moved`; `.stationary` keeps the Mac's contact ages intact.
-        emitFrame(timeNs: { now }) { entry in (entry.touch.preciseLocation(in: self), .stationary, entry.touch.majorRadius) }
+        emitFrame(timeNs: { now }) { entry in
+            let phase = entry.touch.phase
+            return (entry.touch.preciseLocation(in: self), Self.isTerminal(phase) ? phase : .stationary, entry.touch.majorRadius)
+        }
+        guard hasTerminal else { return }
+        for index in 0..<LiveContactTable<any TouchLike>.capacity {
+            if let entry = contacts[index], Self.isTerminal(entry.touch.phase) { contacts.remove(entry.touch) }
+        }
+        if contacts.count == 0 { emitSyntheticLiftoff(timeNs: now) }
     }
+
+    private static func isTerminal(_ phase: UITouch.Phase) -> Bool { phase == .ended || phase == .cancelled }
 
     private func emitSyntheticLiftoff(timeNs: UInt64) {
         touchFrame.removeAllContacts()

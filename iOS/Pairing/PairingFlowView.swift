@@ -1,5 +1,6 @@
 import SwiftUI
 import TrackglassKit
+import UIKit
 
 struct PairingFlowView: View {
     @State private var browser = MacBrowser()
@@ -14,6 +15,8 @@ struct PairingFlowView: View {
     @State private var pairing = false
     @State private var status = "Open ‘Pair a device…’ in Trackglass for Mac."
     @State private var exchange: Task<Void, Never>?
+    /// A Mac was paired (either path): the flow closes itself so the phone can connect to it right away.
+    @State private var didPair = false
     @Environment(\.dismiss) private var dismiss
     /// Called once a Mac has been paired, so the caller can connect to it right away.
     private let onPaired: ((PairedPeer) -> Void)?
@@ -59,19 +62,19 @@ struct PairingFlowView: View {
             .navigationTitle("Pair with a Mac")
             .toolbar { Button("Done") { dismiss() } }
         }
-        .sheet(isPresented: $showPIN) {
-            PINEntryView(phoneName: name) { peer in status = "Paired with \(peer.name)"; onPaired?(peer) }
+        .sheet(isPresented: $showPIN, onDismiss: { if didPair { dismiss() } }) {
+            PINEntryView(phoneName: name) { peer in finishPairing(peer) }
         }
         .fullScreenCover(isPresented: $scanner) {
             ZStack(alignment: .topTrailing) {
                 QRScannerView { text in
+                    // Any other QR code is reported by the scanner, which keeps scanning.
+                    guard let url = URL(string: text), let payload = try? PairingPayload(url: url) else { return false }
                     scanner = false
-                    guard let url = URL(string: text), let payload = try? PairingPayload(url: url) else {
-                        status = "This is not a valid Trackglass pairing code."; return
-                    }
                     pending = payload
                     status = "Looking for the Mac’s pairing window…"
                     tryPair()
+                    return true
                 }.ignoresSafeArea()
                 Button("Cancel") { scanner = false }.padding().buttonStyle(.borderedProminent)
             }
@@ -90,6 +93,14 @@ struct PairingFlowView: View {
         }
     }
 
+    private func finishPairing(_ peer: PairedPeer) {
+        status = "Paired with \(peer.name)"
+        didPair = true
+        OnboardingProgress.markCompleted()   // a paired phone never needs the introduction again
+        UIAccessibility.post(notification: .announcement, argument: "Paired with \(peer.name)")
+        onPaired?(peer)
+    }
+
     private func tryPair() {
         guard !pairing, !awaitingLinkConfirmation, let payload = pending,
               let mac = browser.macs.first(where: { $0.instanceName == payload.bonjourInstanceName && $0.isPairing && $0.pairID == payload.pairID }) else { return }
@@ -103,8 +114,8 @@ struct PairingFlowView: View {
             defer { pairing = false; pending = nil }
             do {
                 let peer = try await client.pair(payload: payload, endpoint: mac.endpoint, expectedMacID: mac.peerID, request: request)
-                status = "Paired with \(peer.name)"
-                onPaired?(peer)
+                finishPairing(peer)
+                dismiss()
             } catch is CancellationError { status = "Pairing cancelled." }
             catch { status = error.localizedDescription }
         }

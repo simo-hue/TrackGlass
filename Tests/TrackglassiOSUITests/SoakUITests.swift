@@ -6,15 +6,20 @@ import XCTest
 ///     -destination 'platform=iOS,id=<device>' test TG_SOAK_SECONDS=86400
 /// (a build-setting override; the scheme forwards it to the runner's environment).
 /// The app's own container is used, so onboarding and pairing persist from normal use.
+/// With TG_SOAK_EXPECT_CONNECTED=1 the run also fails if the session is lost: the No-Mac panel must be gone at
+/// every checkpoint (after a 10 s allowance for a reconnect) and at the end.
 final class SoakUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
     }
 
-    func testOneFingerMovesContinuously() throws {
+    // XCUIApplication and its queries are main-actor APIs under Swift 6.
+    @MainActor func testOneFingerMovesContinuously() throws {
         let app = XCUIApplication()
         app.launch()
         let seconds = TimeInterval(ProcessInfo.processInfo.environment["TG_SOAK_SECONDS"] ?? "") ?? 86_400
+        let expectConnected = ProcessInfo.processInfo.environment["TG_SOAK_EXPECT_CONNECTED"] == "1"
+        let noMacPanel = app.descendants(matching: .any)["noMacPanel"]
         let deadline = Date().addingTimeInterval(seconds)
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "Trackglass window did not appear")
@@ -37,9 +42,13 @@ final class SoakUITests: XCTestCase {
             strokes += 1
             if strokes % 500 == 0 {
                 XCTAssertEqual(app.state, .runningForeground, "Trackglass left the foreground after \(strokes) strokes")
+                if expectConnected {
+                    XCTAssertTrue(noMacPanel.waitForNonExistence(timeout: 10), "the Mac session was lost after \(strokes) strokes")
+                }
             }
         }
         XCTAssertEqual(app.state, .runningForeground)
         XCTAssertGreaterThan(strokes, 0)
+        if expectConnected { XCTAssertTrue(noMacPanel.waitForNonExistence(timeout: 10), "the Mac session was lost") }
     }
 }

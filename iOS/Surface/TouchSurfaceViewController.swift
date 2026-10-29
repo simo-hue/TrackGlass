@@ -11,12 +11,15 @@ final class TouchSurfaceViewController: UIViewController {
     let pairingLinks = PairingLinkRouter()
     private let inputSink = UDPFrameSink()
     let connectionState = ConnectionState()
-    lazy var connectionManager = ConnectionManager(state: connectionState, browser: MacBrowser(),
-        session: SessionClient(inputSink: inputSink))
+    private lazy var session = SessionClient(inputSink: inputSink)
+    lazy var connectionManager = ConnectionManager(state: connectionState, browser: MacBrowser(), session: session)
     private let identity = PhoneIdentityStore()
     private var geometry: SurfaceGeometry?
     private var surfaceVisible = false
     private var statusHost: UIHostingController<SessionStatusView>?
+    private var noMacHost: UIViewController?
+    private weak var discoveryHost: UIViewController?
+    private let overlayLayout = OverlayLayout()
     private var tapToClickNoticePending = false
     private var thermalObserver: NSObjectProtocol?
 
@@ -42,16 +45,41 @@ final class TouchSurfaceViewController: UIViewController {
         Task { await connectionManager.connect(to: mac, hello: hello) }
     }
 
+    /// Opens the pairing flow itself (over the Macs sheet, which connects to the new Mac once it is paired).
+    private func openPairing() {
+        pairingLinks.showPairing()
+        if let presented = presentedViewController {
+            guard presented !== discoveryHost else { return }   // the Macs sheet presents the flow by itself
+            dismiss(animated: true) { [weak self] in self?.showDiscoveryIfNeeded() }
+        } else {
+            showDiscoveryIfNeeded()
+        }
+    }
+
+    private func reconnect() {
+        guard let hello = currentHello() else { return }
+        Task { await connectionManager.reconnectNow(hello: hello) }
+    }
+
+    private func sessionChanged() {
+        updateIdleTimer()
+        touchSurface?.accessibilityValue = connectionState.accessibilityStatus
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        connectionState.onSessionChange = { [weak self] in self?.updateIdleTimer() }
+        connectionState.onSessionChange = { [weak self] in self?.sessionChanged() }
+        connectionState.onAnnouncement = { text in UIAccessibility.post(notification: .announcement, argument: text) }
+        touchSurface?.accessibilityValue = connectionState.accessibilityStatus
         connectionState.onTapToClickDisabled = { [weak self] in
             self?.tapToClickNoticePending = true
             self?.showTapToClickNoticeIfNeeded()
         }
         // Container has no gestures; the touch surface and status controls are siblings.
-        let host = UIHostingController(rootView: SessionStatusView(state: connectionState, open: { [weak self] in self?.showDiscoveryIfNeeded() }))
+        let host = UIHostingController(rootView: SessionStatusView(state: connectionState, layout: overlayLayout))
         host.safeAreaRegions = []   // pinned to the safe-area guide already; avoid a second inset
+        // Follows the pill's size (a wrapped notice, the latency overlay) instead of a stale first measurement.
+        host.sizingOptions = .intrinsicContentSize
         addChild(host)
         host.view.backgroundColor = .clear
         // The pill is information only: its hosting view (a band across the top) must never take a touch that
@@ -61,12 +89,11 @@ final class TouchSurfaceViewController: UIViewController {
         view.addSubview(host.view)
         NSLayoutConstraint.activate([
             host.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            host.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            host.view.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -112)
+            host.view.centerXAnchor.constraint(equalTo: view.centerXAnchor)
         ])
         host.didMove(toParent: self)
         statusHost = host
-        let grip = UIHostingController(rootView: GripButton { [weak self] in self?.showSettings() })
+        let grip = UIHostingController(rootView: GripButton(themes: themeStore) { [weak self] in self?.showSettings() })
         grip.safeAreaRegions = []   // pinned to the safe-area guide already; avoid a second inset
         addChild(grip); grip.view.backgroundColor = .clear; grip.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(grip.view)
@@ -76,8 +103,11 @@ final class TouchSurfaceViewController: UIViewController {
             grip.view.widthAnchor.constraint(equalToConstant: 36), grip.view.heightAnchor.constraint(equalToConstant: 36)
         ])
         grip.didMove(toParent: self)
-        let noMac = UIHostingController(rootView: NoMacView(state: connectionState,
-            open: { [weak self] in self?.showDiscoveryIfNeeded() }, connect: { [weak self] mac in self?.connect(mac) }))
+        let noMac = UIHostingController(rootView: NoMacView(state: connectionState, layout: overlayLayout,
+            pair: { [weak self] in self?.openPairing() }, connect: { [weak self] mac in self?.connect(mac) },
+            reconnect: { [weak self] in self?.reconnect() },
+            interactiveChanged: { [weak self] interactive in self?.noMacHost?.view.isUserInteractionEnabled = interactive }))
+        noMacHost = noMac
         noMac.safeAreaRegions = []   // pinned to the safe-area guide already; avoid a second inset
         // The panel's hosting view follows its content's size, so once a Mac is connected (empty content) it
         // shrinks to nothing instead of keeping a stale frame that would swallow surface touches.
@@ -86,8 +116,9 @@ final class TouchSurfaceViewController: UIViewController {
         view.addSubview(noMac.view)
         NSLayoutConstraint.activate([
             noMac.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            noMac.view.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            noMac.view.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -48)
+            noMac.view.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor),
+            noMac.view.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -48),
+            noMac.view.heightAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.heightAnchor, constant: -48)
         ])
         noMac.didMove(toParent: self)
         applyThermalState(ProcessInfo.processInfo.thermalState)
@@ -97,9 +128,16 @@ final class TouchSurfaceViewController: UIViewController {
             }
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        overlayLayout.update(size: CGSize(width: view.bounds.width, height: view.safeAreaLayoutGuide.layoutFrame.height))
+    }
+
     override func loadView() {
         let surface = TouchSurfaceView(frame: .zero, sink: inputSink)
         touchSurface = surface
+        // The first finger down warms the haptic engine up, so the Mac's first haptic is not late.
+        surface.onFirstContactBegan = { [weak self] in self?.session.prewarmHaptics() }
         surface.applyTheme(themeStore.theme)
         themeStore.onChange = { [weak surface] theme in surface?.applyTheme(theme) }
         surface.geometryDidChange = { [weak self] geometry in
@@ -137,8 +175,8 @@ final class TouchSurfaceViewController: UIViewController {
         surfaceVisible = true
         updateIdleTimer()
         showTapToClickNoticeIfNeeded()
-        if !UserDefaults.standard.bool(forKey: "onboardingCompleted"), pairingLinks.presentation == nil,
-           ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+        if pairingLinks.presentation == nil, ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+           !OnboardingProgress.isCompleted(hasPairedMacs: { (try? PairingStore().all().isEmpty == false) ?? false }) {
             showOnboarding(); return
         }
         guard (!hasPresentedDiscovery || pairingLinks.presentation != nil),
@@ -179,7 +217,9 @@ final class TouchSurfaceViewController: UIViewController {
     private func showOnboarding() {
         guard presentedViewController == nil else { return }
         let host = UIHostingController(rootView: OnboardingView { [weak self] in
-            UserDefaults.standard.set(true, forKey: "onboardingCompleted")
+            OnboardingProgress.markCompleted()
+            // "Pair a Mac" opens the pairing flow itself, not a list the user has to tap through first.
+            self?.pairingLinks.showPairing()
             self?.dismiss(animated: true) { [weak self] in self?.showDiscoveryIfNeeded() }
         })
         host.modalPresentationStyle = .fullScreen
@@ -189,7 +229,8 @@ final class TouchSurfaceViewController: UIViewController {
     private func showSettings() {
         guard presentedViewController == nil else { return }
         let sheet = UIHostingController(rootView: SettingsSheet(themes: themeStore, connection: connectionState, manager: connectionManager, connect: { [weak self] mac in self?.connect(mac) },
-            openMacs: { [weak self] in
+            openPairing: { [weak self] in
+                self?.pairingLinks.showPairing()
                 self?.dismiss(animated: true) { [weak self] in self?.showDiscoveryIfNeeded() }
             }, startRecording: { [weak self] in
                 guard let self, let geometry = self.geometry, let sender = self.touchSurface?.frameSender else { throw CocoaError(.coderValueNotFound) }
@@ -209,8 +250,10 @@ final class TouchSurfaceViewController: UIViewController {
             await connectionManager.startDiscovery()
             await connectionManager.refreshPairedMacs()
         }
-        present(UIHostingController(rootView: MacDiscoveryView(state: connectionState, manager: connectionManager,
-            connect: { [weak self] mac in self?.connect(mac) }, links: pairingLinks)), animated: true)
+        let discovery = UIHostingController(rootView: MacDiscoveryView(state: connectionState, manager: connectionManager,
+            connect: { [weak self] mac in self?.connect(mac) }, links: pairingLinks))
+        discoveryHost = discovery
+        present(discovery, animated: true)
     }
 
     private func showTapToClickNoticeIfNeeded() {
@@ -240,14 +283,15 @@ final class TouchSurfaceViewController: UIViewController {
 
 private struct SessionStatusView: View {
     @Bindable var state: ConnectionState
-    let open: () -> Void
+    let layout: OverlayLayout
     @AppStorage("showsHUD") private var showsHUD = true
     @AppStorage("showsLatencyOverlay") private var showsLatencyOverlay = false
     @State private var visible = true
     var body: some View {
         VStack(spacing: 8) {
             if showsHUD && visible {
-                Text(state.notice ?? (state.isConnected ? "\(state.macName) · \(String(format: "%.1f", Double(state.rttMicros) / 2_000)) ms" : state.status))
+                // "—" until the first round trip has been measured, never a made-up "0.0 ms".
+                Text(state.pillText)
                     .font(.caption).multilineTextAlignment(.center).padding(8)
                     .background(.ultraThinMaterial, in: Capsule())
             }
@@ -255,6 +299,7 @@ private struct SessionStatusView: View {
                 LatencyOverlay(state: state)
             }
         }
+        .frame(width: layout.statusWidth)
         .allowsHitTesting(false)
         .task(id: state.status + (state.notice ?? "")) {
             visible = true

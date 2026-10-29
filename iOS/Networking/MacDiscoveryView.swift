@@ -1,5 +1,6 @@
 import SwiftUI
 import TrackglassKit
+import UIKit
 
 struct MacDiscoveryView: View {
     @Bindable var state: ConnectionState
@@ -8,6 +9,8 @@ struct MacDiscoveryView: View {
     @Bindable var links: PairingLinkRouter
     @Environment(\.dismiss) private var dismiss
     @State private var justPaired: UUID?
+    @State private var viewer = UUID()
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         NavigationStack {
@@ -23,9 +26,18 @@ struct MacDiscoveryView: View {
                 Section("Paired Macs") {
                     MacsListView(state: state, manager: manager, connect: connect, pair: { links.showPairing() })
                 }
-                if state.macs.isEmpty {
+                if state.localNetworkDenied {
+                    Section {
+                        Text(MacBrowser.localNetworkOffStatus).font(.headline)
+                        Text("Trackglass needs Local Network access to find your Mac.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Open Settings") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                        }
+                    }
+                } else if state.macs.isEmpty {
                     Text(state.discoveryStatus)
-                    if state.discoveryStatus.hasPrefix("Discovery waiting") || state.discoveryStatus.hasPrefix("Discovery failed") {
+                    if state.discoveryStatus.hasPrefix("Discovery failed") {
                         Text("Allow Local Network access for Trackglass in Settings → Privacy & Security → Local Network.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
@@ -50,6 +62,12 @@ struct MacDiscoveryView: View {
         }) { item in
             PairingFlowView(payload: item.payload) { justPaired = $0.peerID }
         }
-        .onAppear { Task { await manager.startDiscovery(); await manager.refreshPairedMacs() } }
+        .onAppear {
+            Task {
+                await manager.setDiscoveryVisible(true, viewer: viewer)
+                await manager.startDiscovery(); await manager.refreshPairedMacs()
+            }
+        }
+        .onDisappear { Task { await manager.setDiscoveryVisible(false, viewer: viewer) } }
     }
 }

@@ -19,6 +19,11 @@ actor ConnectionManager {
     private var reconnectEnabled = false
     private var foreground = true
     private var callbacksInstalled = false
+    /// Discovery has been asked for once (launch resume, the Macs sheet, a connect); from then on the browser runs
+    /// whenever it is needed: no session, or a Macs list on screen.
+    private var discoveryActive = false
+    /// Macs lists currently on screen (the Macs sheet, Settings → Mac); each keeps the browser running.
+    private var discoveryViewers: Set<UUID> = []
 
     init(state: ConnectionState, browser: MacBrowser, session: SessionClient, defaults: UserDefaults = .standard) {
         self.state = state
@@ -31,7 +36,7 @@ actor ConnectionManager {
     /// (fresh install, or the last Mac was forgotten), in which case the caller offers discovery.
     func resumeLastMac(hello: HelloMessage) async -> Bool {
         await installCallbacks()
-        await browser.start()
+        await startBrowser()
         // §5.1: Settings → Mac and the No-Mac overlay list every paired Mac from launch on, not only after the
         // Macs sheet has been opened once.
         await refreshPairedMacs()
@@ -51,8 +56,46 @@ actor ConnectionManager {
 
     func startDiscovery() async {
         await installCallbacks()
-        await browser.start()
+        await startBrowser()
         await refreshState()
+    }
+
+    /// perf: `_trackglass._tcp` browsing is multicast traffic; while a session is up it only runs for a Macs list
+    /// on screen. `visible` is reported by each list's appear/disappear.
+    func setDiscoveryVisible(_ visible: Bool, viewer: UUID) async {
+        if visible { discoveryViewers.insert(viewer) } else { discoveryViewers.remove(viewer) }
+        await updateBrowserDemand(connected: session.isConnected)
+    }
+
+    /// The No-Mac panel's Reconnect: re-arms automatic reconnection to the last Mac after it stopped (a failed
+    /// manual connect, a user disconnect).
+    func reconnectNow(hello: HelloMessage) async {
+        await installCallbacks()
+        await startBrowser()
+        if lastPeer == nil, let stored = defaults.string(forKey: Self.lastMacKey), let id = UUID(uuidString: stored),
+           let peer = try? pairStore.load(peerID: id) {
+            lastPeer = peer
+        }
+        guard lastPeer != nil, !(await session.isConnected) else { return }
+        lastHello = hello
+        reconnectEnabled = true
+        // The user asked: the previous final answer (BYE unpaired / disconnected on the Mac) no longer stands.
+        await session.clearFinalClose()
+        startReconnectLoop()
+        await refreshState()
+    }
+
+    private func startBrowser() async {
+        discoveryActive = true
+        await browser.start()
+    }
+
+    private func updateBrowserDemand(connected: Bool) async {
+        guard discoveryActive else { return }
+        // Not in the background (no multicast before suspension; `sceneDidBecomeActive` resumes it), not while a
+        // session is up and nobody looks at the list. `resume`, not `start`: a failed browser restarts on its own
+        // 1 s schedule instead of in a tight loop driven by its own status change.
+        if !foreground || (connected && discoveryViewers.isEmpty) { await browser.pause() } else { await browser.resume() }
     }
 
     func refreshPairedMacs() async {
@@ -66,7 +109,7 @@ actor ConnectionManager {
 
     func connect(to mac: DiscoveredMac, hello: HelloMessage) async {
         await installCallbacks()
-        await browser.start()
+        await startBrowser()
         do {
             guard let peer = try pairStore.load(peerID: mac.peerID) else {
                 await state.updateSession(isConnected: false, status: "Pair again", macName: mac.name,
@@ -86,7 +129,7 @@ actor ConnectionManager {
             // the background must not switch automatic reconnection off behind the user's back.
             guard current else { return }
             reconnectEnabled = connected
-            if connected { await refreshState() }
+            await refreshState()   // also after a failure: the panel stops showing "Reconnecting" and offers Reconnect
         } catch {
             await state.updateSession(isConnected: false, status: "Cannot read paired Macs: \(error.localizedDescription)",
                                       macName: mac.name, rttMicros: 0, settings: nil)
@@ -130,7 +173,8 @@ actor ConnectionManager {
         reconnectTask?.cancel()
         reconnectTask = nil
         if await session.status.hasPrefix("Connecting to ") { reconnectEnabled = true }
-        await session.disconnect(reason: 0)
+        // Returns once the BYE has left (or after 1 s), so the caller's background task ends right after it.
+        await session.disconnectAndWait(reason: 0)
         await refreshState()
     }
 
@@ -155,11 +199,11 @@ actor ConnectionManager {
     }
 
     private func connectionClosed() async {
-        await refreshState()
         // A Mac that forgot this phone (BYE unpaired), or speaks another protocol version, cannot be reached by retrying.
-        if await session.lastCloseWasFinal { reconnectEnabled = false; return }
+        if await session.lastCloseWasFinal { reconnectEnabled = false }
         // The session is known to be closed: always (re)start a loop; a finished loop's stale handle must not block it.
-        if reconnectEnabled && foreground { startReconnectLoop() }
+        else if reconnectEnabled && foreground { startReconnectLoop() }
+        await refreshState()
     }
 
     /// Every `session.connect` goes through here; `current` is false when a newer attempt (or a disconnect or the
@@ -223,11 +267,16 @@ actor ConnectionManager {
     }
 
     private func refreshState() async {
-        let macs = await browser.macs
-        let discoveryStatus = await browser.status
         // One hop for the whole session state; `apply` drops a snapshot overtaken by a newer one.
         let snapshot = await session.snapshot()
-        await state.updateDiscovery(macs: macs, pairedMacs: pairedMacs, status: discoveryStatus)
-        await state.apply(snapshot)
+        await updateBrowserDemand(connected: snapshot.isConnected)
+        let macs = await browser.macs
+        let discoveryStatus = await browser.status
+        let localNetworkDenied = await browser.localNetworkDenied
+        // Reconnection is wanted and still possible: the panel stays passive ("Reconnecting to …") meanwhile.
+        let reconnecting = reconnectEnabled && lastPeer != nil && !snapshot.isConnected && !snapshot.lastCloseWasFinal
+        await state.updateDiscovery(macs: macs, pairedMacs: pairedMacs, status: discoveryStatus,
+                                    localNetworkDenied: localNetworkDenied)
+        await state.apply(snapshot, isReconnecting: reconnecting)
     }
 }

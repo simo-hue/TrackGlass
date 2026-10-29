@@ -43,6 +43,7 @@ final class TouchSurfaceTests: XCTestCase {
         let sink = CapturingSink()
         let surface = TouchSurfaceView(frame: CGRect(x: 0, y: 0, width: 393, height: 852), sink: sink)
         surface.coalescedSamplesEnabled = false
+        surface.timeEpochNs = 0   // assert raw event times; `testFrameTimesAreTimeSinceTheLaunchEpoch` covers the offset
         surface.updateGeometry(geometry)
         return (surface, sink)
     }
@@ -195,5 +196,71 @@ final class TouchSurfaceTests: XCTestCase {
         XCTAssertEqual(frames[1].contactCount, 2)
         XCTAssertEqual(frames[1][0].phase, .cancelled)
         XCTAssertTrue(frames[2].isSyntheticLiftoff)
+    }
+
+    func testFrameTimesAreTimeSinceTheLaunchEpoch() {
+        let (surface, sink) = makeSurface()
+        surface.timeEpochNs = 9_000_000_000
+        let touch = FakeTouch(at: CGPoint(x: 60, y: 60))
+        surface.ingestBegan([touch], at: 10.0)
+        surface.emitStationaryKeepAliveIfNeeded(now: 10_300_000_000)   // 300 ms after the last frame: too early
+        surface.emitStationaryKeepAliveIfNeeded(now: 10_600_000_000)
+        touch.phase = .ended
+        surface.ingestEnded([touch], at: 10.75)
+        let frames = sink.settle(expecting: 4)
+        XCTAssertEqual(frames.map(\.frameTime), [1_000_000_000, 1_600_000_000, 1_750_000_000, 1_750_000_000],
+                       "uptime never leaves the device; keep-alive cadence and monotonicity are unchanged")
+        XCTAssertTrue(frames[3].isSyntheticLiftoff)
+        // Anything stamped before the epoch is clamped to 0 instead of wrapping around.
+        let (early, earlySink) = makeSurface()
+        early.timeEpochNs = 20_000_000_000
+        early.ingestBegan([FakeTouch(at: CGPoint(x: 5, y: 5))], at: 19.5)
+        XCTAssertEqual(earlySink.settle(expecting: 1).first?.frameTime, 0)
+        XCTAssertGreaterThan(TouchSurfaceView.launchEpochNs, 0)
+    }
+
+    func testKeepAliveSendsAnUndeliveredEndOnceAndLiftsOff() {
+        let (surface, sink) = makeSurface()
+        let touch = FakeTouch(at: CGPoint(x: 60, y: 60))
+        surface.ingestBegan([touch], at: 100.0)
+        touch.phase = .cancelled   // UIKit cancelled the touch but never called touchesCancelled
+        surface.emitStationaryKeepAliveIfNeeded(now: 100_600_000_000)
+        surface.emitStationaryKeepAliveIfNeeded(now: 101_200_000_000)   // nothing is down any more
+        let frames = sink.settle(expecting: 3)
+        XCTAssertEqual(frames.count, 3, "began, the terminal phase once, lift-off; no phantom keep-alives")
+        XCTAssertEqual(frames[1][0].phase, .cancelled)
+        XCTAssertTrue(frames[2].isSyntheticLiftoff)
+        XCTAssertGreaterThanOrEqual(frames[2].frameTime, frames[1].frameTime)
+    }
+
+    func testKeepAliveDropsOnlyTheEndedContact() {
+        let (surface, sink) = makeSurface()
+        let held = FakeTouch(at: CGPoint(x: 60, y: 60)), lifted = FakeTouch(at: CGPoint(x: 160, y: 60))
+        surface.ingestBegan([held, lifted], at: 110.0)
+        lifted.phase = .ended
+        surface.emitStationaryKeepAliveIfNeeded(now: 110_600_000_000)
+        surface.emitStationaryKeepAliveIfNeeded(now: 111_200_000_000)
+        let frames = sink.settle(expecting: 3)
+        XCTAssertEqual(frames.count, 3, "no lift-off while a finger is still down")
+        XCTAssertEqual(frames[1].contactCount, 2)
+        XCTAssertEqual(Set((0..<2).map { frames[1][$0].phase }), [.stationary, .ended])
+        XCTAssertEqual(frames[2].contactCount, 1)
+        XCTAssertEqual(frames[2][0].phase, .stationary)
+        XCTAssertFalse(frames[2].isSyntheticLiftoff)
+    }
+
+    func testFirstContactOfASequenceIsReportedOnce() {
+        let (surface, _) = makeSurface()
+        var began = 0
+        surface.onFirstContactBegan = { began += 1 }
+        let first = FakeTouch(at: CGPoint(x: 10, y: 10)), second = FakeTouch(at: CGPoint(x: 90, y: 10))
+        surface.ingestBegan([first], at: 120.0)
+        surface.ingestBegan([second], at: 120.1)
+        XCTAssertEqual(began, 1, "a second finger joining is not a new sequence")
+        first.phase = .ended; second.phase = .ended
+        surface.ingestEnded([first, second], at: 120.2)
+        first.phase = .began
+        surface.ingestBegan([first], at: 121.0)
+        XCTAssertEqual(began, 2)
     }
 }

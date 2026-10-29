@@ -46,17 +46,44 @@ struct DiscoveredMac: Identifiable, Sendable {
 final class MacBrowser {
     private(set) var macs: [DiscoveredMac] = []
     private(set) var status = "Looking for Macs…"
+    /// The browser is blocked by the Local Network privacy setting (DNS-SD `kDNSServiceErr_PolicyDenied`).
+    private(set) var localNetworkDenied = false
     private var browser: NWBrowser?
+    /// Results kept across `pause()` until the new browser has had a chance to report (see `start()`).
+    private var resultsAreStale = false
     private var onChange: (@MainActor @Sendable () -> Void)?
 
     func setOnChange(_ handler: (@MainActor @Sendable () -> Void)?) { onChange = handler }
 
-    /// True between `start()` and `stop()`; a restart after a failure only happens while the owner still wants results.
+    /// True between `start()` and `stop()`/`pause()`; a restart after a failure only happens while the owner still wants
+    /// results (the failure path keeps it set and restarts after its own 1 s delay).
     private var running = false
+    /// Identifies the `start()` a stale-results timer belongs to, so an older timer never clears a newer list.
+    private var staleGeneration = 0
+
+    /// Starts browsing if it is not wanted already; a browser that failed restarts on its own schedule.
+    func resume() {
+        guard !running else { return }
+        start()
+    }
 
     func start() {
         running = true
         guard browser == nil else { return }
+        if !macs.isEmpty {
+            // Results kept by `pause()` let a reconnect start at once; drop them if the new browser stays silent
+            // (no callback is made for an empty result set), so a Mac that left is not listed forever.
+            resultsAreStale = true
+            staleGeneration &+= 1
+            let generation = staleGeneration
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(2))
+                guard let self, self.staleGeneration == generation, self.resultsAreStale, self.browser != nil else { return }
+                self.resultsAreStale = false
+                self.macs = []
+                self.onChange?()
+            }
+        }
         let parameters = NWParameters.tcp
         parameters.includePeerToPeer = true
         parameters.prohibitedInterfaceTypes = [.cellular]
@@ -69,6 +96,7 @@ final class MacBrowser {
             }
             Task { @MainActor in
                 guard let self, let browser, self.browser === browser else { return }
+                self.resultsAreStale = false
                 var byInstance: [String: DiscoveredMac] = [:]
                 for mac in macs { byInstance[mac.instanceName] = mac }
                 self.macs = byInstance.values.sorted { $0.instanceName < $1.instanceName }
@@ -79,10 +107,15 @@ final class MacBrowser {
             Task { @MainActor in
                 guard let self, let browser, self.browser === browser else { return }
                 switch state {
-                case .ready: self.status = "Looking for Macs…"
-                case .waiting(let error): self.status = "Discovery waiting: \(error.localizedDescription)"
+                case .ready:
+                    self.status = "Looking for Macs…"; self.localNetworkDenied = false
+                case .waiting(let error):
+                    self.localNetworkDenied = Self.isLocalNetworkDenial(error)
+                    self.status = Self.waitingStatus(for: error)
                 case .failed(let error):
-                    self.status = "Discovery failed: \(error.localizedDescription)"
+                    self.localNetworkDenied = Self.isLocalNetworkDenial(error)
+                    self.status = self.localNetworkDenied ? Self.waitingStatus(for: error)
+                        : "Discovery failed: \(error.localizedDescription)"
                     self.restartAfterFailure(browser)
                 default: return
                 }
@@ -93,10 +126,31 @@ final class MacBrowser {
     }
 
     func stop() {
+        pause()
+        macs = []
+    }
+
+    /// Stops browsing (no multicast traffic while a session is up) but keeps the last results, so the reconnect
+    /// loop can try the Mac at once when the session drops and `start()` is called again.
+    func pause() {
         running = false
+        resultsAreStale = false
         browser?.cancel()
         browser = nil
-        macs = []
+    }
+
+    /// `kDNSServiceErr_PolicyDenied`: the user turned Local Network access off for Trackglass.
+    nonisolated static func isLocalNetworkDenial(_ error: NWError) -> Bool {
+        if case .dns(let code) = error { return Int(code) == -65570 }
+        return false
+    }
+
+    nonisolated static let localNetworkOffStatus = "Local Network access is off"
+    nonisolated static let noWiFiStatus = "Connect to Wi-Fi to find your Mac"
+
+    /// `.waiting` other than a privacy denial means there is no usable network (no Wi-Fi) for Bonjour.
+    nonisolated static func waitingStatus(for error: NWError) -> String {
+        isLocalNetworkDenial(error) ? localNetworkOffStatus : noWiFiStatus
     }
 
     /// `.failed` is terminal for an `NWBrowser` (e.g. its DNS-SD connection went defunct while the app was

@@ -49,3 +49,18 @@ struct OnboardingView: View {
         }
     }
 }
+
+/// Whether the introduction still has to be shown. A phone that has paired a Mac — through the flow, a pairing link
+/// or a code, or before an update that introduced the flag — never sees it again.
+enum OnboardingProgress {
+    static let key = "onboardingCompleted"
+
+    static func isCompleted(defaults: UserDefaults = .standard, hasPairedMacs: () -> Bool) -> Bool {
+        if defaults.bool(forKey: key) { return true }
+        guard hasPairedMacs() else { return false }
+        markCompleted(defaults: defaults)
+        return true
+    }
+
+    static func markCompleted(defaults: UserDefaults = .standard) { defaults.set(true, forKey: key) }
+}

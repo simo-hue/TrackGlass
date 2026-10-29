@@ -9,6 +9,10 @@ final class SurfaceRenderer {
     private let halos = (0..<10).map { _ in CAGradientLayer() }
     private var identifiers = [UInt8?](repeating: nil, count: 10)
     private var seen = [Bool](repeating: false, count: 10)
+    /// Last position given to each halo: an unchanged one is not written again (no layer change, no commit work).
+    private var positions = [CGPoint](repeating: .zero, count: 10)
+    /// The frame drawn last; the display link renders the same frame on every tick while nothing changes.
+    private var renderedSequence: UInt32?
     private var theme = Theme.preset(.glassBlack)
     /// SPEC §5.9: thermal state `.serious` or worse renders no halos; touch delivery is unaffected.
     private(set) var halosSuppressed = false
@@ -36,6 +40,7 @@ final class SurfaceRenderer {
     }
     func apply(_ theme: Theme) {
         self.theme = theme
+        renderedSequence = nil
         CATransaction.begin(); CATransaction.setDisableActions(true)
         if theme.background == .aluminum {
             background.colors = [0xD9D9DE, 0xBFBFC4, 0xD4D4D9].map { Theme.color(UInt32($0)).cgColor }
@@ -50,6 +55,7 @@ final class SurfaceRenderer {
         CATransaction.commit()
     }
     func layout(bounds: CGRect, mmPerPoint: Double) {
+        renderedSequence = nil   // halo positions depend on the scale
         CATransaction.begin(); CATransaction.setDisableActions(true)
         background.frame = theme.background == .aluminum ? bounds.insetBy(dx: 8, dy: 8) : bounds
         noise.frame = background.bounds
@@ -70,6 +76,7 @@ final class SurfaceRenderer {
     func setHalosSuppressed(_ suppressed: Bool) {
         guard suppressed != halosSuppressed else { return }
         halosSuppressed = suppressed
+        renderedSequence = nil
         guard suppressed else { return }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         for index in identifiers.indices {
@@ -79,26 +86,36 @@ final class SurfaceRenderer {
         }
         CATransaction.commit()
     }
+    /// One transaction per tick with implicit animations off (only the lift fade animates), and nothing at all
+    /// when the frame was already drawn or no halo is involved.
     func render(_ frame: TouchFrame, mmPerPoint: Double) {
+        let sequence = frame.header.sequence
+        if renderedSequence == sequence { return }
+        renderedSequence = sequence
+        var anyHalo = false
+        for identifier in identifiers where identifier != nil { anyHalo = true; break }
+        if frame.contactCount == 0 && !anyHalo { return }
         for index in seen.indices { seen[index] = false }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
         if theme.fingerGlow != .none && !halosSuppressed {
             for index in 0..<frame.contactCount {
                 let contact = frame[index]
                 guard contact.kind == .finger, contact.phase != .ended, contact.phase != .cancelled else { continue }
                 guard let slot = identifiers.firstIndex(where: { $0 == contact.contactID }) ?? identifiers.firstIndex(where: { $0 == nil }) else { continue }
-                if identifiers[slot] == nil { halos[slot].removeAnimation(forKey: "opacity") }
+                let isNew = identifiers[slot] == nil
+                if isNew { halos[slot].removeAnimation(forKey: "opacity") }
                 identifiers[slot] = contact.contactID; seen[slot] = true
-                CATransaction.begin(); CATransaction.setDisableActions(true)
-                halos[slot].position = CGPoint(x: Double(contact.x) / mmPerPoint, y: Double(contact.y) / mmPerPoint)
-                halos[slot].opacity = 1
-                CATransaction.commit()
+                let position = CGPoint(x: Double(contact.x) / mmPerPoint, y: Double(contact.y) / mmPerPoint)
+                if isNew || position != positions[slot] { halos[slot].position = position; positions[slot] = position }
+                if isNew { halos[slot].opacity = 1 }
             }
         }
         for index in seen.indices where !seen[index] && identifiers[index] != nil {
             identifiers[index] = nil
-            CATransaction.begin(); CATransaction.setAnimationDuration(0.22)
+            CATransaction.begin(); CATransaction.setDisableActions(false); CATransaction.setAnimationDuration(0.22)
             halos[index].opacity = 0
             CATransaction.commit()
         }
+        CATransaction.commit()
     }
 }
