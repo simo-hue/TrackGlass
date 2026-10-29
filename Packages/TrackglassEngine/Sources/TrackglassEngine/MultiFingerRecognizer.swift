@@ -57,21 +57,24 @@ struct MultiFingerRecognizer {
             }
             return
         }
+        // The `.began` event carries the travel since the fingers landed, not just the locking frame's: the
+        // 6–8 mm it takes to lock the axis is part of the swipe, so 110 mm is exactly one Space (§10.3 C7).
+        let first = kind == nil
         let delta: Double
         switch axis {
         case .horizontal:
             guard horizontal == 2 else { return }
-            delta = -dx / 110
+            delta = -(first ? totalX : dx) / 110
         case .vertical:
             let preference = fingerCount == 3 ? settings.threeFingerVerticalGesture : settings.fourFingerVerticalGesture
             guard preference == 2,
                   kind != nil || (totalY < 0 ? settings.missionControlEnabled : settings.appExposeEnabled) else { return }
-            delta = -dy / 60
+            delta = -(first ? totalY : dy) / 60
         case .pinch:
             let preference = fingerCount == 4 ? settings.fourFingerPinchGesture : settings.fiveFingerPinchGesture
             guard preference == 2,
                   kind != nil || (sample.radius < start.radius ? settings.launchpadEnabled : settings.showDesktopEnabled) else { return }
-            delta = dr / 40
+            delta = (first ? sample.radius - start.radius : dr) / 40
         }
         guard delta != 0 else { return }
         events.append(.dockSwipe(kind: axis, progressDelta: delta, phase: kind == nil ? .began : .changed, exitVelocity: 0))
