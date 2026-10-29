@@ -23,6 +23,9 @@ final class ConnectionState {
     private(set) var pairedMacs: [PairedPeer] = []
     /// The Mac the app connects to automatically (§3.5 "last used Mac"); drives the `.noMac` overlay text.
     private(set) var lastMacName = ""
+    private(set) var lastMacPeerID: UUID?
+    /// The last outcome VoiceOver heard while nothing connected: retries repeat the same answer every few seconds.
+    private var lastOutcomeAnnouncement: String?
     /// Something is (re)connecting by itself: the No-Mac panel shows a passive label instead of buttons a finger
     /// still on the surface could hit.
     private(set) var isReconnecting = false
@@ -39,6 +42,8 @@ final class ConnectionState {
         appliedSnapshot = snapshot.sequence
         let wasReconnecting = self.isReconnecting
         self.isReconnecting = isReconnecting && !snapshot.isConnected
+        // A retry the user started (Reconnect, Connect): its outcome is news even if it repeats the last one.
+        if !wasReconnecting && self.isReconnecting { lastOutcomeAnnouncement = nil }
         updateSession(wasReconnecting: wasReconnecting,
                       isConnected: snapshot.isConnected, status: snapshot.status, macName: snapshot.macName,
                       rttMicros: snapshot.rttMicros, settings: snapshot.settings,
@@ -70,8 +75,15 @@ final class ConnectionState {
                                         previousStatus: previousStatus, status: status,
                                         macName: macName.isEmpty ? previousMac : macName,
                                         wasReconnecting: wasReconnecting ?? isReconnecting, isReconnecting: isReconnecting) {
-            onAnnouncement?(text)
+            if isConnected || wasConnected {
+                lastOutcomeAnnouncement = nil
+                onAnnouncement?(text)
+            } else if text != lastOutcomeAnnouncement {
+                lastOutcomeAnnouncement = text
+                onAnnouncement?(text)
+            }
         }
+        if isConnected { lastOutcomeAnnouncement = nil }
         if isConnected, settings?.tapToClick == 0 { onTapToClickDisabled?() }
         onSessionChange?()
     }
@@ -87,7 +99,12 @@ final class ConnectionState {
         if let localNetworkDenied { self.localNetworkDenied = localNetworkDenied }
     }
 
-    func updateLastMac(name: String) { lastMacName = name }
+    func updateLastMac(name: String, peerID: UUID? = nil) { lastMacName = name; lastMacPeerID = peerID }
+    /// The last used Mac is in the Bonjour results (it answers; the panel says "Reconnecting", not "Looking for").
+    var lastMacIsListed: Bool {
+        guard let lastMacPeerID else { return false }
+        return macs.contains { !$0.isPairing && $0.peerID == lastMacPeerID }
+    }
     func showNotice(_ text: String) { notice = text }
 
     /// The status line shown by the HUD pill: the notice, else "<Mac> · <one-way> ms" once a round trip has been
@@ -110,7 +127,9 @@ final class ConnectionState {
     }
 
     /// What VoiceOver hears when the session changes: connects and drops always, a final outcome once — when
-    /// nothing retries any more (§8.10). Attempts made while reconnecting stay silent.
+    /// nothing retries any more (§8.10). Attempts made while reconnecting stay silent, except an answer the user
+    /// can act on while the phone keeps trying (the Mac is in use elsewhere, Pair again); `updateSession` says each
+    /// outcome once until something connects.
     nonisolated static func announcement(wasConnected: Bool, isConnected: Bool, previousStatus: String, status: String,
                                          macName: String, wasReconnecting: Bool, isReconnecting: Bool) -> String? {
         let name = macName.isEmpty ? "the Mac" : macName
@@ -120,7 +139,12 @@ final class ConnectionState {
             guard let outcome = outcome(for: status, macName: macName) else { return "Disconnected from \(name)" }
             return "Disconnected from \(name). \(outcome)"
         }
-        guard !isReconnecting, status != previousStatus || wasReconnecting else { return nil }
+        if isReconnecting {
+            guard status != previousStatus,
+                  status == ControlCloseMessage.pairAgain || status.contains(" is being used by ") else { return nil }
+            return outcome(for: status, macName: macName)
+        }
+        guard status != previousStatus || wasReconnecting else { return nil }
         return outcome(for: status, macName: macName)
     }
 
@@ -130,7 +154,7 @@ final class ConnectionState {
         let mac = macName.isEmpty ? "The Mac" : macName
         switch status {
         case "", "No Mac connected", "Disconnected": return nil
-        case _ where status.hasPrefix("Connecting to") || status.hasPrefix("Connected to"): return nil
+        case _ where status.hasPrefix("Connecting to") || status.hasPrefix("Connected to") || status.hasPrefix("Reconnecting to"): return nil
         case ControlCloseMessage.incompatible:
             return "This version of Trackglass doesn't match the one on \(mac). Update both apps, then reconnect."
         case "Invalid control message":

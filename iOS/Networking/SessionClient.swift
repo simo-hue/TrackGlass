@@ -118,7 +118,10 @@ final class SessionClient {
                     self.connectContinuation?.resume(returning: true)
                     self.connectContinuation = nil
                 case 1:
-                    channel.close("\(welcome.macName) is being used by \(welcome.activePhoneName)")
+                    // An empty name: busy with this very phone — the Mac has not released its previous, silent session
+                    // yet (§3.5, released after 1.5 s). The retry joins; nothing for the user to do (§4.5, 2026-10-29).
+                    channel.close(welcome.activePhoneName.isEmpty ? "Reconnecting to \(welcome.macName)…"
+                                  : "\(welcome.macName) is being used by \(welcome.activePhoneName)")
                 case 3: self.lastCloseWasFinal = true; channel.close(ControlCloseMessage.pairAgain)
                 default: self.lastCloseWasFinal = true; channel.close(ControlCloseMessage.incompatible)
                 }

@@ -113,7 +113,8 @@ struct NoMacView: View {
                 }
                 .accessibilityElement(children: .combine)
             } else {
-                Text(Self.headline(lastMacName: state.lastMacName, isReconnecting: state.isReconnecting, passive: false))
+                Text(Self.headline(lastMacName: state.lastMacName, isReconnecting: state.isReconnecting, passive: false,
+                                   lastMacListed: state.lastMacIsListed))
                     .font(.headline).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
                 if state.localNetworkDenied {
@@ -133,7 +134,9 @@ struct NoMacView: View {
                     Text(detail).font(.subheadline).foregroundStyle(.secondary)
                         .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                 }
-                if !state.isReconnecting, !state.lastMacName.isEmpty {
+                // Pair again is offered even while the phone still retries: only pairing can fix a refused key (§3.2).
+                if !state.lastMacName.isEmpty,
+                   !state.isReconnecting || ConnectionState.panelAction(for: state.status) == .pair {
                     switch ConnectionState.panelAction(for: state.status) {
                     case .reconnect: Button("Reconnect", action: reconnect).buttonStyle(.borderedProminent)
                     case .pair: Button("Pair again", action: pair).buttonStyle(.borderedProminent)
@@ -155,11 +158,12 @@ struct NoMacView: View {
         }
     }
 
-    /// "Reconnecting to X…" while a reconnect runs (passive), "Looking for X…" once the panel is interactive but
-    /// the phone still retries, "Not connected to X" when nothing retries.
-    nonisolated static func headline(lastMacName: String, isReconnecting: Bool, passive: Bool) -> String {
+    /// "Reconnecting to X…" while a reconnect runs (passive) or the phone retries a Mac it can see, "Looking for X…"
+    /// while it retries one that is not in range, "Not connected to X" when nothing retries.
+    nonisolated static func headline(lastMacName: String, isReconnecting: Bool, passive: Bool,
+                                     lastMacListed: Bool = false) -> String {
         guard !lastMacName.isEmpty else { return "No Mac connected" }
-        if passive { return "Reconnecting to \(lastMacName)…" }
+        if passive || (isReconnecting && lastMacListed) { return "Reconnecting to \(lastMacName)…" }
         return isReconnecting ? "Looking for \(lastMacName)…" : "Not connected to \(lastMacName)"
     }
 }

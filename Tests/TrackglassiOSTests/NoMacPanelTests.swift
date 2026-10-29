@@ -8,6 +8,8 @@ final class NoMacPanelTests: XCTestCase {
         XCTAssertEqual(NoMacView.headline(lastMacName: "Studio", isReconnecting: true, passive: true), "Reconnecting to Studio…")
         XCTAssertEqual(NoMacView.headline(lastMacName: "Studio", isReconnecting: true, passive: false), "Looking for Studio…")
         XCTAssertEqual(NoMacView.headline(lastMacName: "Studio", isReconnecting: false, passive: false), "Not connected to Studio")
+        XCTAssertEqual(NoMacView.headline(lastMacName: "Studio", isReconnecting: true, passive: false, lastMacListed: true),
+                       "Reconnecting to Studio…", "a Mac in range that refuses (busy, asleep) is not being looked for")
     }
 
     @MainActor func testPanelWidthAndHeightFollowTheSurface() {

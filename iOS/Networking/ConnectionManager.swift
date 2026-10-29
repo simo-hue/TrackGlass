@@ -24,6 +24,8 @@ actor ConnectionManager {
     private var discoveryActive = false
     /// Macs lists currently on screen (the Macs sheet, Settings → Mac); each keeps the browser running.
     private var discoveryViewers: Set<UUID> = []
+    /// Consecutive reconnect attempts the listed last Mac refused at the TLS handshake ("Pair again").
+    private var pairAgainFailures = 0
 
     init(state: ConnectionState, browser: MacBrowser, session: SessionClient, defaults: UserDefaults = .standard) {
         self.state = state
@@ -46,7 +48,7 @@ actor ConnectionManager {
         }
         guard let peer = lastPeer else { return false }
         lastHello = hello
-        await state.updateLastMac(name: peer.name)
+        await state.updateLastMac(name: peer.name, peerID: peer.peerID)
         if await session.isConnected { return true }
         reconnectEnabled = true
         if reconnectTask == nil { startReconnectLoop() }
@@ -79,6 +81,7 @@ actor ConnectionManager {
         guard lastPeer != nil, !(await session.isConnected) else { return }
         lastHello = hello
         reconnectEnabled = true
+        pairAgainFailures = 0
         // The user asked: the previous final answer (BYE unpaired / disconnected on the Mac) no longer stands.
         await session.clearFinalClose()
         startReconnectLoop()
@@ -116,19 +119,30 @@ actor ConnectionManager {
                                           rttMicros: 0, settings: nil)
                 return
             }
+            // Connect on the Mac the loop is already retrying (busy elsewhere, waking up) is a "try now", not a new
+            // choice: when it fails without a final answer the loop carries on (§3.5).
+            let wasRetryingThisMac = reconnectEnabled && lastPeer?.peerID == peer.peerID
             reconnectTask?.cancel()
             reconnectTask = nil
             lastPeer = peer
             lastHello = hello
+            pairAgainFailures = 0
             defaults.set(peer.peerID.uuidString, forKey: Self.lastMacKey)
-            await state.updateLastMac(name: peer.name)
+            await state.updateLastMac(name: peer.name, peerID: peer.peerID)
             // Armed before the connect so a drop right after WELCOME is never missed by `connectionClosed`.
             reconnectEnabled = true
             let (connected, current) = await attempt(endpoint: mac.endpoint, peer: peer, hello: hello)
             // Only the newest attempt decides: one superseded by another connect, a disconnect or the app going to
             // the background must not switch automatic reconnection off behind the user's back.
             guard current else { return }
-            reconnectEnabled = connected
+            if connected {
+                reconnectEnabled = true
+            } else if wasRetryingThisMac, !(await session.lastCloseWasFinal) {
+                reconnectEnabled = true
+                startReconnectLoop()
+            } else {
+                reconnectEnabled = false
+            }
             await refreshState()   // also after a failure: the panel stops showing "Reconnecting" and offers Reconnect
         } catch {
             await state.updateSession(isConnected: false, status: "Cannot read paired Macs: \(error.localizedDescription)",
@@ -153,7 +167,7 @@ actor ConnectionManager {
             await disconnect()
             lastPeer = nil; lastHello = nil
             defaults.removeObject(forKey: Self.lastMacKey)
-            await state.updateLastMac(name: "")
+            await state.updateLastMac(name: "", peerID: nil)
         }
         await refreshPairedMacs()
     }
@@ -244,14 +258,27 @@ actor ConnectionManager {
     private func reconnect() async -> ReconnectOutcome {
         if await session.isConnected { return .connected }
         guard foreground, reconnectEnabled, let stored = lastPeer, let hello = lastHello else { return .failed }
-        guard let mac = await browser.macs.first(where: { !$0.isPairing && $0.peerID == stored.peerID }) else { return .notListed }
+        guard let mac = await browser.macs.first(where: { !$0.isPairing && $0.peerID == stored.peerID }) else {
+            pairAgainFailures = 0   // "three in a row" counts refusals from a Mac that stayed in range
+            return .notListed
+        }
         // A connect the user started during that await cancelled this loop and chose the Mac: leave it alone.
         guard !Task.isCancelled, lastPeer?.peerID == stored.peerID else { return .failed }
         let peer = (try? pairStore.load(peerID: stored.peerID)) ?? stored
         lastPeer = peer
         let (connected, current) = await attempt(endpoint: mac.endpoint, peer: peer, hello: hello)
-        if connected { return .connected }
-        if current, await session.lastCloseWasFinal { return .permanent }
+        if connected { pairAgainFailures = 0; return .connected }
+        guard current else { return .failed }
+        if await session.lastCloseWasFinal { return .permanent }
+        // §3.2 "TLS handshake fails → Pair again": one refusal can be a Mac listener restarting with a new key set,
+        // but a listed Mac refusing the key three times in a row has forgotten this phone (Forget while it was
+        // away, a reinstall). Stop, so the panel offers pairing instead of retrying every 8 s forever.
+        if await session.status == ControlCloseMessage.pairAgain {
+            pairAgainFailures += 1
+            if pairAgainFailures >= 3 { return .permanent }
+        } else {
+            pairAgainFailures = 0
+        }
         return .failed
     }
 

@@ -10,6 +10,10 @@ struct PINEntryView: View {
     @State private var selectedInstance: String?
     /// The pairing session of the selected Mac when it was chosen: a different one later means the Mac showed a new code.
     @State private var selectedPairID: Data?
+    /// The pairing session a wrong code was tried against. The Mac then shows a new code, but its Bonjour record
+    /// can reach the phone after the user has typed it: the sixth digit waits for the new session instead of
+    /// spending one of the Mac's attempts on the old one.
+    @State private var failedPairID: Data?
     @State private var pin = ""
     @State private var status = "Choose a Mac showing a pairing code."
     @State private var inProgress = false
@@ -55,7 +59,7 @@ struct PINEntryView: View {
                             if digits != value { pin = digits; return }
                             autoSubmitIfComplete()
                         }
-                    Button("Pair") { submit() }
+                    Button("Pair") { submit(force: true) }
                         .disabled(inProgress || selectedMac == nil || !validPIN)
                     Text(status)
                 }
@@ -68,8 +72,15 @@ struct PINEntryView: View {
             // Choosing another Mac updates `selectedPairID` first, so only a new code on the same Mac lands here.
             guard let newValue, let previous = selectedPairID, newValue != previous else { return }
             selectedPairID = newValue
-            pin = ""
-            status = "The Mac’s code changed. Enter the new code."
+            if failedPairID != nil {
+                // The new code after a wrong one: what the user typed meanwhile is meant for it.
+                failedPairID = nil
+                status = "Enter the new code shown on the Mac."
+                autoSubmitIfComplete()
+            } else {
+                pin = ""
+                status = "The Mac’s code changed. Enter the new code."
+            }
         }
         .onDisappear { browser.stop(); exchange?.cancel(); client.cancel() }
     }
@@ -87,7 +98,7 @@ struct PINEntryView: View {
             guard ready.count == 1 else { status = "Choose the Mac showing this code."; return }
             select(ready[0])
         }
-        submit()
+        submit(force: false)
     }
 
     private func select(_ mac: DiscoveredMac) {
@@ -95,8 +106,13 @@ struct PINEntryView: View {
         selectedInstance = mac.instanceName
     }
 
-    private func submit() {
+    /// `force`: the Pair button, which always tries; the automatic submit waits for a new code after a wrong one.
+    private func submit(force: Bool) {
         guard let mac = selectedMac, let pairID = mac.pairID, validPIN, !inProgress else { return }
+        if !force, pairID == failedPairID {
+            status = "Waiting for the Mac to show its new code…"
+            return
+        }
         let enteredPIN = pin
         pin = ""
         inProgress = true
@@ -117,10 +133,12 @@ struct PINEntryView: View {
             } catch is CancellationError { status = "Pairing cancelled." }
             catch let failure as PairingClient.Failure {
                 // A wrong code fails the TLS handshake (a network error); every other outcome has its own message.
-                if case .network = failure { status = "Pairing failed. Check the new code on the Mac and try again." }
-                else { status = failure.localizedDescription }
+                if case .network = failure {
+                    failedPairID = pairID
+                    status = "Pairing failed. Check the new code on the Mac and try again."
+                } else { status = failure.localizedDescription }
             }
-            catch { status = "Pairing failed. Check the new code on the Mac and try again." }
+            catch { failedPairID = pairID; status = "Pairing failed. Check the new code on the Mac and try again." }
         }
     }
 }

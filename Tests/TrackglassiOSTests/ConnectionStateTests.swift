@@ -1,3 +1,4 @@
+import Network
 import XCTest
 @testable import TrackglassiOS
 
@@ -46,6 +47,34 @@ final class ConnectionStateTests: XCTestCase {
         XCTAssertTrue(state.localNetworkDenied)
         state.updateDiscovery(macs: [], pairedMacs: [])
         XCTAssertTrue(state.localNetworkDenied, "nil keeps the last value")
+    }
+
+    @MainActor func testVoiceOverHearsAnActionableAnswerOnceWhileRetrying() {
+        let state = ConnectionState()
+        var heard: [String] = []
+        state.onAnnouncement = { heard.append($0) }
+        for (sequence, status) in [(UInt64(1), "Connecting to Mac…"), (2, "Mac is being used by Sam's iPhone"),
+                                   (3, "Connecting to Mac…"), (4, "Mac is being used by Sam's iPhone"),
+                                   (5, "Connecting to Mac…"), (6, "Connection timed out")] {
+            state.apply(snapshot(sequence, connected: false, status: status), isReconnecting: true)
+        }
+        XCTAssertEqual(heard, ["Mac is being used by Sam's iPhone. Disconnect it there, then reconnect."])
+        XCTAssertNil(ConnectionState.outcome(for: "Reconnecting to Mac…", macName: "Mac"),
+                     "busy with this very phone (a stale session) is routine")
+    }
+
+    @MainActor func testLastMacIsListedOnlyWhenItsServiceIsFound() {
+        let state = ConnectionState()
+        let id = UUID()
+        state.updateLastMac(name: "Studio", peerID: id)
+        XCTAssertFalse(state.lastMacIsListed)
+        var txt = NWTXTRecord()
+        txt["v"] = "1"; txt["id"] = id.uuidString; txt["nm"] = "Studio"; txt["pr"] = "0"
+        let mac = DiscoveredMac(endpoint: .service(name: "Studio", type: "_trackglass._tcp", domain: "local.", interface: nil), txt: txt)
+        state.updateDiscovery(macs: mac.map { [$0] } ?? [], pairedMacs: [])
+        XCTAssertTrue(state.lastMacIsListed)
+        state.updateLastMac(name: "", peerID: nil)
+        XCTAssertFalse(state.lastMacIsListed)
     }
 
     @MainActor func testVoiceOverHearsConnectsDropsAndFinalOutcomesOnly() {

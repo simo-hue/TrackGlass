@@ -190,6 +190,10 @@ final class TouchSurfaceViewController: UIViewController {
                 if !resumed { self.showDiscoveryIfNeeded() }
             }
         } else {
+            // Opened by a pairing link: the last used Mac is still resumed (§3.5), whether or not the link is used.
+            if let hello = currentHello() {
+                Task { [weak self] in _ = await self?.connectionManager.resumeLastMac(hello: hello) }
+            }
             showDiscoveryIfNeeded()
         }
     }
