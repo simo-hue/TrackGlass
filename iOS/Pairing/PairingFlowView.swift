@@ -8,6 +8,9 @@ struct PairingFlowView: View {
     @State private var scanner = false
     @State private var showPIN = false
     @State private var pending: PairingPayload?
+    /// A pairing link can be opened by any app or web page: it is only acted on after the user confirms it here
+    /// (§3.4 "Never auto-pair"). Codes scanned with the in-app scanner are the user's own action already.
+    @State private var awaitingLinkConfirmation: Bool
     @State private var pairing = false
     @State private var status = "Open ‘Pair a device…’ in Trackglass for Mac."
     @State private var exchange: Task<Void, Never>?
@@ -17,6 +20,7 @@ struct PairingFlowView: View {
 
     init(payload: PairingPayload? = nil, onPaired: ((PairedPeer) -> Void)? = nil) {
         _pending = State(initialValue: payload)
+        _awaitingLinkConfirmation = State(initialValue: payload != nil)
         self.onPaired = onPaired
     }
 
@@ -24,15 +28,29 @@ struct PairingFlowView: View {
         NavigationStack {
             Form {
                 Section("Your device name") { TextField("Name", text: $name).disabled(pairing) }
+                if awaitingLinkConfirmation, let link = pending {
+                    Section {
+                        Text("A link asks to pair with “\(link.macName)”. Continue only if that Mac shows its pairing window in front of you.")
+                        Button("Pair with \(link.macName)") {
+                            PhoneIdentityStore().name = name
+                            awaitingLinkConfirmation = false
+                            status = "Looking for the Mac’s pairing window…"
+                            tryPair()
+                        }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button("Ignore this link", role: .cancel) { awaitingLinkConfirmation = false; pending = nil }
+                    }
+                }
                 Section {
                     Button("Scan Mac QR code") {
                         PhoneIdentityStore().name = name
                         pending = nil
+                        awaitingLinkConfirmation = false
                         scanner = true
                     }.disabled(pairing || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     Button("Use a code instead") {
                         PhoneIdentityStore().name = name
                         pending = nil
+                        awaitingLinkConfirmation = false
                         showPIN = true
                     }.disabled(pairing || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     Text(status)
@@ -73,7 +91,7 @@ struct PairingFlowView: View {
     }
 
     private func tryPair() {
-        guard !pairing, let payload = pending,
+        guard !pairing, !awaitingLinkConfirmation, let payload = pending,
               let mac = browser.macs.first(where: { $0.instanceName == payload.bonjourInstanceName && $0.isPairing && $0.pairID == payload.pairID }) else { return }
         pairing = true
         status = "Pairing… Click Allow on the Mac when it asks."

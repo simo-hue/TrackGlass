@@ -145,7 +145,10 @@ final class TouchSurfaceView: UIView {
     func ingestEnded<S: Sequence>(_ touches: S, at timestamp: TimeInterval) where S.Element: TouchLike {
         let hadContacts = contacts.count > 0
         let timeNs = TouchSample.timestampNanoseconds(timestamp)
-        emitCurrentContacts(timeNs: timeNs)
+        // When one finger lifts while another moves, UIKit calls `touchesMoved` and then `touchesEnded` for the
+        // same event; the moved call already sent this event's frame with the lifting finger's live `.ended`
+        // phase, so it is not sent twice (§4.4: the Mac would see the terminal phase of an untracked contact).
+        if timeNs != lastRawEmitTimeNs || contacts.count != lastEmitContactCount { emitCurrentContacts(timeNs: timeNs) }
         for touch in touches { contacts.remove(touch) }
         if hadContacts && contacts.count == 0 { emitSyntheticLiftoff(timeNs: timeNs) }
     }

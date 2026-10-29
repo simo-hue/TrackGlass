@@ -14,6 +14,8 @@ actor ConnectionManager {
     private var lastHello: HelloMessage?
     private var reconnectTask: Task<Void, Never>?
     private var reconnectGeneration = 0
+    /// Bumped by every connect attempt, disconnect and background transition (see `attempt`).
+    private var connectGeneration = 0
     private var reconnectEnabled = false
     private var foreground = true
     private var callbacksInstalled = false
@@ -30,6 +32,9 @@ actor ConnectionManager {
     func resumeLastMac(hello: HelloMessage) async -> Bool {
         await installCallbacks()
         await browser.start()
+        // §5.1: Settings → Mac and the No-Mac overlay list every paired Mac from launch on, not only after the
+        // Macs sheet has been opened once.
+        await refreshPairedMacs()
         if lastPeer == nil, let stored = defaults.string(forKey: Self.lastMacKey), let id = UUID(uuidString: stored),
            let peer = try? pairStore.load(peerID: id) {
             lastPeer = peer
@@ -76,12 +81,12 @@ actor ConnectionManager {
             await state.updateLastMac(name: peer.name)
             // Armed before the connect so a drop right after WELCOME is never missed by `connectionClosed`.
             reconnectEnabled = true
-            let connected = await session.connect(endpoint: mac.endpoint, mac: peer, hello: hello)
-            if connected {
-                await refreshState()
-            } else {
-                reconnectEnabled = false
-            }
+            let (connected, current) = await attempt(endpoint: mac.endpoint, peer: peer, hello: hello)
+            // Only the newest attempt decides: one superseded by another connect, a disconnect or the app going to
+            // the background must not switch automatic reconnection off behind the user's back.
+            guard current else { return }
+            reconnectEnabled = connected
+            if connected { await refreshState() }
         } catch {
             await state.updateSession(isConnected: false, status: "Cannot read paired Macs: \(error.localizedDescription)",
                                       macName: mac.name, rttMicros: 0, settings: nil)
@@ -111,6 +116,7 @@ actor ConnectionManager {
     }
 
     func disconnect() async {
+        connectGeneration += 1
         reconnectEnabled = false
         reconnectTask?.cancel()
         reconnectTask = nil
@@ -120,6 +126,7 @@ actor ConnectionManager {
 
     func sceneDidEnterBackground() async {
         foreground = false
+        connectGeneration += 1   // the attempt the background BYE interrupts must not decide reconnection
         reconnectTask?.cancel()
         reconnectTask = nil
         if await session.status.hasPrefix("Connecting to ") { reconnectEnabled = true }
@@ -149,12 +156,25 @@ actor ConnectionManager {
 
     private func connectionClosed() async {
         await refreshState()
+        // A Mac that forgot this phone (BYE unpaired), or speaks another protocol version, cannot be reached by retrying.
+        if await session.lastCloseWasFinal { reconnectEnabled = false; return }
         // The session is known to be closed: always (re)start a loop; a finished loop's stale handle must not block it.
         if reconnectEnabled && foreground { startReconnectLoop() }
     }
 
+    /// Every `session.connect` goes through here; `current` is false when a newer attempt (or a disconnect or the
+    /// background BYE) has taken over meanwhile, in which case the result says nothing about this Mac.
+    private func attempt(endpoint: NWEndpoint, peer: PairedPeer, hello: HelloMessage) async -> (connected: Bool, current: Bool) {
+        connectGeneration += 1
+        let generation = connectGeneration
+        let connected = await session.connect(endpoint: endpoint, mac: peer, hello: hello)
+        return (connected, generation == connectGeneration)
+    }
+
+    private enum ReconnectOutcome { case connected, notListed, failed, permanent }
+
     private func startReconnectLoop() {
-        guard let peer = lastPeer, let hello = lastHello else { return }
+        guard lastPeer != nil, lastHello != nil else { return }
         reconnectTask?.cancel()
         reconnectGeneration += 1
         let generation = reconnectGeneration
@@ -163,21 +183,41 @@ actor ConnectionManager {
             while !Task.isCancelled {
                 do { try await Task.sleep(nanoseconds: delay) } catch { return }
                 guard let self else { return }
-                let connected = await self.reconnect(peer: peer, hello: hello)
-                if connected { await self.reconnectSucceeded(generation); return }
-                delay = min(delay * 2, 8_000_000_000)
+                switch await self.reconnect() {
+                case .connected: await self.reconnectSucceeded(generation); return
+                case .permanent: await self.reconnectStopped(generation); return
+                // Looking the Mac up costs nothing: keep checking every 0.5 s so it is joined as soon as it
+                // reappears (§7: reconnect within 2 s), and back off only after real connection attempts.
+                case .notListed: delay = 500_000_000
+                case .failed: delay = min(delay * 2, 8_000_000_000)
+                }
             }
         }
     }
 
-    private func reconnect(peer: PairedPeer, hello: HelloMessage) async -> Bool {
-        if await session.isConnected { return true }
-        guard foreground, reconnectEnabled,
-              let mac = await browser.macs.first(where: { !$0.isPairing && $0.peerID == peer.peerID }) else { return false }
-        return await session.connect(endpoint: mac.endpoint, mac: peer, hello: hello)
+    /// Reads the current peer and HELLO on every attempt: a re-pair (new LTK) or a tracking-override change made
+    /// while disconnected must reach the Mac with the next connection, not the values the loop started with.
+    private func reconnect() async -> ReconnectOutcome {
+        if await session.isConnected { return .connected }
+        guard foreground, reconnectEnabled, let stored = lastPeer, let hello = lastHello else { return .failed }
+        guard let mac = await browser.macs.first(where: { !$0.isPairing && $0.peerID == stored.peerID }) else { return .notListed }
+        // A connect the user started during that await cancelled this loop and chose the Mac: leave it alone.
+        guard !Task.isCancelled, lastPeer?.peerID == stored.peerID else { return .failed }
+        let peer = (try? pairStore.load(peerID: stored.peerID)) ?? stored
+        lastPeer = peer
+        let (connected, current) = await attempt(endpoint: mac.endpoint, peer: peer, hello: hello)
+        if connected { return .connected }
+        if current, await session.lastCloseWasFinal { return .permanent }
+        return .failed
     }
 
     private func reconnectSucceeded(_ generation: Int) async {
+        if generation == reconnectGeneration { reconnectTask = nil }
+        await refreshState()
+    }
+
+    private func reconnectStopped(_ generation: Int) async {
+        reconnectEnabled = false
         if generation == reconnectGeneration { reconnectTask = nil }
         await refreshState()
     }

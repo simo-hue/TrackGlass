@@ -51,7 +51,11 @@ final class MacBrowser {
 
     func setOnChange(_ handler: (@MainActor @Sendable () -> Void)?) { onChange = handler }
 
+    /// True between `start()` and `stop()`; a restart after a failure only happens while the owner still wants results.
+    private var running = false
+
     func start() {
+        running = true
         guard browser == nil else { return }
         let parameters = NWParameters.tcp
         parameters.includePeerToPeer = true
@@ -77,7 +81,9 @@ final class MacBrowser {
                 switch state {
                 case .ready: self.status = "Looking for Macs…"
                 case .waiting(let error): self.status = "Discovery waiting: \(error.localizedDescription)"
-                case .failed(let error): self.status = "Discovery failed: \(error.localizedDescription)"
+                case .failed(let error):
+                    self.status = "Discovery failed: \(error.localizedDescription)"
+                    self.restartAfterFailure(browser)
                 default: return
                 }
                 self.onChange?()   // the status is user-visible (Local Network denial); publish it like a result change
@@ -87,8 +93,22 @@ final class MacBrowser {
     }
 
     func stop() {
+        running = false
         browser?.cancel()
         browser = nil
         macs = []
+    }
+
+    /// `.failed` is terminal for an `NWBrowser` (e.g. its DNS-SD connection went defunct while the app was
+    /// suspended): replace it, or nothing new would ever be discovered until the app is relaunched. The last
+    /// results stay listed until the new browser reports.
+    private func restartAfterFailure(_ failed: NWBrowser) {
+        failed.cancel()
+        browser = nil
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self, self.running, self.browser == nil else { return }
+            self.start()
+        }
     }
 }

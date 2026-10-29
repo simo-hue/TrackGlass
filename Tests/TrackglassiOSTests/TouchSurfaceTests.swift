@@ -85,6 +85,26 @@ final class TouchSurfaceTests: XCTestCase {
         XCTAssertEqual(frames.last?.frameTime, 20_250_000_000)
     }
 
+    func testAFingerLiftingWhileAnotherMovesIsSentOnce() {
+        let (surface, sink) = makeSurface()
+        let first = FakeTouch(at: CGPoint(x: 50, y: 50)), second = FakeTouch(at: CGPoint(x: 150, y: 50))
+        surface.ingestBegan([first, second], at: 30.0)
+        // One UIEvent: the second finger moved and the first lifted; UIKit calls touchesMoved, then touchesEnded.
+        first.phase = .ended
+        second.phase = .moved; second.location = CGPoint(x: 160, y: 50)
+        surface.ingestMoved([second], at: 30.25)
+        surface.ingestEnded([first], at: 30.25)
+        second.phase = .ended
+        surface.ingestEnded([second], at: 30.5)
+        let frames = sink.settle(expecting: 4)
+        XCTAssertEqual(frames.count, 4, "began, moved + ended, ended, lift-off")
+        XCTAssertEqual(frames[1].contactCount, 2)
+        XCTAssertTrue((0..<2).contains { frames[1][$0].phase == .ended })
+        XCTAssertEqual(frames[2].contactCount, 1)
+        XCTAssertEqual(frames[2][0].phase, .ended)
+        XCTAssertTrue(frames[3].isSyntheticLiftoff)
+    }
+
     func testPencilIsSentAsStylusAndIndirectTouchesAreIgnored() {
         let (surface, sink) = makeSurface()
         let pencil = FakeTouch(type: .pencil, at: CGPoint(x: 10, y: 10))

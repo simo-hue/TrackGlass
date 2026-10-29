@@ -76,7 +76,11 @@ struct PINEntryView: View {
                 status = "Paired with \(peer.name)"
                 paired(peer)
             } catch is CancellationError { status = "Pairing cancelled." }
-            catch PairingClient.Failure.declined { status = PairingClient.Failure.declined.localizedDescription }
+            catch let failure as PairingClient.Failure {
+                // A wrong code fails the TLS handshake (a network error); every other outcome has its own message.
+                if case .network = failure { status = "Pairing failed. Check the new code on the Mac and try again." }
+                else { status = failure.localizedDescription }
+            }
             catch { status = "Pairing failed. Check the new code on the Mac and try again." }
         }
     }

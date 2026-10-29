@@ -6,11 +6,13 @@ import TrackglassKit
 @MainActor
 final class PairingClient {
     enum Failure: Error, LocalizedError {
-        case invalidResponse, expired, declined, network(String)
+        case invalidResponse, expired, declined, endedByMac, network(String)
         var errorDescription: String? {
             switch self {
             case .invalidResponse: "The Mac returned an invalid pairing response."
-            case .declined: "Pairing was not allowed on the Mac. Open a new pairing window and try again."
+            // BYE{0} (§3.4): Don't Allow, or the pairing window was closed or expired while the Mac was asking.
+            case .declined: "Pairing was not allowed on the Mac, or its pairing window was closed. Open a new pairing window and try again."
+            case .endedByMac: "The Mac ended pairing before answering. Open a new pairing window and try again."
             case .expired: "Pairing expired. Open a new pairing window and scan again."
             case .network(let message): "Pairing connection failed: \(message)"
             }
@@ -115,7 +117,9 @@ final class PairingClient {
                 guard let self, let connection, self.connection === connection else { return }
                 do {
                     if let error { throw Failure.network(error.localizedDescription) }
-                    guard complete, let data else { throw Failure.invalidResponse }
+                    // The request was sent and the Mac closed the connection without a word: it did not pair.
+                    guard let data else { throw Failure.endedByMac }
+                    guard complete else { throw Failure.invalidResponse }
                     let message = try ControlMessage.decode(data).message
                     if case .bye = message { throw Failure.declined }
                     guard case let .pairResponse(response) = message, response.peerID == expectedMacID,

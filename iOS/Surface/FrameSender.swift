@@ -34,9 +34,13 @@ final class FrameSender: @unchecked Sendable {
     private var ring = FrameRing()
     private var buffer = Data(count: TouchFrame.maximumByteCount)
     private var hasContacts = false
-    private var latestSequence: UInt32 = 0
+    /// Sequence of the newest frame; `.max` until the first one, i.e. "before frame 0" in wrap-around order, so a
+    /// heartbeat sent before the first touch can never be mistaken for one sent after it (§4.7).
+    private var latestSequence: UInt32 = .max
     private let queue: DispatchQueue
     private var recording: TGRecFileWriter?
+    /// Why the running recording stopped by itself (a failed write); reported by `finishRecording`.
+    private var recordingFailure: (any Error)?
     private let sink: any FrameSink
     private let source: any DispatchSourceUserDataAdd
     private let heartbeatTimer: DispatchSourceTimer
@@ -76,15 +80,28 @@ final class FrameSender: @unchecked Sendable {
         while var frame = nextFrame() {
             frame.header.sentAt = MonotonicClock.nanoseconds()
             let sink = sink
+            let count: Int
             do {
-                try buffer.withUnsafeMutableBytes { bytes in
+                count = try buffer.withUnsafeMutableBytes { bytes in
                     let count = try TouchFrameEncoder(frame: frame).encode(into: bytes)
                     sink.consume(UnsafeRawBufferPointer(rebasing: bytes[..<count]))
-                    // Streamed straight from the encode buffer: no per-frame `Data` even while recording (§7).
-                    try recording?.append(captureTimeNs: frame.frameTime, frameBytes: UnsafeRawBufferPointer(rebasing: bytes[..<count]))
+                    return count
                 }
             } catch {
                 logger.error("Touch frame encoding failed")
+                continue
+            }
+            guard let recording else { continue }
+            do {
+                // Streamed straight from the encode buffer: no per-frame `Data` even while recording (§7).
+                try buffer.withUnsafeBytes { bytes in
+                    try recording.append(captureTimeNs: frame.frameTime, frameBytes: UnsafeRawBufferPointer(rebasing: bytes[..<count]))
+                }
+            } catch {
+                // Disk full or similar: the writer closed itself. Stop recording once instead of failing every frame.
+                self.recording = nil
+                recordingFailure = error
+                logger.error("Recording stopped: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -98,6 +115,7 @@ final class FrameSender: @unchecked Sendable {
             queue.async { [self] in
                 do {
                     try recording?.finish()
+                    recordingFailure = nil
                     recording = try TGRecFileWriter(header: header, url: url)
                     continuation.resume()
                 } catch { continuation.resume(throwing: error) }
@@ -109,7 +127,7 @@ final class FrameSender: @unchecked Sendable {
             queue.async { [self] in
                 drain()
                 guard let writer = recording else {
-                    continuation.resume(throwing: CocoaError(.fileNoSuchFile)); return
+                    continuation.resume(throwing: recordingFailure ?? CocoaError(.fileNoSuchFile)); return
                 }
                 recording = nil
                 do {
@@ -122,7 +140,9 @@ final class FrameSender: @unchecked Sendable {
 
     private func sendHeartbeatIfIdle() {
         lock.lock()
-        let shouldSend = !hasContacts
+        // §4.7: a heartbeat means "no finger is down as of the last frame"; it is only sent once every queued
+        // frame has gone out, so it can never overtake the `ended` frame and lift-off it summarizes.
+        let shouldSend = !hasContacts && ring.count == 0
         let sequence = latestSequence
         lock.unlock()
         guard shouldSend, let datagramSink = sink as? UDPFrameSink else { return }

@@ -29,6 +29,8 @@ final class SessionClient {
     /// How long the DTLS input path may take to come up before the session is ended (tests raise it).
     var inputPathTimeout: Duration = .seconds(5)
     private var connectContinuation: CheckedContinuation<Bool, Never>?
+    /// The last session ended with a final answer (unpaired, incompatible): retrying cannot succeed.
+    private(set) var lastCloseWasFinal = false
 
     init(inputSink: UDPFrameSink) { self.inputSink = inputSink }
 
@@ -71,12 +73,19 @@ final class SessionClient {
 
     func connect(endpoint: NWEndpoint, mac: PairedPeer, hello: HelloMessage) async -> Bool {
         trackingOverride = hello.trackingOverride
-        channel?.close()
+        // Replacing a channel is not a lost session: the attempt it belonged to is answered `false` here, and its
+        // `onClose` (which sees another current channel) stays quiet, so `sessionClosed` — the reconnect loop's
+        // trigger — never fires for a channel this method retires itself.
+        if let previous = channel {
+            channel = nil
+            if let continuation = connectContinuation { connectContinuation = nil; continuation.resume(returning: false) }
+            previous.close("Replaced by a new connection")
+        }
     #if canImport(UIKit)
         haptics.stop()
     #endif
         stopInput()
-        isConnected = false; rttMicros = 0; settings = nil; diagnostics = nil
+        isConnected = false; rttMicros = 0; settings = nil; diagnostics = nil; lastCloseWasFinal = false
         status = "Connecting to \(mac.name)…"
         macName = mac.name
         let options = TLSConfig.tlsOptions(psk: SymmetricKey(data: mac.ltk), identity: hello.peerID.uuidString.lowercased())
@@ -104,8 +113,8 @@ final class SessionClient {
                     self.connectContinuation = nil
                 case 1:
                     channel.close("\(welcome.macName) is being used by \(welcome.activePhoneName)")
-                case 3: channel.close("Pair again")
-                default: channel.close("Incompatible version")
+                case 3: self.lastCloseWasFinal = true; channel.close(ControlCloseMessage.pairAgain)
+                default: self.lastCloseWasFinal = true; channel.close(ControlCloseMessage.incompatible)
                 }
             case .status(let status):
                 self.diagnostics = status; self.diagnosticsSequence &+= 1; self.connectionChanged?()
@@ -121,7 +130,8 @@ final class SessionClient {
         }
         channel.onRTT = { [weak self] value in self?.rttMicros = value; self?.connectionChanged?() }
         channel.onClose = { [weak self, weak channel] message in
-            guard let self, self.channel === channel else { return }
+            guard let self, let channel, self.channel === channel else { return }
+            self.lastCloseWasFinal = self.lastCloseWasFinal || channel.closedFinally
             self.isConnected = false; self.status = message; self.channel = nil
             self.stopInput()
     #if canImport(UIKit)
@@ -156,7 +166,7 @@ final class SessionClient {
     #endif
         stopInput()
         connectionChanged?()
-        channel?.end(reason: reason, message: reason == 4 ? "Mac sleeping" : "Disconnected")
+        channel?.end(reason: reason, message: reason == 4 ? "The Mac went to sleep" : "Disconnected")
     }
 
     private func startInput(mac: PairedPeer, phonePeerID: UUID) {

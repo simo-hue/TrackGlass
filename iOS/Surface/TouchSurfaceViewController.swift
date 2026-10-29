@@ -54,6 +54,9 @@ final class TouchSurfaceViewController: UIViewController {
         host.safeAreaRegions = []   // pinned to the safe-area guide already; avoid a second inset
         addChild(host)
         host.view.backgroundColor = .clear
+        // The pill is information only: its hosting view (a band across the top) must never take a touch that
+        // belongs to the trackpad surface underneath.
+        host.view.isUserInteractionEnabled = false
         host.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(host.view)
         NSLayoutConstraint.activate([
@@ -76,6 +79,9 @@ final class TouchSurfaceViewController: UIViewController {
         let noMac = UIHostingController(rootView: NoMacView(state: connectionState,
             open: { [weak self] in self?.showDiscoveryIfNeeded() }, connect: { [weak self] mac in self?.connect(mac) }))
         noMac.safeAreaRegions = []   // pinned to the safe-area guide already; avoid a second inset
+        // The panel's hosting view follows its content's size, so once a Mac is connected (empty content) it
+        // shrinks to nothing instead of keeping a stale frame that would swallow surface touches.
+        noMac.sizingOptions = .intrinsicContentSize
         addChild(noMac); noMac.view.backgroundColor = .clear; noMac.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(noMac.view)
         NSLayoutConstraint.activate([
