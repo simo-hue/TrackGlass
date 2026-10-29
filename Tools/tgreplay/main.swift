@@ -114,7 +114,7 @@ private enum TGReplay {
         var intervals: [Double] = []
         var previous: (x: Double, y: Double, time: UInt64, id: UInt8)?
         var stats = VelocityStatistics()
-        while let record = try reader.next() {
+        while let record = try reader.nextComplete() {
             stats.frames += 1
             let frame = try record.frameBytes.withUnsafeBytes { try TouchFrameDecoder.decode($0) }
             guard frame.contactCount > 0 else { previous = nil; continue }
@@ -194,7 +194,7 @@ private enum TGReplay {
         }
         var reader = try TGRecReader(contentsOf: recording)
         var recorded: [TouchFrame] = []
-        while let record = try reader.next() {
+        while let record = try reader.nextComplete() {
             recorded.append(try record.frameBytes.withUnsafeBytes { try TouchFrameDecoder.decode($0) })
         }
         let engine = GestureEngine(settings: configuration.settings, geometry: configuration.geometry, acceleration: acceleration, scrollAcceleration: scrollAcceleration)
@@ -395,3 +395,13 @@ do {
 }
 
 private struct SettingsChange: Decodable { let atNs: UInt64; let settings: TrackpadSettings }
+
+extension TGRecReader {
+    /// A recording the app was still writing when it died ends mid-record: replay its complete frames.
+    mutating func nextComplete() throws -> TGRecRecord? {
+        do { return try next() } catch TGRecError.truncated {
+            FileHandle.standardError.write(Data("tgreplay: the recording ends mid-record; using its complete frames\n".utf8))
+            return nil
+        }
+    }
+}

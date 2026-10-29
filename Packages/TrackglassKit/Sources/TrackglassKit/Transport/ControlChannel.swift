@@ -2,6 +2,12 @@ import Foundation
 import Network
 import OSLog
 
+/// User-facing close messages shared by both apps.
+public enum ControlCloseMessage {
+    public static let pairAgain = "Pair again"
+    public static let incompatible = "Incompatible version"
+}
+
 /// Low-rate control traffic only; touch datagrams never enter this channel.
 @MainActor
 public final class ControlChannel {
@@ -21,6 +27,13 @@ public final class ControlChannel {
     /// PING cadence (Appendix A: 1 s). Tests shorten it; the dead threshold is always three missed pings,
     /// i.e. the oldest of three *consecutive* unanswered pings is ≥ 3 × this interval old (§4.6).
     public var heartbeatInterval: Duration = .seconds(1)
+    /// `MonotonicClock` time of the last message received (or of `start()`). Both sides PING every second, so a
+    /// live peer is never silent for much longer than that.
+    public private(set) var lastReceivedAt: UInt64 = MonotonicClock.nanoseconds()
+    /// True when the peer said retrying cannot help: BYE `unpaired` or `incompatible` (§4.5), or a message this
+    /// side could not understand. A failed TLS handshake is not final: the Mac also aborts handshakes while it
+    /// goes to sleep or restarts its listener, which a reconnect must survive.
+    public private(set) var closedFinally = false
     private var closed = false
     private var closing = false
     private var unknownTypes: Set<UInt8> = []
@@ -31,6 +44,7 @@ public final class ControlChannel {
     deinit { connection.cancel() }
 
     public func start() {
+        lastReceivedAt = MonotonicClock.nanoseconds()
         watchdog = Task { [weak self] in
             guard let timeout = self?.handshakeTimeout else { return }
             do { try await Task.sleep(for: timeout) } catch { return }
@@ -42,7 +56,7 @@ public final class ControlChannel {
                 switch state {
                 case .ready: self.onReady?(); self.receive()
                 case .failed(let error), .waiting(let error):
-                    if case .tls = error { self.close("Pair again") }
+                    if case .tls = error { self.close(ControlCloseMessage.pairAgain) }
                     else { self.close("Connection lost") }
                 case .cancelled: self.close("Disconnected")
                 default: break
@@ -73,6 +87,17 @@ public final class ControlChannel {
                 }
             })
         } catch { close("Invalid control message") }
+    }
+
+    /// §4.5 BYE reasons: 0 user, 1 incompatible, 2 busy, 3 unpaired, 4 sleeping.
+    static func message(forBye reason: UInt8) -> String {
+        switch reason {
+        case 1: return ControlCloseMessage.incompatible
+        case 2: return "The Mac is busy"
+        case 3: return ControlCloseMessage.pairAgain
+        case 4: return "The Mac went to sleep"
+        default: return "Disconnected"
+        }
     }
 
     public func end(reason: UInt8 = 0, message: String = "Disconnected") {
@@ -113,6 +138,7 @@ public final class ControlChannel {
             Task { @MainActor in
                 guard let self, !self.closed, !self.closing else { return }
                 guard error == nil, complete, let data else { self.close("Connection lost"); return }
+                self.lastReceivedAt = MonotonicClock.nanoseconds()
                 do {
                     let packet = try ControlMessage.decode(data)
                     switch packet.message {
@@ -128,7 +154,8 @@ public final class ControlChannel {
                             if now >= pong.echoSentAt { self.onRTT?(UInt32(clamping: (now - pong.echoSentAt) / 1_000)) }
                         }
                     case .bye(let bye):
-                        self.close(bye.reason == 3 ? "Pair again" : bye.reason == 1 ? "Incompatible version" : "Disconnected")
+                        self.closedFinally = bye.reason == 1 || bye.reason == 3
+                        self.close(Self.message(forBye: bye.reason))
                         return
                     case .unknown(let type):
                         if self.unknownTypes.insert(type).inserted { self.logger.info("Unknown control type \(type)") }
@@ -136,8 +163,14 @@ public final class ControlChannel {
                     }
                     self.receive()
                 } catch ProtocolError.incompatibleVersion {
-                    self.end(reason: 1, message: "Incompatible version")
-                } catch { self.close("Invalid control message") }
+                    self.closedFinally = true
+                    self.end(reason: 1, message: ControlCloseMessage.incompatible)
+                } catch {
+                    self.closedFinally = true
+                    // A message this version cannot parse at all (appended fields are already ignored, §4.1): tell
+                    // the peer why before closing, so it shows "Incompatible version" instead of "Connection lost".
+                    self.end(reason: 1, message: "Invalid control message")
+                }
             }
         }
     }

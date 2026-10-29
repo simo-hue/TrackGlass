@@ -63,9 +63,8 @@ final class ControlMessageTests: XCTestCase {
                     XCTAssertEqual($0 as? ProtocolError, .truncated)
                 }
             }
-            XCTAssertThrowsError(try ControlMessage.decode(data + Data([0]))) {
-                XCTAssertEqual($0 as? ControlCodecError, .trailingBytes)
-            }
+            // §4.1: fields a newer peer appends are ignored.
+            XCTAssertEqual(try ControlMessage.decode(data + Data([0, 1, 2])).message, message)
         }
     }
 

@@ -165,7 +165,8 @@ extension ControlMessage {
         default:
             return ControlPacket(header: header, message: .unknown(type: header.type))
         }
-        guard reader.offset == data.count else { throw ControlCodecError.trailingBytes }
+        // §4.1 forward compatibility: bytes after the fields this version knows are fields a newer peer
+        // appended; they are ignored, so the Mac (Sparkle) and the phone (App Store) can update separately.
         try validateGeometry(message)
         return ControlPacket(header: header, message: message)
     }

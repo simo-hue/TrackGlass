@@ -58,6 +58,28 @@ final class PairingStoreTests: XCTestCase {
         XCTAssertEqual(json["pairedAt"], "1970-01-01T00:00:00Z")
     }
 
+    func testUnreadableRecordIsSkippedAndTheOthersStillList() throws {
+        let store = PairingStore(service: "app.trackglass.pairing.tests.\(UUID().uuidString)")
+        let good = PairedPeer(peerID: UUID(), ltk: Data(repeating: 9, count: 32), name: "Good",
+                              pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        try store.save(good)
+        var bad: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                  kSecAttrService as String: store.service,
+                                  kSecAttrAccount as String: "not-a-uuid",
+                                  kSecAttrSynchronizable as String: false,
+                                  kSecValueData as String: Data("{}".utf8)]
+        #if os(macOS)
+        bad[kSecUseDataProtectionKeychain as String] = true
+        #endif
+        XCTAssertEqual(SecItemAdd(bad as CFDictionary, nil), errSecSuccess)
+        defer {
+            try? store.delete(peerID: good.peerID)
+            bad.removeValue(forKey: kSecValueData as String)
+            SecItemDelete(bad as CFDictionary)
+        }
+        XCTAssertEqual(try store.all(), [good])
+    }
+
     func testInvalidKeyIsRejectedWithoutSaving() throws {
         let store = PairingStore(service: "app.trackglass.pairing.tests.\(UUID().uuidString)")
         let id = UUID()

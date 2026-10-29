@@ -187,6 +187,67 @@ final class ControlChannelTests: XCTestCase {
         client.cancel()
     }
 
+    func testUnknownMessageTypeIsIgnoredAndTheChannelKeepsReceiving() async throws {
+        // §4.1: an unknown `type` is logged once and ignored — the rule that lets a newer peer add messages.
+        let box = Box()
+        let (listener, endpoint) = try await listener { connection in
+            Task { @MainActor in
+                let server = ControlChannel(connection: connection)
+                server.onMessage = { _ in }
+                server.onClose = { box.serverClosedWith = $0 }
+                server.start()
+                box.servers.append(server)
+            }
+        }
+        defer { listener.cancel(); box.servers.forEach { $0.close() } }
+        let client = NWConnection(to: endpoint, using: Self.parameters())
+        client.start(queue: .main)
+        try await eventually { client.state == .ready }
+        let context = NWConnection.ContentContext(identifier: "control", metadata: [NWProtocolFramer.Message(definition: TGControlFramer.definition)])
+        var unknown = Data([0x54, 0x47, 0x01, 0xF0])   // magic, version 1, a type this version does not know
+        unknown.append(Data(count: 12))
+        unknown.append(Data([1, 2, 3]))
+        client.send(content: unknown, contentContext: context, isComplete: true, completion: .idempotent)
+        let ping = try ControlMessage.ping(PingMessage(nonce: 77)).encode(sequence: 1, sentAt: 5)
+        client.send(content: ping, contentContext: context, isComplete: true, completion: .idempotent)
+        client.receiveMessage { data, _, _, _ in
+            let decoded = data.flatMap { try? ControlMessage.decode($0).message }
+            Task { @MainActor in box.reply = decoded }
+        }
+        try await eventually { box.reply != nil }
+        XCTAssertEqual(box.reply, .pong(PongMessage(nonce: 77, echoSentAt: 5)))
+        XCTAssertNil(box.serverClosedWith, "an unknown type must not close the channel")
+        client.cancel()
+    }
+
+    func testUndecodableMessageGetsAByeBeforeTheChannelCloses() async throws {
+        let box = Box()
+        let (listener, endpoint) = try await listener { connection in
+            Task { @MainActor in
+                let server = ControlChannel(connection: connection)
+                server.onMessage = { _ in }
+                server.onClose = { box.serverClosedWith = $0 }
+                server.start()
+                box.servers.append(server)
+            }
+        }
+        defer { listener.cancel(); box.servers.forEach { $0.close() } }
+        let client = NWConnection(to: endpoint, using: Self.parameters())
+        client.start(queue: .main)
+        try await eventually { client.state == .ready }
+        var truncated = Data([0x54, 0x47, 0x01, MessageType.pong.rawValue])   // PONG without its payload
+        truncated.append(Data(count: 12))
+        let context = NWConnection.ContentContext(identifier: "control", metadata: [NWProtocolFramer.Message(definition: TGControlFramer.definition)])
+        client.send(content: truncated, contentContext: context, isComplete: true, completion: .idempotent)
+        client.receiveMessage { data, _, _, _ in
+            let decoded = data.flatMap { try? ControlMessage.decode($0).message }
+            Task { @MainActor in box.reply = decoded }
+        }
+        try await eventually { box.reply != nil && box.serverClosedWith != nil }
+        XCTAssertEqual(box.reply, .bye(ByeMessage(reason: 1)))
+        client.cancel()
+    }
+
     func testLengthPrefixShorterThanAHeaderFailsTheConnection() async throws {
         // §4.3: a length below the 16-byte header cannot hold a message; the framer fails the connection.
         let box = Box()
@@ -210,8 +271,9 @@ final class ControlChannelTests: XCTestCase {
     }
 
     func testByeReasonsMapToUserFacingMessagesOnThePeer() async throws {
-        // reason 1 → "Incompatible version", reason 3 → "Pair again", anything else → "Disconnected".
-        for (reason, expected) in [(UInt8(1), "Incompatible version"), (3, "Pair again"), (4, "Disconnected")] {
+        // §4.5: 1 incompatible, 2 busy, 3 unpaired, 4 sleeping; 0 (user) and anything unknown → "Disconnected".
+        for (reason, expected) in [(UInt8(1), "Incompatible version"), (2, "The Mac is busy"), (3, "Pair again"),
+                                   (4, "The Mac went to sleep"), (0, "Disconnected"), (9, "Disconnected")] {
             let box = Box()
             let (listener, endpoint) = try await listener { connection in
                 Task { @MainActor in
@@ -230,6 +292,7 @@ final class ControlChannelTests: XCTestCase {
             try await eventually { clientClosed != nil && box.serverClosedWith != nil }
             XCTAssertEqual(clientClosed, "sent bye")
             XCTAssertEqual(box.serverClosedWith, expected, "reason \(reason)")
+            XCTAssertEqual(box.servers.last?.closedFinally, reason == 1 || reason == 3, "only unpaired/incompatible are final")
             listener.cancel(); box.servers.forEach { $0.close() }
         }
     }

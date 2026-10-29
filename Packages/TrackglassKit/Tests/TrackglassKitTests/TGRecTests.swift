@@ -57,6 +57,30 @@ final class TGRecTests: XCTestCase {
         XCTAssertThrowsError(try TGRecFileWriter(header: header, url: url).append(captureTimeNs: 0, frameBytes: Data(count: 5)))
     }
 
+    func testFileWriterWritesAtLiftoffsEveryQuarterSecondAndWhenDropped() throws {
+        let header = try TGRecHeader(origin: .mac, surfaceWidthMM: 65, surfaceHeightMM: 141)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("tgrec")
+        defer { try? FileManager.default.removeItem(at: url) }
+        func recordsOnDisk() throws -> Int {
+            var reader = try TGRecReader(contentsOf: url)
+            var count = 0
+            while try reader.next() != nil { count += 1 }
+            return count
+        }
+        let touch = try frameBytes(1), liftoff = try frameBytes(11)   // one contact / no contact
+        var writer: TGRecFileWriter? = try TGRecFileWriter(header: header, url: url)
+        try writer?.append(captureTimeNs: 0, frameBytes: touch)
+        XCTAssertEqual(try recordsOnDisk(), 0, "a single frame stays buffered")
+        try writer?.append(captureTimeNs: 300_000_000, frameBytes: touch)
+        XCTAssertEqual(try recordsOnDisk(), 2, "a quarter second of capture time is written out")
+        try writer?.append(captureTimeNs: 310_000_000, frameBytes: touch)
+        try writer?.append(captureTimeNs: 320_000_000, frameBytes: liftoff)
+        XCTAssertEqual(try recordsOnDisk(), 4, "a lift-off is written out")
+        try writer?.append(captureTimeNs: 330_000_000, frameBytes: touch)
+        writer = nil
+        XCTAssertEqual(try recordsOnDisk(), 5, "a writer dropped without finish() keeps its buffer")
+    }
+
     func testBadHeaders() throws {
         let data = TGRecWriter(header: try TGRecHeader(origin: .mac, surfaceWidthMM: 10, surfaceHeightMM: 20)).data
         for length in 0..<15 { XCTAssertThrowsError(try TGRecReader(data: Data(data.prefix(length)))) }

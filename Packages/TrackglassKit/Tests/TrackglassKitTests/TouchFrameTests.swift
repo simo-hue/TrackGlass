@@ -56,12 +56,46 @@ final class TouchFrameTests: XCTestCase {
         for length in 0..<28 {
             XCTAssertThrowsError(try valid.prefix(length).withUnsafeBytes { try TouchFrameDecoder.decode($0) })
         }
-        for (offset, value) in [(24, UInt8(11)), (25, 4), (26, 1), (27, 1), (3, 1)] {
+        for (offset, value) in [(24, UInt8(11)), (3, 1), (0, 0x55)] {
             var bad = valid
             bad[offset] = value
             XCTAssertThrowsError(try bad.withUnsafeBytes { try TouchFrameDecoder.decode($0) })
         }
-        XCTAssertThrowsError(try (valid + Data([0])).withUnsafeBytes { try TouchFrameDecoder.decode($0) })
+        // A frame that claims one more contact than it carries is short.
+        var short = valid
+        short[24] = 1
+        XCTAssertThrowsError(try short.withUnsafeBytes { try TouchFrameDecoder.decode($0) }) {
+            XCTAssertEqual($0 as? TouchFrameCodecError, .invalidLength)
+        }
+    }
+
+    func testReservedBitsAndAppendedBytesAreIgnored() throws {
+        // §4.1 forward compatibility: what a newer phone may set or append does not make an older Mac drop frames.
+        var frame = TouchFrame(frameTime: 7, isSyntheticLiftoff: true)
+        frame.append(Contact(contactID: 3, phase: .moved, x: 10, y: 20, majorRadius: 4))
+        var data = Data(count: 44)
+        _ = try data.withUnsafeMutableBytes { try TouchFrameEncoder(frame: frame).encode(into: $0) }
+        data[25] |= 0xFC; data[26] = 1; data[27] = 2; data[31] = 9
+        data.append(contentsOf: [1, 2, 3])
+        let decoded = try data.withUnsafeBytes { try TouchFrameDecoder.decode($0) }
+        XCTAssertTrue(decoded.isSyntheticLiftoff)
+        XCTAssertEqual(decoded.contactCount, 1)
+        XCTAssertEqual(decoded[0].contactID, 3)
+        XCTAssertEqual(decoded[0].phase, .moved)
+    }
+
+    func testEveryContactFieldIsValidated() throws {
+        var frame = TouchFrame(frameTime: 1)
+        frame.append(Contact(contactID: 1, phase: .began, x: 10, y: 20, majorRadius: 4))
+        var valid = Data(count: 44)
+        _ = try valid.withUnsafeMutableBytes { try TouchFrameEncoder(frame: frame).encode(into: $0) }
+        for (offset, value) in [(29, UInt8(0)), (29, 6), (30, 0), (30, 3)] {   // phase 1…5, kind 1…2
+            var bad = valid
+            bad[offset] = value
+            XCTAssertThrowsError(try bad.withUnsafeBytes { try TouchFrameDecoder.decode($0) }, "offset \(offset) = \(value)") {
+                XCTAssertEqual($0 as? TouchFrameCodecError, .invalidContact)
+            }
+        }
     }
 
     func testNonFiniteContactValuesAreRejected() throws {

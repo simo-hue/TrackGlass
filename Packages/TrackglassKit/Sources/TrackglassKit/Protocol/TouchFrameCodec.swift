@@ -44,8 +44,9 @@ public enum TouchFrameDecoder {
         guard buffer.count >= 28 else { throw ProtocolError.truncated }
         let count = Int(buffer[24])
         guard count <= TouchFrame.maximumContacts else { throw TouchFrameCodecError.invalidContactCount }
-        guard buffer.count == 28 + count * 16 else { throw TouchFrameCodecError.invalidLength }
-        guard buffer[25] & 0xFC == 0, buffer[26] == 0, buffer[27] == 0 else { throw TouchFrameCodecError.reservedBits }
+        // §4.1 forward compatibility: reserved flag bits, reserved bytes and bytes after the contacts are
+        // written as zero / not at all by this version and ignored on receipt (a newer phone may use them).
+        guard buffer.count >= 28 + count * 16 else { throw TouchFrameCodecError.invalidLength }
         var frame = TouchFrame(
             sequence: header.sequence, sentAt: header.sentAt,
             frameTime: UInt64(littleEndian: buffer.loadUnaligned(fromByteOffset: 16, as: UInt64.self)),
@@ -55,7 +56,6 @@ public enum TouchFrameDecoder {
             let offset = 28 + index * 16
             guard let phase = Contact.Phase(rawValue: buffer[offset + 1]),
                   let kind = Contact.Kind(rawValue: buffer[offset + 2]) else { throw TouchFrameCodecError.invalidContact }
-            guard buffer[offset + 3] == 0 else { throw TouchFrameCodecError.reservedBits }
             let x = Float(bitPattern: UInt32(littleEndian: buffer.loadUnaligned(fromByteOffset: offset + 4, as: UInt32.self)))
             let y = Float(bitPattern: UInt32(littleEndian: buffer.loadUnaligned(fromByteOffset: offset + 8, as: UInt32.self)))
             let radius = Float(bitPattern: UInt32(littleEndian: buffer.loadUnaligned(fromByteOffset: offset + 12, as: UInt32.self)))

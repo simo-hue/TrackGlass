@@ -7,6 +7,8 @@ public enum TGRecError: Error, Equatable, Sendable {
     case invalidGeometry
     case truncated
     case invalidFrameLength
+    /// The file writer stopped after a failed write (disk full, volume gone) or was already finished.
+    case writerClosed
 }
 
 public struct TGRecHeader: Equatable, Sendable {
@@ -106,15 +108,19 @@ public struct TGRecReader {
 }
 
 /// Streams a recording to disk as frames arrive (SPEC §6.10): the header is written when the file is
-/// opened and every record is appended through a bounded buffer, so a long session neither grows memory
-/// nor is lost when the process dies before `finish()`. One owner, one queue; not thread-safe.
+/// opened and every record is appended through a bounded buffer, so a long session never grows memory.
+/// The buffer is written out at every lift-off and at least every 250 ms of capture time, so a process that
+/// dies before `finish()` loses at most the last quarter second. One owner, one queue; not thread-safe.
 public final class TGRecFileWriter {
     public let url: URL
     public private(set) var recordCount = 0
     private let handle: FileHandle
     private var buffer = Data()
     private var closed = false
+    private var failed = false
+    private var lastFlushTimeNs: UInt64?
     private static let flushThreshold = 64 * 1_024
+    private static let flushIntervalNs: UInt64 = 250_000_000
 
     public init(header: TGRecHeader, url: URL) throws {
         self.url = url
@@ -125,11 +131,17 @@ public final class TGRecFileWriter {
         buffer.reserveCapacity(Self.flushThreshold + 10 + TouchFrame.maximumByteCount)
     }
 
-    deinit { try? handle.close() }
+    deinit {
+        // Dropped without `finish()` (owner torn down): keep what is still buffered.
+        guard !closed else { return }
+        try? flush()
+        try? handle.close()
+    }
 
-    /// Appends one validated TOUCH_FRAME without copying it into a `Data` first.
+    /// Appends one validated TOUCH_FRAME without copying it into a `Data` first. After a failed write the
+    /// writer is closed for good and every later call throws `writerClosed` without touching the disk.
     public func append(captureTimeNs: UInt64, frameBytes: UnsafeRawBufferPointer) throws {
-        guard !closed else { throw TGRecError.truncated }
+        guard !closed else { throw TGRecError.writerClosed }
         guard (28...TouchFrame.maximumByteCount).contains(frameBytes.count) else { throw TGRecError.invalidFrameLength }
         _ = try TouchFrameDecoder.decode(frameBytes)
         var timestamp = captureTimeNs.littleEndian
@@ -138,16 +150,25 @@ public final class TGRecFileWriter {
         withUnsafeBytes(of: &length) { buffer.append(contentsOf: $0) }
         buffer.append(contentsOf: frameBytes)
         recordCount += 1
-        if buffer.count >= Self.flushThreshold { try flush() }
+        let liftoff = frameBytes[24] == 0   // contactCount 0: the gesture is over, a natural moment to write
+        let lastFlush = lastFlushTimeNs ?? captureTimeNs
+        if lastFlushTimeNs == nil { lastFlushTimeNs = captureTimeNs }
+        if buffer.count >= Self.flushThreshold || liftoff || captureTimeNs &- lastFlush >= Self.flushIntervalNs {
+            lastFlushTimeNs = captureTimeNs
+            try flush()
+        }
     }
 
     public func append(captureTimeNs: UInt64, frameBytes: Data) throws {
         try frameBytes.withUnsafeBytes { try append(captureTimeNs: captureTimeNs, frameBytes: $0) }
     }
 
-    /// Flushes, syncs and closes the file. Idempotent.
+    /// Flushes, syncs and closes the file. Idempotent; throws `writerClosed` if an earlier write failed.
     public func finish() throws {
-        guard !closed else { return }
+        guard !closed else {
+            if failed { throw TGRecError.writerClosed }
+            return
+        }
         try flush()
         try handle.synchronize()
         try handle.close()
@@ -156,7 +177,16 @@ public final class TGRecFileWriter {
 
     private func flush() throws {
         guard !buffer.isEmpty else { return }
-        try handle.write(contentsOf: buffer)
-        buffer.removeAll(keepingCapacity: true)
+        do {
+            try handle.write(contentsOf: buffer)
+            buffer.removeAll(keepingCapacity: true)
+        } catch {
+            // Disk full or volume gone: stop instead of retrying an ever larger buffer on every frame (a partial
+            // write retried would also duplicate bytes and corrupt the file).
+            buffer.removeAll(keepingCapacity: true)
+            closed = true; failed = true
+            try? handle.close()
+            throw error
+        }
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import Security
 
 public struct PairedPeer: Equatable, Sendable {
@@ -22,6 +23,7 @@ public enum PairingStoreError: Error, Equatable, Sendable {
 
 public struct PairingStore: Sendable {
     public let service: String
+    private static let logger = Logger(subsystem: "app.trackglass", category: "PairingStore")
 
     public init(service: String = "app.trackglass.pairing") { self.service = service }
 
@@ -65,12 +67,20 @@ public struct PairingStore: Sendable {
         if status == errSecItemNotFound { return [] }
         try check(status)
         guard let entries = result as? [[String: Any]] else { throw PairingStoreError.invalidRecord }
-        return try entries.map { entry in
+        // One unreadable record (not written by `save`, or from a future format) must not hide every other
+        // pairing: the Mac would stop listening and neither app could list, use or forget the good ones.
+        var peers: [PairedPeer] = []
+        for entry in entries {
             guard let account = entry[kSecAttrAccount as String] as? String,
                   let id = UUID(uuidString: account),
-                  let data = entry[kSecValueData as String] as? Data else { throw PairingStoreError.invalidRecord }
-            return try decode(data, peerID: id)
-        }.sorted { $0.peerID.uuidString < $1.peerID.uuidString }
+                  let data = entry[kSecValueData as String] as? Data,
+                  let peer = try? decode(data, peerID: id) else {
+                Self.logger.error("Skipping an unreadable pairing record")
+                continue
+            }
+            peers.append(peer)
+        }
+        return peers.sorted { $0.peerID.uuidString < $1.peerID.uuidString }
     }
 
     public func delete(peerID: UUID) throws {
