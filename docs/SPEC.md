@@ -272,8 +272,9 @@ The Mac's pairing window is open only while the user has it on screen (`PairingS
 ### 3.5 Session admission
 
 - A Mac serves exactly one controller. `SessionCoordinator` holds `activeSession: Session?`. A second phone that completes the TLS handshake receives `WELCOME{status: busy}` and is disconnected.
+- The same phone reconnecting supersedes its old session only when that session has been silent for 1.5 s (both sides PING every second, 2026-10-29): a HELLO cannot prove which paired phone sent it (Network.framework does not expose the negotiated PSK identity), so it never ends a session that is still talking. The phone retries and gets in once the old session is silent.
 - A phone may be paired with many Macs; `MacsListView` shows them; the connect target is the last used, switchable with one tap.
-- Reconnect policy (phone): on loss, retry with exponential backoff 0.5 s → 8 s while the app is foregrounded; stop in background.
+- Reconnect policy (phone): on loss, retry with exponential backoff 0.5 s → 8 s while the app is foregrounded; stop in background. While the Mac is not discovered the phone checks every 0.5 s without backing off; a final answer (`Pair again`, `Incompatible version`) stops retrying (2026-10-29).
 
 ---
 
@@ -281,7 +282,7 @@ The Mac's pairing window is open only while the user has it on screen (`PairingS
 
 ### 4.1 Conventions
 
-Little-endian. All integers unsigned unless stated. Floats are IEEE-754 binary32. Timestamps are nanoseconds from the *sender's* monotonic clock (`mach_absolute_time` converted via `MonotonicClock.nanoseconds()`), never wall-clock. Strings are UTF-8 with a `u16` byte-length prefix. Protocol version is `1`. A receiver that sees an unknown `type` logs once and ignores the message. A receiver that sees `version != 1` sends `BYE{reason: incompatible}` and disconnects.
+Little-endian. All integers unsigned unless stated. Floats are IEEE-754 binary32. Timestamps are nanoseconds from the *sender's* monotonic clock (`mach_absolute_time` converted via `MonotonicClock.nanoseconds()`), never wall-clock. Strings are UTF-8 with a `u16` byte-length prefix. Protocol version is `1`. A receiver that sees an unknown `type` logs once and ignores the message. A receiver that sees `version != 1` sends `BYE{reason: incompatible}` and disconnects. **Forward compatibility (2026-10-29):** the Mac (Sparkle) and the phone (App Store) update separately after 1.0, so a receiver ignores bytes after the fields it knows (fields appended by a newer peer), reserved flag bits and reserved bytes; senders still write zeros there. A control message that cannot be parsed at all is answered with `BYE{reason: incompatible}` before the channel closes.
 
 ### 4.2 Header (every message, both transports)
 
@@ -360,7 +361,7 @@ phone                                  Mac
 - Mac keeps `lastSeq`; frames with `seq <= lastSeq` (modulo wrap) are dropped. Gaps are counted into `lossPermille`.
 - The engine uses **frameTime deltas** (phone clock) for all durations and velocities. When the engine's `tick(now:)` runs between frames, `now` is the *estimated phone time* `lastFrameTime + (macNow − macReceiveTimeOfLastFrame)`, maintained by `InputPipeline`; so every gesture timer (hold-to-force-click, drag-release grace, pending smart zoom, momentum steps) is evaluated on one consistent clock. Nothing in the engine reads Mac time.
 - A contact that is tracked but absent from a newer frame (its `ended` frame was lost) is ended by the engine at that frame's `frameTime`. A `began` for a `contactID` that is still tracked first ends the old contact, then starts the new one.
-- An `INPUT_HEARTBEAT` received while contacts are tracked means the synthetic lift-off datagram was lost: the pipeline calls `engine.forceLiftoff(releaseDragLock: false)` (a deliberate drag lock survives). If **neither** a frame nor a heartbeat arrives for 1.5 s while contacts are tracked, or the connection ends (BYE or loss), the pipeline calls `forceLiftoff(releaseDragLock: true)`, releasing **every** held button so a lost "ended" or a dead link can never leave a button held down.
+- An `INPUT_HEARTBEAT` received while contacts are tracked means the synthetic lift-off datagram was lost: the pipeline calls `engine.forceLiftoff(releaseDragLock: false)` (a deliberate drag lock survives). The heartbeat's `sequence` is that of the last frame the phone sent, and the phone sends one only when no frame is still queued (2026-10-29). The Mac ignores a heartbeat older than its last accepted frame (overtaken by a newer touch), and one naming a frame it has not received yet the first time (frames in flight); a second heartbeat naming the same unseen frame means those frames were lost and is acted on. If **neither** a frame nor a heartbeat arrives for 1.5 s while contacts are tracked, or the connection ends (BYE or loss), the pipeline calls `forceLiftoff(releaseDragLock: true)`, releasing **every** held button so a lost "ended" or a dead link can never leave a button held down.
 
 ---
 

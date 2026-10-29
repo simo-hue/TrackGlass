@@ -1,11 +1,17 @@
-# TO_SIMO_DO — manual actions still open (2026-10-28, updated after the owner-decisions batch)
+# TO_SIMO_DO — manual actions still open (2026-10-29, updated after the review fixes)
 
 Everything the agent can do without you is done; the two 2026-10-28 batches passed CI and are committed (section 0). This file lists only what needs your hands, your devices or your decision. Reply with results in the order you like; nothing here blocks the others. History of earlier requests is in git (`git log -p TO_SIMO_DO.md`).
+
+## 00. Review fixes of 2026-10-29
+
+1. The Mac app is now built as **Trackglass for Mac.app** (SPEC §1.5). Delete the old `TrackglassMac.app` from Applications and Login Items if you installed one; macOS may ask for Accessibility again for the new bundle.
+2. TestFlight (M11.5) rejects a second upload with the same build number: archive the iOS app with `CURRENT_PROJECT_VERSION=$(git rev-list --count HEAD)` (or raise it in Xcode). The Mac release script now does this by itself.
+3. During D3, the Spaces / Mission Control keyboard fallback now sends Control+Fn like a real keyboard; tell me if a four-finger swipe still does nothing on macOS 27.
 
 ## 0. The two 2026-10-28 batches — CI green at 17:30, committed
 
 1. **Update both apps together before pairing anything new:** the pairing messages changed (X25519 keys + Allow click). Existing pairings keep working.
-2. Optional tidy-ups: delete the `TG_SPARKLE_PUBLIC_KEY` line from your `Config/Local.xcconfig` (the tracked `Shared.xcconfig` has it; the release script stops if the two differ); re-run `Scripts/make-icons.py` so the DMG caption reads "Drag Trackglass for Mac to Applications"; `output.txt` now holds your CI log (`git checkout output.txt` or `git rm output.txt`, your call).
+2. Optional tidy-ups: delete the `TG_SPARKLE_PUBLIC_KEY` line from your `Config/Local.xcconfig` (the tracked `Shared.xcconfig` has it; the release script stops if the two differ); re-run `Scripts/make-icons.py` so the DMG caption reads "Drag Trackglass for Mac to Applications". (`output.txt` is now untracked and ignored.)
 3. Quick physical checks (when you next have the phone): pair once and click **Allow** on the Mac; pair again and click **Don't Allow** (the phone says pairing was not allowed); a four-finger pinch with the thumb held still opens Launchpad / Apps; after a three-finger Spaces swipe, lifting the fingers one at a time does not scroll or move the pointer.
 4. CI now builds the soak UI test, which shows five pre-existing main-actor warnings in `Tests/TrackglassiOSUITests/SoakUITests.swift` (not an error; packages stay warning-free). Say if you want them fixed.
 
