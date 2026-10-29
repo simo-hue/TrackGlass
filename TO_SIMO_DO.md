@@ -2,7 +2,14 @@
 
 Everything the agent can do without you is done; the two 2026-10-28 batches passed CI and are committed (section 0). This file lists only what needs your hands, your devices or your decision. Reply with results in the order you like; nothing here blocks the others. History of earlier requests is in git (`git log -p TO_SIMO_DO.md`).
 
-## 000. Round 2 of 2026-10-29 — CI green 13:39, committed
+## 0000. Round 3 of 2026-10-29 — CI green, committed; four decisions
+
+1. ~~Run CI~~ — done (exit 0).
+2. **Decision — WELCOME forward compatibility (SPEC §4.5, before 1.0):** WELCOME embeds the SETTINGS fields in its middle, then `activePhoneName`. After 1.0 the Mac (Sparkle) and the phone (App Store) update separately; a newer Mac appending a field to SETTINGS makes every older phone fail to read WELCOME (BYE{1}, final) until it updates. Options: (a) a `u16 settingsLength` before the embedded settings (wire change now, both prerelease apps updated together — recommended); (b) a rule that new settings fields go to the *end* of WELCOME, after `activePhoneName`. Reply "a" or "b".
+3. **Decision — rotation during a straight scroll (SPEC §6.5.7):** with fingers 20 mm apart, a 2 mm lag over a 40 mm scroll crosses ROTATE_ACTIVATION (5°); rotation then joins and the scroll does not coast. Apply "bigger change wins" to rotation too (rotation needs more arc length than centroid travel before a scroll, a quarter of it during one)? Reply "yes" / "no".
+4. **Ratify — tap-and-a-half press timing (SPEC §6.5.6, amended):** the press now waits up to 60 ms (settle window) unless the finger moves or lifts first; that is what stops a tap followed by a quick two-finger scroll from drag-selecting. Reply "ok" or say what you prefer.
+5. **Ratify — pairing QR size (SPEC §3.4 says 320 × 320 pt):** it is 260 pt plus a 16 pt white quiet zone (292 pt) so the status column still fits the 480 × 360 window and phones read it in Dark Mode. Reply "ok" or "make it 320" (the status column then gets narrow).
+
 
 1. ~~Run CI~~ — done (all green).
 2. **Disconnect on the Mac:** menu → Paired devices → <phone> → Disconnect (also in Settings → Devices). The phone shows "<Mac> disconnected this device. Tap Reconnect to use it again." and does not reconnect by itself; Reconnect works. Forget now asks for confirmation.
