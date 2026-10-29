@@ -21,6 +21,8 @@ final class BonjourAdvertiser {
     private(set) var admittedInputPeer: UUID?
     private var ready = Set<String>()
     private var registered = Set<String>()
+    /// Consecutive listener failures; drives the restart backoff (1, 2, 4 … 30 s) and resets once a listener is ready.
+    private var restartAttempts = 0
     private let logger = Logger(subsystem: "app.trackglass.mac", category: "net")
 
     init(defaults: UserDefaults = .standard, store: PairingStore = PairingStore()) {
@@ -62,7 +64,10 @@ final class BonjourAdvertiser {
         do {
             let keys = try store.all().map { (SymmetricKey(data: $0.ltk), $0.peerID.uuidString.lowercased()) }
             let tcp = try NWListener(using: TLSConfig.parameters(control: TLSConfig.listenerOptions(keys: keys)))
-            let udp = try makeInputListener(peerID: admittedInputPeer, port: input?.port)
+            let previousInput = input
+            previousInput?.cancel()   // never two `_trackglass._udp` listeners
+            ready.remove("udp"); registered.remove("udp")
+            let udp = try makeInputListener(peerID: admittedInputPeer, port: previousInput?.port)
             control = tcp
             input = udp
             attach(tcp, kind: "tcp")
@@ -105,6 +110,7 @@ final class BonjourAdvertiser {
         switch state {
         case .ready:
             ready.insert(kind)
+            restartAttempts = 0
             if kind == "udp", let port = input?.port?.rawValue {
                 logger.info("input listener ready udpPort=\(port)")
             }
@@ -113,9 +119,27 @@ final class BonjourAdvertiser {
             ready.remove(kind)
             status = "Discovery waiting: \(error.localizedDescription)"
         case .failed(let error):
-            ready.remove(kind)
+            ready.remove(kind); registered.remove(kind)
             status = "Discovery failed: \(error.localizedDescription)"
+            scheduleRestart(kind)
         default: break
+        }
+    }
+
+    /// A failed listener is terminal (e.g. mDNSResponder restarted under it): rebuild it with backoff instead of
+    /// leaving the Mac unreachable until sleep/wake or a relaunch.
+    private func scheduleRestart(_ kind: String) {
+        let failed = kind == "tcp" ? control : input
+        let delay = min(30, 1 << min(restartAttempts, 5))
+        restartAttempts += 1
+        logger.error("\(kind, privacy: .public) listener failed; restarting in \(delay) s")
+        Task { @MainActor [weak self, weak failed] in
+            try? await Task.sleep(for: .seconds(delay))
+            // Only the listener that failed is rebuilt: a stop(), a pairing change or a new admission may have
+            // replaced it meanwhile.
+            guard let self, let failed, self.accessibilityPermission.isTrusted else { return }
+            if kind == "tcp", self.control === failed { self.pairingSetChanged() }
+            else if kind == "udp", self.input === failed { self.setInputIdentity(self.admittedInputPeer) }
         }
     }
 
@@ -141,11 +165,14 @@ final class BonjourAdvertiser {
     /// so a live session survives pairing another device or forgetting a different one.
     func pairingSetChanged() {
         guard let current = control else { return }
+        let port = current.port
         current.cancel()
         ready.remove("tcp"); registered.remove("tcp")
         do {
             let keys = try store.all().map { (SymmetricKey(data: $0.ltk), $0.peerID.uuidString.lowercased()) }
-            let replacement = try NWListener(using: TLSConfig.parameters(control: TLSConfig.listenerOptions(keys: keys)))
+            let parameters = TLSConfig.parameters(control: TLSConfig.listenerOptions(keys: keys))
+            // Same port when possible: a phone that just paired may connect through the SRV record it cached.
+            let replacement = try port.flatMap { try? NWListener(using: parameters, on: $0) } ?? NWListener(using: parameters)
             control = replacement
             attach(replacement, kind: "tcp")
         } catch {

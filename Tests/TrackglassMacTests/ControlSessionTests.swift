@@ -54,18 +54,38 @@ final class ControlSessionTests: XCTestCase {
         let harness = try SessionHarness()
         defer { harness.stop() }
         let endpoint = try await harness.start()
-        let stale = harness.client()
+        // The stale session: admitted, then the phone went quiet (Wi-Fi blip) with its TCP connection still open.
+        let stale = try await harness.admittedSilentConnection(endpoint: endpoint, phone: 0)
+        defer { stale.cancel() }
+        try await Task.sleep(for: .milliseconds(1_700))
         let fresh = harness.client()
-        defer { stale.disconnect(); fresh.disconnect() }
-        let staleConnected = await stale.connect(endpoint: endpoint, mac: harness.mac(for: 0), hello: harness.hello(0))
-        XCTAssertTrue(staleConnected)
-        // Same peerID, new connection (Wi-Fi blip / relaunch): admitted immediately, never told it is busy with itself.
+        defer { fresh.disconnect() }
+        // Same peerID, new connection: admitted at once, never told it is busy with itself.
         let freshConnected = await fresh.connect(endpoint: endpoint, mac: harness.mac(for: 0), hello: harness.hello(0))
         XCTAssertTrue(freshConnected)
-        try await eventually { fresh.isConnected && !stale.isConnected }
+        try await eventually { fresh.isConnected }
         let session = await harness.server.coordinator.activeSession
         XCTAssertEqual(session?.peer.peerID, harness.phones[0].peerID)
         XCTAssertFalse(fresh.status.contains("being used"))
+    }
+
+    func testHelloNeverEndsASessionThatIsStillTalking() async throws {
+        // A HELLO cannot prove which paired phone sent it, so a session that still answers its PINGs is never
+        // superseded: the newcomer is told the Mac is busy and the live session stays.
+        let harness = try SessionHarness()
+        defer { harness.stop() }
+        let endpoint = try await harness.start()
+        let live = harness.client()
+        let second = harness.client()
+        defer { live.disconnect(); second.disconnect() }
+        let liveConnected = await live.connect(endpoint: endpoint, mac: harness.mac(for: 0), hello: harness.hello(0))
+        XCTAssertTrue(liveConnected)
+        try await eventually { live.rttMicros > 0 }
+        let secondConnected = await second.connect(endpoint: endpoint, mac: harness.mac(for: 0), hello: harness.hello(0))
+        XCTAssertFalse(secondConnected)
+        XCTAssertTrue(live.isConnected)
+        let session = await harness.server.coordinator.activeSession
+        XCTAssertEqual(session?.peer.peerID, harness.phones[0].peerID)
     }
 
     func testForgetRejectsNextHandshake() async throws {
@@ -179,6 +199,24 @@ private final class SessionHarness {
             if let port = listener.port, port.rawValue != 0 { return .hostPort(host: "127.0.0.1", port: port) }
             try await Task.sleep(for: .milliseconds(20))
         }
+        throw Failure.timeout
+    }
+
+    /// A phone that sent HELLO, was admitted and then went silent without closing its connection.
+    func admittedSilentConnection(endpoint: NWEndpoint, phone index: Int) async throws -> NWConnection {
+        let options = TLSConfig.tlsOptions(psk: SymmetricKey(data: phones[index].ltk),
+                                           identity: phones[index].peerID.uuidString.lowercased())
+        let connection = NWConnection(to: endpoint, using: TLSConfig.parameters(control: options))
+        connection.start(queue: .main)
+        for _ in 0..<250 where connection.state != .ready { try await Task.sleep(for: .milliseconds(20)) }
+        let bytes = try ControlMessage.hello(hello(index)).encode(sequence: 0, sentAt: MonotonicClock.nanoseconds())
+        let context = NWConnection.ContentContext(identifier: "control", metadata: [NWProtocolFramer.Message(definition: TGControlFramer.definition)])
+        connection.send(content: bytes, contentContext: context, isComplete: true, completion: .idempotent)
+        for _ in 0..<250 {
+            if await server.coordinator.activeSession?.peer.peerID == phones[index].peerID { return connection }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        connection.cancel()
         throw Failure.timeout
     }
 

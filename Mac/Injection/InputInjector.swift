@@ -9,9 +9,18 @@ protocol InputInjector: AnyObject {
     func inject(_ event: GestureEvent)
     func tick()
     func displayDidSleep()
+    /// The Mac's trackpad settings as the engine applies them (Dock swipes follow the scroll direction).
+    func settingsDidChange(_ settings: TrackpadSettings)
+    /// The session is ending: post now whatever `tick` would still have posted (Dock end re-posts, Look Up).
+    func flush()
 }
 
-extension InputInjector { var needsTick: Bool { false }; func displayDidSleep() {} }
+extension InputInjector {
+    var needsTick: Bool { false }
+    func displayDidSleep() {}
+    func settingsDidChange(_ settings: TrackpadSettings) {}
+    func flush() {}
+}
 
 final class PointerState {
     private var remainderX = 0.0
@@ -71,7 +80,6 @@ final class PointerState {
         event.setIntegerValueField(.mouseEventDeltaY, value: Int64(iy))
         post(event)
     }
-    func tick() { _ = CGEvent(source: nil)?.location }
 }
 
 final class DisplayBounds: @unchecked Sendable {
@@ -186,7 +194,13 @@ final class QuartzInjector: InputInjector {
     private var dockRepeatDeadline: UInt64 = 0
     private var dockFinalDeadline: UInt64 = 0
     private var naturalScroll = true
-    private var heldButton: ButtonKind?
+    /// Fallback Dock path (§6.9.4): only the accumulated progress matters, no private events are built.
+    private var fallbackProgress = 0.0
+    /// Both buttons are tracked: a right click while the left button is held (drag lock, grace window) must not
+    /// turn the following left-button motion into plain `.mouseMoved` (§6.7, §6.9.1).
+    private var leftHeld = false
+    private var rightHeld = false
+    private var heldButton: ButtonKind? { leftHeld ? .left : (rightHeld ? .right : nil) }
     private let postScrollEvent: (CGEvent) -> Void
     private let logger = Logger(subsystem: "app.trackglass.mac", category: "inject")
     /// §2.4: the injector is confined to the `input-pipeline` queue; `InputPipeline` sets this so every entry point
@@ -236,7 +250,7 @@ final class QuartzInjector: InputInjector {
             if capabilities.gestureEvents { postScrollEvent(pair.companion) }
         case let .pointerMove(dx, dy): pointer.move(dx: dx, dy: dy, heldButton: heldButton)
         case let .button(kind, phase, clickCount):
-            if phase == .down { heldButton = kind } else if heldButton == kind { heldButton = nil }
+            if kind == .left { leftHeld = phase == .down } else { rightHeld = phase == .down }
             guard let location = CGEvent(source: nil)?.location else { return }
             let button: CGMouseButton = kind == .left ? .left : .right
             let type: CGEventType
@@ -270,13 +284,19 @@ final class QuartzInjector: InputInjector {
         case .haptic(let kind): logger.debug("gesture haptic suggestion: \(String(describing: kind), privacy: .public)")
         case let .dockSwipe(kind, delta, phase, velocity):
             if phase == .began { dockEnd = nil }
+            if !capabilities.gestureEvents || (dockPath == .attachedHIDEvent && !capabilities.dockSwipe) {
+                guard delta.isFinite else { return }
+                switch phase {
+                case .began: fallbackProgress = delta
+                case .changed: fallbackProgress += delta
+                case .ended: fallbackDock(kind: kind, progress: fallbackProgress)
+                case .cancelled, .mayBegin: break
+                }
+                return
+            }
             guard let location = CGEvent(source: nil)?.location,
                   let pair = dockFactory.make(kind: kind, delta: delta, phase: phase, exitVelocity: velocity,
                       inverted: naturalScroll, source: pointer.eventSource, location: location) else { return }
-            if !capabilities.gestureEvents || (dockPath == .attachedHIDEvent && !capabilities.dockSwipe) {
-                if phase == .ended { fallbackDock(kind: kind, progress: dockFactory.progress) }
-                return
-            }
             let output: (CGEvent?, CGEvent)
             if dockPath == .attachedHIDEvent {
                 guard let attached = DockSwipeEventFactory.attached(from: pair.1, source: pointer.eventSource) else {
@@ -318,6 +338,26 @@ final class QuartzInjector: InputInjector {
     }
     func displayDidSleep() { pointer.displayDidSleep() }
 
+    func settingsDidChange(_ settings: TrackpadSettings) {
+        assertConfined()
+        naturalScroll = settings.naturalScrolling
+    }
+
+    func flush() {
+        assertConfined()
+        if forceLookupDeadline != nil { forceLookupDeadline = nil; inject(.lookUpAtPointer) }
+        if forceTrialStep != nil, let last = ForceEventFactory.steps.indices.last {
+            forceTrialStep = nil
+            _ = postForceTrialStep(last)   // the release stage, so the force state never stays pressed
+        }
+        if let pair = dockEnd {
+            // §6.9.4 safety net: the end the re-posts would have repeated is posted once more right away.
+            if let marker = pair.0 { postDockEvent(marker) }
+            postDockEvent(pair.1)
+            dockEnd = nil
+        }
+    }
+
     /// G-FORCE trial: posts one step of the force sequence; false when the attached event cannot be built.
     private func postForceTrialStep(_ index: Int) -> Bool {
         guard let location = CGEvent(source: nil)?.location,
@@ -331,16 +371,21 @@ final class QuartzInjector: InputInjector {
     /// decision 2026-10-28) — the threshold of the phone's `spaceSwitched` haptic, and a short swipe snaps back
     /// as §10.3 C7 requires instead of switching a whole Space.
     static let fallbackProgressThreshold = 0.5
+    /// The flags a physical Apple keyboard sends with these keys, which the default symbolic hotkeys are registered
+    /// with (`com.apple.symbolichotkeys`: Spaces / Mission Control / App Exposé = arrow + 0x840000 Control|Fn,
+    /// Show Desktop = F11 + 0x800000 Fn). Without the Fn bit the shortcut may not match.
+    static let arrowShortcutFlags: CGEventFlags = [.maskControl, .maskSecondaryFn, .maskNumericPad]
+    static let functionKeyFlags: CGEventFlags = [.maskSecondaryFn]
     private func fallbackDock(kind: DockSwipeKind, progress: Double) {
         guard abs(progress) >= Self.fallbackProgressThreshold else { return }
         let key: CGKeyCode
         let flags: CGEventFlags
         switch kind {
-        case .horizontal: key = progress > 0 ? 124 : 123; flags = .maskControl
-        case .vertical: key = progress > 0 ? 126 : 125; flags = .maskControl
+        case .horizontal: key = progress > 0 ? 124 : 123; flags = Self.arrowShortcutFlags
+        case .vertical: key = progress > 0 ? 126 : 125; flags = Self.arrowShortcutFlags
         case .pinch:
             guard progress > 0 else { logger.notice("Launchpad / Apps has no reliable shortcut fallback"); return }
-            key = 103; flags = []
+            key = 103; flags = Self.functionKeyFlags
         }
         guard let down = CGEvent(keyboardEventSource: pointer.eventSource, virtualKey: key, keyDown: true),
               let up = CGEvent(keyboardEventSource: pointer.eventSource, virtualKey: key, keyDown: false) else { return }
@@ -350,7 +395,6 @@ final class QuartzInjector: InputInjector {
     }
     func tick() {
         assertConfined()
-        pointer.tick()
         let time = now()
         if let deadline = forceLookupDeadline, time >= deadline {
             forceLookupDeadline = nil; inject(.lookUpAtPointer)

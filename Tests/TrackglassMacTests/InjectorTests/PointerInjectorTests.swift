@@ -31,6 +31,20 @@ final class PointerInjectorTests: XCTestCase {
         XCTAssertEqual(pointerEvents.count, 4)
     }
 
+    func testRightClickWhileTheLeftButtonIsHeldKeepsTheLeftDragGoing() {
+        // A two-finger tap during a drag lock (or the drag grace window) clicks right while left stays held.
+        var pointerEvents: [CGEvent] = []
+        let injector = QuartzInjector(postScrollEvent: { _ in }, postPointerEvent: { pointerEvents.append($0) })
+        injector.inject(.button(kind: .left, phase: .down, clickCount: 2))
+        injector.inject(.button(kind: .right, phase: .down, clickCount: 1))
+        injector.inject(.button(kind: .right, phase: .up, clickCount: 1))
+        injector.inject(.pointerMove(dx: 4, dy: 0))
+        XCTAssertEqual(pointerEvents.last?.type, .leftMouseDragged)
+        injector.inject(.button(kind: .left, phase: .up, clickCount: 2))
+        injector.inject(.pointerMove(dx: -4, dy: 0))
+        XCTAssertEqual(pointerEvents.last?.type, .mouseMoved)
+    }
+
     func testSubPointMotionAccumulatesInsteadOfBeingDropped() {
         var pointerEvents: [CGEvent] = []
         let injector = QuartzInjector(postScrollEvent: { _ in }, postPointerEvent: { pointerEvents.append($0) })

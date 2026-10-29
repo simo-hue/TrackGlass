@@ -17,6 +17,9 @@ final class InputListener: @unchecked Sendable {
     private var missingFrames = 0
     private var didLogReady = false
     private var pipeline: InputPipeline?
+    /// Held while a phone is admitted: a menu-bar agent with no visible window is otherwise eligible for App Nap,
+    /// which coalesces the pipeline's 8 ms timer and lowers its priority (§2.4, §7).
+    private var activity: NSObjectProtocol?
     private let statsTimer: DispatchSourceTimer
 
     private let onStatus: @Sendable (UUID, StatusMessage) -> Void
@@ -41,11 +44,15 @@ final class InputListener: @unchecked Sendable {
             self.missingFrames = 0
             self.pipeline?.stop()
             self.pipeline = nil
+            if let activity = self.activity { ProcessInfo.processInfo.endActivity(activity); self.activity = nil }
             if let peerID, let geometry {
                 let pipeline = InputPipeline(queue: self.queue, geometry: geometry)
                 pipeline.onHaptic = { [onHaptic = self.onHaptic] kind in onHaptic(peerID, kind) }
                 pipeline.onRecordingChanged = { [weak self] recording in self?.onRecordingChanged?(recording) }
                 self.pipeline = pipeline
+                self.activity = ProcessInfo.processInfo.beginActivity(
+                    options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+                    reason: "Trackglass is turning a phone's touches into trackpad input")
             }
             for connection in self.connections.values { connection.cancel() }
             self.connections.removeAll()
@@ -59,7 +66,7 @@ final class InputListener: @unchecked Sendable {
             self.connections[id] = connection
             connection.stateUpdateHandler = { [weak self] state in
                 guard let self, let current = self.connections[id] else { return }
-                if case .failed = state { self.connections.removeValue(forKey: ObjectIdentifier(current)) }
+                if case .failed = state { current.cancel(); self.connections.removeValue(forKey: ObjectIdentifier(current)) }
                 if case .cancelled = state { self.connections.removeValue(forKey: ObjectIdentifier(current)) }
             }
             connection.start(queue: self.queue)
@@ -80,12 +87,12 @@ final class InputListener: @unchecked Sendable {
         do {
             let header = try data.withUnsafeBytes { try MessageHeader.decode($0) }
             switch MessageType(rawValue: header.type) {
-            case .inputHeartbeat where data.count == MessageHeader.byteCount:
+            case .inputHeartbeat:   // §4.1: bytes a newer phone appends are ignored
                 if !didLogReady {
                     didLogReady = true
                     logger.info("input ready")
                 }
-                pipeline?.heartbeat()
+                pipeline?.heartbeat(sequence: header.sequence)
             case .touchFrame:
                 if let lastSequence, let gap = MessageHeader.gap(from: lastSequence, to: header.sequence) { missingFrames += gap }
                 lastSequence = header.sequence

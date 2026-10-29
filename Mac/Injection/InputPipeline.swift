@@ -34,6 +34,8 @@ final class InputPipeline: @unchecked Sendable {
         self.engine = GestureEngine(settings: settings, geometry: geometry, acceleration: accelerationModel,
             scrollAcceleration: PointerAccelerationProvider.makeScroll(settings: settings))
         self.injector = injector
+        // Before confinement is armed: the pipeline may be created off its queue (tests); nothing runs on it yet.
+        injector.settingsDidChange(settings)
         (injector as? QuartzInjector)?.confinementQueue = queue
         timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: .milliseconds(8))
@@ -57,12 +59,13 @@ final class InputPipeline: @unchecked Sendable {
         lastFrameTime = frame.frameTime
         lastReceiveTime = receiveTime
         lastInputUptime = lastReceiveTime
-        recorder?.append(frameBytes: data, captureTimeNs: lastReceiveTime)
+        if let recorder, !recorder.append(frameBytes: data, captureTimeNs: lastReceiveTime) { stopRecording() }
         events.clear(); engine.process(frame, into: &events); injectEvents(); updateTimer()
         latency.record(nanoseconds: DispatchTime.now().uptimeNanoseconds &- receiveTime)
     }
     func resetLatency() { dispatchPrecondition(condition: .onQueue(queue)); latency.reset() }
     private var lastSequence: UInt32?
+    private var prematureHeartbeatSequence: UInt32?
     func setGeometry(_ geometry: EngineGeometry) {
         dispatchPrecondition(condition: .onQueue(queue))
         guard geometry != self.geometry else { return }
@@ -70,13 +73,22 @@ final class InputPipeline: @unchecked Sendable {
         events.clear(); engine.setGeometry(geometry, into: &events); injectEvents(); updateTimer()
     }
     func setSettings(_ settings: TrackpadSettings) {
-        dispatchPrecondition(condition: .onQueue(queue)); engine.setSettings(settings)
+        dispatchPrecondition(condition: .onQueue(queue)); engine.setSettings(settings); injector.settingsDidChange(settings)
     }
     func displayDidSleep() { dispatchPrecondition(condition: .onQueue(queue)); injector.displayDidSleep() }
 
-    func heartbeat() {
+    /// §4.7: a heartbeat says "no finger is down as of the frame with this `sequence`". One older than the last
+    /// accepted frame was overtaken by a newer touch and is ignored. One naming a frame not received yet means
+    /// frames are still in flight: it is ignored once, and acted on when the next heartbeat (0.5 s later) still
+    /// names that frame — then the frames were lost and the lift-off must not wait for the 1.5 s timeout.
+    func heartbeat(sequence: UInt32) {
         dispatchPrecondition(condition: .onQueue(queue))
         lastInputUptime = DispatchTime.now().uptimeNanoseconds
+        if let lastSequence, sequence != lastSequence {
+            guard MessageHeader.sequence(sequence, isNewerThan: lastSequence) else { return }
+            guard prematureHeartbeatSequence == sequence else { prematureHeartbeatSequence = sequence; return }
+        }
+        prematureHeartbeatSequence = nil
         guard engine.hasActiveContacts else { return }
         events.clear(); engine.forceLiftoff(releaseDragLock: false, into: &events); injectEvents(); updateTimer()
     }
@@ -107,6 +119,8 @@ final class InputPipeline: @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         if timerRunning { timer.suspend(); timerRunning = false }
         events.clear(); engine.forceLiftoff(releaseDragLock: true, into: &events); injectEvents()
+        // The timer will not run again: whatever the injector still had scheduled is posted now (§6.9.4).
+        injector.flush()
         stopRecording()
     }
 

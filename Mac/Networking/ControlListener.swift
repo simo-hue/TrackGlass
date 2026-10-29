@@ -26,6 +26,9 @@ final class ControlListener {
     private var admitted: [UUID: UUID] = [:]
     private var generation = UUID()
     private let logger = Logger(subsystem: "app.trackglass.mac", category: "net")
+    /// A session that has received nothing for this long (both sides PING every second) is a stale one the same
+    /// phone may supersede; one that is still talking is live and is never ended by another HELLO.
+    static let staleSessionSilenceNs: UInt64 = 1_500_000_000
     // Appendix A defaults until TrackpadPreferences is introduced in M4.4.
     static let defaultSettings = SettingsMessage(naturalScrolling: 1, tapToClick: 1,
         forceClickEnabled: 1, hapticsSuggested: 1, trackingSpeed: 0.6875, secondaryClickMode: 1)
@@ -88,14 +91,23 @@ final class ControlListener {
                     }
                     let generation = self.generation
                     // §6.4: read the Mac's preferences immediately on session start, so WELCOME and the
-                    // engine's first snapshot never lag a change made inside the last 2 s poll interval.
-                    if self.livePreferences { self.trackpadSettings = self.preferences.readNow() }
+                    // engine's first snapshot never lag a change made inside the last 2 s poll interval. A change
+                    // found here is applied like a polled one: the session already running (this HELLO may be
+                    // turned away as busy) gets its SETTINGS and its engine the new snapshot.
+                    if self.livePreferences {
+                        let fresh = self.preferences.readNow()
+                        if fresh != self.trackpadSettings { self.apply(fresh) }
+                    }
                     // The same phone reconnecting (Wi-Fi blip, app relaunch) supersedes its stale session
-                    // instead of waiting for the heartbeat timeout and being told it is busy with itself.
-                    if let stale = self.admitted.first(where: { $0.value == hello.peerID })?.key, stale != id {
+                    // instead of waiting for the heartbeat timeout and being told it is busy with itself. A session
+                    // that is still talking is not stale: a HELLO cannot prove which paired phone sent it (no
+                    // public API exposes the negotiated PSK identity), so it never ends a live session (§3.5).
+                    if let stale = self.admitted.first(where: { $0.value == hello.peerID })?.key, stale != id,
+                       let staleChannel = self.channels[stale],
+                       MonotonicClock.nanoseconds() &- staleChannel.lastReceivedAt >= Self.staleSessionSilenceNs {
                         self.admitted.removeValue(forKey: stale)
                         await self.coordinator.release(id: stale)
-                        self.channels[stale]?.end(reason: 0, message: "Superseded by a reconnect")
+                        staleChannel.end(reason: 0, message: "Superseded by a reconnect")
                     }
                     let busyName = await self.coordinator.admit(id: id, peer: hello)
                     guard self.channels[id] === channel, generation == self.generation else {

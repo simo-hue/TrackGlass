@@ -173,6 +173,9 @@ final class PairingService {
     }
 
     func close() {
+        // A phone waiting for the Allow click is told the pairing ended (BYE{0}, §3.4) instead of seeing the
+        // connection drop, which it could only report as an invalid response or a wrong code.
+        if approvalContinuation != nil { for connection in Array(connections.values) { sendBye(on: connection) } }
         respondToPendingPairing(allow: false)
         listenerKey = nil
         windowID = UUID()
@@ -208,16 +211,36 @@ final class PairingService {
                 case .ready:
                     self.handshakesReady.insert(ObjectIdentifier(connection))
                     self.receive(connection)
-                case .failed, .waiting:
-                    let handshakeFailed = !self.handshakesReady.contains(ObjectIdentifier(connection))
+                case .failed(let error), .waiting(let error):
+                    // Only a handshake that got as far as testing the key spends a code (§3.4): a port scan or a
+                    // phone that gives up mid-handshake must not rotate the QR/PIN or close the window.
+                    let keyAttempt = !self.handshakesReady.contains(ObjectIdentifier(connection)) && Self.isKeyAttempt(error)
                     self.remove(connection)
-                    if handshakeFailed { self.rotateCredentials() }
+                    if keyAttempt { self.rotateCredentials() }
                 case .cancelled: self.remove(connection)
                 default: break
                 }
             }
         }
         connection.start(queue: .main)
+    }
+
+    /// TLS failures other than the peer simply going away (close_notify / abort before the key was tried).
+    nonisolated static func isKeyAttempt(_ error: NWError) -> Bool {
+        guard case let .tls(status) = error else { return false }
+        // errSSLClosedGraceful −9805, errSSLClosedAbort −9806, errSSLClosedNoNotify −9816
+        return ![-9805, -9806, -9816].contains(status)
+    }
+
+    /// While the user is asked, the phone sends nothing; any callback here (end of stream, error, stray data)
+    /// means it gave up or misbehaved, so the connection is dropped and the question withdrawn.
+    private func watchForDeparture(_ connection: NWConnection) {
+        connection.receiveMessage { [weak self, weak connection] _, _, _, _ in
+            Task { @MainActor in
+                guard let self, let connection, self.connections[ObjectIdentifier(connection)] != nil else { return }
+                self.remove(connection)
+            }
+        }
     }
 
     private func receive(_ connection: NWConnection) {
@@ -242,6 +265,7 @@ final class PairingService {
                     self.pin = nil
                     self.port = nil
                     for other in Array(self.connections.values) where other !== connection { self.remove(other) }
+                    self.watchForDeparture(connection)
                     // §3.4 hardening: the user confirms on the Mac before anything is stored or any key material
                     // is sent; then both sides derive the LTK from a fresh X25519 exchange (it never crosses the wire).
                     let generation = self.generation
@@ -275,7 +299,14 @@ final class PairingService {
                         Task { @MainActor in
                             guard let self, self.generation == generation else { return }
                             if let connection { self.remove(connection) }
-                            self.status = error == nil ? "Paired with \(request.name)" : "Pairing response failed. Open a new window to retry."
+                            if error == nil {
+                                self.status = "Paired with \(request.name)"
+                            } else {
+                                // The phone never got the response, so it has no key: keep no half pairing.
+                                try? self.store.delete(peerID: request.peerID)
+                                self.refreshPeers()
+                                self.status = "Pairing response failed. Open a new window to retry."
+                            }
                         }
                     })
                 } catch { self.fail("Pairing failed: \(error.localizedDescription)") }

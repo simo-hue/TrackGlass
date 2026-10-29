@@ -17,14 +17,23 @@ final class ReplayRecorder {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let filename = formatter.string(from: Date()).replacingOccurrences(of: ":", with: "-") + ".tgrec"
         url = directory.appendingPathComponent(filename)
-        // Streamed to disk as frames arrive: a crash keeps what was recorded and memory stays flat (§7).
+        // Streamed to disk as frames arrive: a crash loses at most the last quarter second and memory stays flat (§7).
         writer = try TGRecFileWriter(header: try TGRecHeader(origin: .mac,
             surfaceWidthMM: geometry.widthMM, surfaceHeightMM: geometry.heightMM), url: url)
     }
 
-    func append(frameBytes: Data, captureTimeNs: UInt64) {
-        do { try writer.append(captureTimeNs: captureTimeNs, frameBytes: frameBytes) }
-        catch { logger.error("cannot append replay frame: \(error.localizedDescription, privacy: .public)") }
+    /// False when the frame could not be written (disk full, volume gone); the writer has closed itself and the
+    /// pipeline stops the recording, so the failure is logged once instead of on every frame (§7).
+    func append(frameBytes: Data, captureTimeNs: UInt64) -> Bool {
+        do {
+            try writer.append(captureTimeNs: captureTimeNs, frameBytes: frameBytes)
+            return true
+        } catch TGRecError.invalidFrameLength {
+            return true   // a frame the recording format cannot hold is skipped, the recording goes on
+        } catch {
+            logger.error("recording stopped: cannot write replay frame: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
     }
 
     func finish() throws { try writer.finish() }

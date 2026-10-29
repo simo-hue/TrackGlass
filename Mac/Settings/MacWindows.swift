@@ -40,10 +40,14 @@ final class MacWindowCoordinator {
         }
     }
     func showWelcomeIfNeeded(force: Bool = false) {
-        guard force || !UserDefaults.standard.bool(forKey: "welcomeCompleted") else { return }
+        let completed = UserDefaults.standard.bool(forKey: "welcomeCompleted")
+        guard force || !completed else { return }
+        // A forced re-show (Accessibility revoked) is rebuilt so its login toggle shows the current setting: only the
+        // very first Welcome proposes "start at login" on; afterwards the user's own choice is kept.
+        if force { welcome?.close(); welcome = nil }
         if welcome == nil {
             welcome = window(title: "Welcome to Trackglass", size: NSSize(width: 480, height: 380),
-                content: WelcomeContent(permission: permission, model: model) { [weak self] in
+                content: WelcomeContent(permission: permission, model: model, startAtLogin: completed ? model.loginEnabled : true) { [weak self] in
                     UserDefaults.standard.set(true, forKey: "welcomeCompleted"); self?.welcome?.close()
                 })
         }
@@ -75,7 +79,11 @@ private struct WelcomeContent: View {
     @Bindable var permission: AccessibilityPermission
     @Bindable var model: MacSettingsModel
     let finish: () -> Void
-    @State private var startAtLogin = true
+    @State private var startAtLogin: Bool
+    init(permission: AccessibilityPermission, model: MacSettingsModel, startAtLogin: Bool, finish: @escaping () -> Void) {
+        _permission = Bindable(permission); _model = Bindable(model); self.finish = finish
+        _startAtLogin = State(initialValue: startAtLogin)
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Welcome to Trackglass").font(.largeTitle.bold())
@@ -87,7 +95,7 @@ private struct WelcomeContent: View {
             HStack {
                 Spacer()
                 Button("Get started") {
-                    model.setLoginEnabled(startAtLogin)
+                    if startAtLogin != model.loginEnabled { model.setLoginEnabled(startAtLogin) }
                     finish()
                 }.buttonStyle(.borderedProminent).disabled(!permission.isTrusted)
             }

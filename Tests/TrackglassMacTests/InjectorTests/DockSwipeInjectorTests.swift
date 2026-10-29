@@ -86,6 +86,56 @@ final class DockSwipeInjectorTests: XCTestCase {
         time = 2_000_000_000; injector.tick(); XCTAssertEqual(events.count, 14)
     }
 
+    func testKeyboardFallbackSendsTheModifiersTheSystemShortcutsAreRegisteredWith() {
+        // com.apple.symbolichotkeys: Spaces / Mission Control / App Exposé = arrow + Control|Fn, Show Desktop = F11 + Fn.
+        var keys: [CGEvent] = []
+        let injector = QuartzInjector(dockPath: .attachedHIDEvent, capabilities: PrivateAPICapabilities(),
+            postKeyEvent: { keys.append($0) }, postDockEvent: { _ in XCTFail("Private event posted") })
+        for kind in [DockSwipeKind.horizontal, .vertical] {
+            keys.removeAll()
+            injector.inject(.dockSwipe(kind: kind, progressDelta: 0.7, phase: .began, exitVelocity: 0))
+            injector.inject(.dockSwipe(kind: kind, progressDelta: 0, phase: .ended, exitVelocity: 1))
+            XCTAssertEqual(keys.count, 2)
+            XCTAssertTrue(keys.allSatisfy { $0.flags.contains([.maskControl, .maskSecondaryFn]) }, "\(kind)")
+        }
+        keys.removeAll()
+        injector.inject(.dockSwipe(kind: .pinch, progressDelta: 0.7, phase: .began, exitVelocity: 0))
+        injector.inject(.dockSwipe(kind: .pinch, progressDelta: 0, phase: .ended, exitVelocity: 1))
+        XCTAssertEqual(keys.first?.getIntegerValueField(.keyboardEventKeycode), 103)
+        XCTAssertTrue(keys.allSatisfy { $0.flags.contains(.maskSecondaryFn) && !$0.flags.contains(.maskControl) })
+    }
+
+    func testDockSwipesFollowTheScrollDirectionSettingBeforeAnyScroll() {
+        var events: [CGEvent] = []
+        var capabilities = PrivateAPICapabilities()
+        capabilities.gestureEvents = true
+        let injector = QuartzInjector(dockPath: .legacyFields, capabilities: capabilities, postDockEvent: { events.append($0) })
+        injector.settingsDidChange(TrackpadSettings(naturalScrolling: false))
+        injector.inject(.dockSwipe(kind: .horizontal, progressDelta: 0.3, phase: .began, exitVelocity: 0))
+        XCTAssertEqual(events.last?.getIntegerValueField(TGFieldDockInverted), 0)
+        injector.settingsDidChange(TrackpadSettings(naturalScrolling: true))
+        injector.inject(.dockSwipe(kind: .horizontal, progressDelta: 0.3, phase: .began, exitVelocity: 0))
+        XCTAssertEqual(events.last?.getIntegerValueField(TGFieldDockInverted), 1)
+    }
+
+    func testFlushPostsAPendingDockEndAtOnce() {
+        // A session that ends inside the re-post window must not drop the §6.9.4 safety-net end.
+        var time: UInt64 = 0
+        var events: [CGEvent] = []
+        var capabilities = PrivateAPICapabilities()
+        capabilities.gestureEvents = true
+        let injector = QuartzInjector(dockPath: .legacyFields, capabilities: capabilities,
+                                      postDockEvent: { events.append($0) }, now: { time })
+        injector.inject(.dockSwipe(kind: .horizontal, progressDelta: 0.7, phase: .began, exitVelocity: 0))
+        injector.inject(.dockSwipe(kind: .horizontal, progressDelta: 0, phase: .ended, exitVelocity: 1))
+        XCTAssertEqual(events.count, 4)
+        injector.flush()
+        XCTAssertEqual(events.count, 6)
+        XCTAssertFalse(injector.needsTick)
+        time = 1_000_000_000; injector.tick()
+        XCTAssertEqual(events.count, 6)
+    }
+
     func testKeyboardFallbackNeedsHalfASwipe() {
         // Owner decision 2026-10-28: the discrete fallback fires only at |progress| ≥ 0.5 (the spaceSwitched haptic's
         // threshold); a shorter swipe snaps back (§10.3 C7: a 40 mm swipe switches nothing).

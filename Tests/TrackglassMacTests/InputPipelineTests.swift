@@ -47,11 +47,43 @@ final class InputPipelineTests: XCTestCase {
             pipeline.consume(Self.data(sequence: 1, time: 1_000_000_000, phase: .began))
             pipeline.consume(Self.data(sequence: 2, time: 1_100_000_000, phase: .ended))
             pipeline.consume(Self.data(sequence: 3, time: 1_200_000_000, phase: .began))
-            pipeline.heartbeat()
+            XCTAssertTrue(injector.events.contains(.button(kind: .left, phase: .down, clickCount: 2)))
+            // Frames 4 (ended) and 5 (lift-off) are lost; the phone's heartbeats name frame 5. The first one is
+            // taken for frames still in flight, the second one (0.5 s later) forces the lift-off — before `stop()`.
+            pipeline.heartbeat(sequence: 5)
+            XCTAssertFalse(injector.events.contains(.button(kind: .left, phase: .up, clickCount: 2)))
+            pipeline.heartbeat(sequence: 5)
+            XCTAssertTrue(injector.events.contains(.button(kind: .left, phase: .up, clickCount: 2)))
             pipeline.stop()
         }
-        XCTAssertTrue(injector.events.contains(.button(kind: .left, phase: .down, clickCount: 2)))
-        XCTAssertTrue(injector.events.contains(.button(kind: .left, phase: .up, clickCount: 2)))
+    }
+
+    func testHeartbeatForTheLastFrameActsAtOnceAndAStaleOneIsIgnored() {
+        let queue = DispatchQueue(label: "pipeline-heartbeat-order-test")
+        let injector = RecordingInjector()
+        let pipeline = InputPipeline(queue: queue,
+            geometry: EngineGeometry(widthMM: 100, heightMM: 60, isLandscape: true),
+            settings: TrackpadSettings(dragging: true), injector: injector)
+        queue.sync {
+            pipeline.consume(Self.data(sequence: 1, time: 1_000_000_000, phase: .began))
+            pipeline.consume(Self.data(sequence: 2, time: 1_100_000_000, phase: .ended))
+            pipeline.consume(Self.data(sequence: 3, time: 1_200_000_000, phase: .began))
+            pipeline.heartbeat(sequence: 2)   // sent before frame 3, delivered after it: stale
+            XCTAssertFalse(injector.events.contains(.button(kind: .left, phase: .up, clickCount: 2)))
+            pipeline.heartbeat(sequence: 3)   // names the last frame the Mac has: acted on at once
+            XCTAssertTrue(injector.events.contains(.button(kind: .left, phase: .up, clickCount: 2)))
+            pipeline.stop()
+        }
+    }
+
+    func testStopPostsWhatTheInjectorStillHadScheduled() {
+        let queue = DispatchQueue(label: "pipeline-flush-test")
+        let injector = RecordingInjector()
+        let pipeline = InputPipeline(queue: queue, geometry: EngineGeometry(widthMM: 100, heightMM: 60, isLandscape: true),
+                                     settings: TrackpadSettings(naturalScrolling: false), injector: injector)
+        XCTAssertEqual(injector.settings?.naturalScrolling, false, "the injector learns the settings with the pipeline")
+        queue.sync { pipeline.stop() }
+        XCTAssertEqual(injector.flushCount, 1)
     }
 
     func testContactSilenceReleasesHeldButtonAfterLiftoffTimeout() {
@@ -115,9 +147,13 @@ private final class RecordingInjector: InputInjector {
     private var storedEvents: [GestureEvent] = []
     var onEvent: ((GestureEvent) -> Void)?
     var events: [GestureEvent] { lock.lock(); defer { lock.unlock() }; return storedEvents }
+    private(set) var settings: TrackpadSettings?
+    private(set) var flushCount = 0
     func inject(_ event: GestureEvent) {
         lock.lock(); storedEvents.append(event); let callback = onEvent; lock.unlock()
         callback?(event)
     }
     func tick() {}
+    func settingsDidChange(_ settings: TrackpadSettings) { self.settings = settings }
+    func flush() { flushCount += 1 }
 }
