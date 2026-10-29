@@ -118,3 +118,30 @@ public struct PairingStore: Sendable {
         let pairedAt: Date
     }
 }
+
+extension PairingStoreError: LocalizedError {
+    /// Plain language for menus and alerts instead of "The operation couldn't be completed (… error -34018.)".
+    public var errorDescription: String? {
+        switch self {
+        case .keychain(let status):
+            let message = SecCopyErrorMessageString(status, nil) as String? ?? "Keychain error \(status)."
+            if let hint = Self.hint(for: status) { return "\(message) (\(status)) \(hint)" }
+            return "\(message) (\(status))"
+        case .invalidRecord:
+            return "A stored pairing record is damaged. Forget the device and pair it again."
+        }
+    }
+
+    private static func hint(for status: OSStatus) -> String? {
+        switch status {
+        case errSecMissingEntitlement:
+            return "This copy of the app cannot use its Keychain; reinstall the official build."
+        case errSecInteractionNotAllowed:
+            return "The Keychain is locked; unlock the device and try again."
+        case errSecDuplicateItem:
+            return "The device is already paired; forget it first."
+        default:
+            return nil
+        }
+    }
+}

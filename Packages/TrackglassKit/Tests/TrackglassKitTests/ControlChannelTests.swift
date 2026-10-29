@@ -273,7 +273,7 @@ final class ControlChannelTests: XCTestCase {
     func testByeReasonsMapToUserFacingMessagesOnThePeer() async throws {
         // §4.5: 1 incompatible, 2 busy, 3 unpaired, 4 sleeping; 0 (user) and anything unknown → "Disconnected".
         for (reason, expected) in [(UInt8(1), "Incompatible version"), (2, "The Mac is busy"), (3, "Pair again"),
-                                   (4, "The Mac went to sleep"), (0, "Disconnected"), (9, "Disconnected")] {
+                                   (4, "The Mac went to sleep"), (5, "Disconnected on the Mac"), (0, "Disconnected"), (9, "Disconnected")] {
             let box = Box()
             let (listener, endpoint) = try await listener { connection in
                 Task { @MainActor in
@@ -292,7 +292,8 @@ final class ControlChannelTests: XCTestCase {
             try await eventually { clientClosed != nil && box.serverClosedWith != nil }
             XCTAssertEqual(clientClosed, "sent bye")
             XCTAssertEqual(box.serverClosedWith, expected, "reason \(reason)")
-            XCTAssertEqual(box.servers.last?.closedFinally, reason == 1 || reason == 3, "only unpaired/incompatible are final")
+            XCTAssertEqual(box.servers.last?.closedFinally, reason == 1 || reason == 3 || reason == 5,
+                           "only unpaired, incompatible and disconnected-on-the-Mac are final")
             listener.cancel(); box.servers.forEach { $0.close() }
         }
     }

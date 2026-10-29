@@ -6,6 +6,8 @@ import OSLog
 public enum ControlCloseMessage {
     public static let pairAgain = "Pair again"
     public static let incompatible = "Incompatible version"
+    /// BYE reason 5: the Mac's user disconnected this phone; it does not reconnect by itself (2026-10-29).
+    public static let disconnectedOnMac = "Disconnected on the Mac"
 }
 
 /// Low-rate control traffic only; touch datagrams never enter this channel.
@@ -30,7 +32,7 @@ public final class ControlChannel {
     /// `MonotonicClock` time of the last message received (or of `start()`). Both sides PING every second, so a
     /// live peer is never silent for much longer than that.
     public private(set) var lastReceivedAt: UInt64 = MonotonicClock.nanoseconds()
-    /// True when the peer said retrying cannot help: BYE `unpaired` or `incompatible` (§4.5), or a message this
+    /// True when the peer said retrying cannot help: BYE `unpaired`, `incompatible` or `disconnected on the Mac` (§4.5), or a message this
     /// side could not understand. A failed TLS handshake is not final: the Mac also aborts handshakes while it
     /// goes to sleep or restarts its listener, which a reconnect must survive.
     public private(set) var closedFinally = false
@@ -70,8 +72,9 @@ public final class ControlChannel {
         transmit(message, sentAt: MonotonicClock.nanoseconds())
     }
 
-    private func transmit(_ message: ControlMessage, sentAt: UInt64, terminal: String? = nil) {
-        guard !closed, !closing else { return }
+    private func transmit(_ message: ControlMessage, sentAt: UInt64, terminal: String? = nil,
+                          sent: (@MainActor @Sendable () -> Void)? = nil) {
+        guard !closed, !closing else { sent?(); return }
         do {
             let data = try message.encode(sequence: sequence, sentAt: sentAt)
             sequence &+= 1
@@ -81,27 +84,35 @@ public final class ControlChannel {
             ])
             connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { [weak self] error in
                 Task { @MainActor in
+                    defer { sent?() }
                     guard let self else { return }
                     if let terminal { self.close(terminal) }
                     else if error != nil { self.close("Connection lost") }
                 }
             })
-        } catch { close("Invalid control message") }
+        } catch { close("Invalid control message"); sent?() }
     }
 
-    /// §4.5 BYE reasons: 0 user, 1 incompatible, 2 busy, 3 unpaired, 4 sleeping.
+    /// §4.5 BYE reasons: 0 user, 1 incompatible, 2 busy, 3 unpaired, 4 sleeping, 5 disconnected on the Mac.
     static func message(forBye reason: UInt8) -> String {
         switch reason {
         case 1: return ControlCloseMessage.incompatible
         case 2: return "The Mac is busy"
         case 3: return ControlCloseMessage.pairAgain
         case 4: return "The Mac went to sleep"
+        case 5: return ControlCloseMessage.disconnectedOnMac
         default: return "Disconnected"
         }
     }
 
     public func end(reason: UInt8 = 0, message: String = "Disconnected") {
         transmit(.bye(ByeMessage(reason: reason)), sentAt: MonotonicClock.nanoseconds(), terminal: message)
+    }
+
+    /// `end(reason:message:)` that calls `sent` once the BYE has been processed by the network stack — or right away
+    /// when it cannot be sent (channel already closing) — so a caller can end a background task after it.
+    public func end(reason: UInt8 = 0, message: String = "Disconnected", sent: @escaping @MainActor @Sendable () -> Void) {
+        transmit(.bye(ByeMessage(reason: reason)), sentAt: MonotonicClock.nanoseconds(), terminal: message, sent: sent)
     }
 
     public func startHeartbeat() {
@@ -154,7 +165,7 @@ public final class ControlChannel {
                             if now >= pong.echoSentAt { self.onRTT?(UInt32(clamping: (now - pong.echoSentAt) / 1_000)) }
                         }
                     case .bye(let bye):
-                        self.closedFinally = bye.reason == 1 || bye.reason == 3
+                        self.closedFinally = bye.reason == 1 || bye.reason == 3 || bye.reason == 5
                         self.close(Self.message(forBye: bye.reason))
                         return
                     case .unknown(let type):
