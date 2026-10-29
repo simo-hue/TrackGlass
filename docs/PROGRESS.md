@@ -47,7 +47,7 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 | M6.1 mac: private fields | ☑ | Five private API tests and all 34 Mac hosted tests pass. HIDEvent resolves; both attachment symbols absent, dockSwipe=false; gestureEvents=true. Commit: mac: private fields. |
 | M6.2 mac: scroll preferences | ☑ | Implemented with owner-approved SETTINGS/WELCOME extension. 33 Kit, 10 Engine (one optimized-only skip), 36 Mac and 17 iOS tests pass. Code committed in 5c1057f. Ticked 2026-10-28 (AUTO-only step). |
 | M6.3 scroll | ☐ | Implemented with resting-thumb protection under owner-authorized discretion. All engine fixtures and 38 Mac tests pass. G-DIR physical check deferred; code committed in 5c1057f. |
-| M6.4 scroll acceleration | ☐ | G-SCR selects Apple scroll curves (present in reference archive). Independent-axis history/parametric model implemented; 15 engine tests and Mac hosted regression pass. Physical feel deferred; code committed in 5c1057f. |
+| M6.4 scroll acceleration | ☐ | G-SCR selects Apple scroll curves (present in reference archive); 2026-10-29: made opt-in (`TGUseAppleScrollCurves`) after the port measured 3–23 × the trackpad's distance — the §6.8 constant model ships until `tgaccel` data verifies the curve units. Independent-axis history/parametric model implemented; 15 engine tests and Mac hosted regression pass. Physical feel deferred; code committed in 5c1057f. |
 | M6.5 scroll momentum | ☐ | Implemented; decay/touch-cancellation fixtures and synthetic-liftoff/disabled-inertia tests pass. Physical feel deferred; code committed in 5c1057f. |
 | M6.6 pinch and rotate | ☐ | Implemented; three required fixtures, concurrent/cancellation tests and Mac field assertions pass. Physical app checks deferred; code committed in 5c1057f. |
 | M6.7 smart zoom | ☐ | Implemented; smart zoom/delayed secondary fixtures and disconnect tests pass. 23 engine tests (one optimized-only skip), Mac hosted tests pass. Physical checks deferred; code committed in 5c1057f. |
@@ -62,11 +62,11 @@ Tick a step only when its test passed and the commit is made. Keep notes to one 
 | M7.8 mac: gesture fallbacks | ☐ | Implemented keyboard fallbacks and reduced-mode menu; forced missing-capability tests pass. Physical acceptance pending. |
 | M7.9 calibrate gestures | ☐ | final values:  |
 | M8.1 mac: preferences verified | ☐ | keys corrected:  |
-| M8.2 haptics | ☐ |  |
-| M8.3a ios: themes | ☐ |  |
-| M8.3b ios: settings sheet | ☐ |  |
-| M8.4 ios: hud | ☐ |  |
-| M8.5 ios: onboarding | ☐ |  |
+| M8.2 haptics | ☐ | Implemented: Mac sends HAPTIC for click/secondary/force/drag lock/Space switch; `HapticEngine` plays the §5.6 patterns with CoreHaptics (prewarmed, cached players, async start, reset/stop handlers) and a UIFeedbackGenerator fallback; on/off and strength in `UserDefaults`, controls hidden on devices without a Taptic Engine (most iPads). `HapticEngineTests` pass in CI. Manual feel check deferred. |
+| M8.3a ios: themes | ☐ | Implemented: `Theme`/`ThemeStore`, five themes incl. Custom (§5.7), `SurfaceRenderer` with pooled CALayer halos updated in one CATransaction per display-link tick, thermal suppression (M10.5). `ThemeTests` (round-trip) and `SurfaceRendererTests` pass in CI. Manual switch/lag check and Instruments run deferred. |
+| M8.3b ios: settings sheet | ☐ | Implemented: grip button in a sibling hosting controller (never sends touches), `SettingsSheet` with Mac / Appearance / Feel / Diagnostics (latency overlay, Record session → share sheet, origin 1) / About sections. CI green. Manual grip/recording check deferred. |
+| M8.4 ios: hud | ☐ | Implemented: status pill (Mac name · one-way ms, "—" before the first RTT, 2 s auto-hide, never takes touches, tap-to-click notice), latency overlay (RTT sparkline, loss ‰, fps) fed by the once-per-second STATUS. `ConnectionStateTests` pass in CI. Manual check deferred. |
+| M8.5 ios: onboarding | ☐ | Implemented: three-page `OnboardingView` (+ iPad page, M8.7) with download link and Copy button, `MacsListView` (connect / forget / pair new, connected Mac marked), `.noMac` overlay listing paired Macs with the last outcome and a reconnecting state. `NoMacPanelTests` pass in CI. Manual onboarding/forget/re-pair checks deferred. |
 | M8.6a mac: welcome window | ☐ | Implemented: first-launch Welcome with Accessibility polling, System Settings link, SMAppService login toggle (default on). Shown again on revocation. Manual first-launch/reboot checks deferred; code committed in 5c1057f. |
 | M8.6b mac: settings window | ☐ | Implemented: General/Devices/Advanced/About tabs, §6.1 menu, single-instance guard. Manual tab/forget/second-copy checks deferred; code committed in 5c1057f. |
 | M8.7 ios: ipad | ☐ | Implemented: all iPad orientations, SURFACE re-sent on every bounds change (Stage Manager/Split View), iPad-only onboarding page; Pencil ignored since M2.2. iPad manual checks deferred (Developer Mode required); code committed in 5c1057f. |
