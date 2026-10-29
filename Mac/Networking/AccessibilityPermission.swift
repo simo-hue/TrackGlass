@@ -9,9 +9,14 @@ final class AccessibilityPermission {
     private var pollTicks = 0
     var onChange: ((Bool) -> Void)?
 
-    func requestAndMonitor() {
-        let prompt = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        update(AXIsProcessTrustedWithOptions(prompt))
+    /// `prompt`: show the system's Accessibility prompt if not trusted yet — only at launch (§6.2); later checks
+    /// (wake, user-session switch) are silent.
+    func requestAndMonitor(prompt: Bool = true) {
+        if prompt {
+            update(AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary))
+        } else {
+            update(AXIsProcessTrusted())
+        }
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in

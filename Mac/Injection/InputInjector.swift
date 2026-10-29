@@ -31,9 +31,27 @@ final class PointerState {
     func displayDidSleep() { needsDisplayWake = true }
     private var lastActivityTime = DispatchTime.now().uptimeNanoseconds
     private let post: (CGEvent) -> Void
-    init(post: @escaping (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) }) {
-        self.post = post
+    private let now: () -> UInt64
+    private let queryLocation: () -> CGPoint?
+    /// Where the last pointer event this process posted put the pointer, and when (P6, §7). Within
+    /// `locationCacheNs` of that post the pointer is still there, so every event of a gesture is placed without
+    /// asking the window server (`CGEvent(source: nil)` allocates an event and costs an IPC round trip per call).
+    /// After a pause the position is queried again: the user may have moved another mouse or trackpad meanwhile.
+    private var lastPosition: CGPoint?
+    private var lastPostTime: UInt64 = 0
+    static let locationCacheNs: UInt64 = 50_000_000
+    init(post: @escaping (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) },
+         now: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
+         queryLocation: @escaping () -> CGPoint? = { CGEvent(source: nil)?.location }) {
+        self.post = post; self.now = now; self.queryLocation = queryLocation
         eventSource = Self.sharedEventSource
+    }
+    /// The pointer position events are posted at: the cached one shortly after a pointer post, else the live one.
+    func location() -> CGPoint? {
+        let time = now()
+        if let lastPosition, time >= lastPostTime, time - lastPostTime < Self.locationCacheNs { return lastPosition }
+        lastPosition = nil
+        return queryLocation()
     }
     /// §6.7: one `CGEventSource(.hidSystemState)` for the process, with local-event suppression disabled so
     /// posting never suppresses the user's physical devices. Sessions come and go; the source does not.
@@ -59,7 +77,7 @@ final class PointerState {
     /// Posts `.mouseMoved`, or `.leftMouseDragged` / `.rightMouseDragged` while that button is held (§6.7),
     /// so AppKit drag tracking (selection, window moves, drag-and-drop) sees the motion.
     func move(dx: Double, dy: Double, heldButton: ButtonKind? = nil) {
-        guard let current = CGEvent(source: nil)?.location else { return }
+        guard let current = location() else { return }
         declareActivityIfNeeded()
         remainderX += dx; remainderY += dy
         let ix = remainderX.rounded(), iy = remainderY.rounded()
@@ -79,6 +97,7 @@ final class PointerState {
         event.setIntegerValueField(.mouseEventDeltaX, value: Int64(ix))
         event.setIntegerValueField(.mouseEventDeltaY, value: Int64(iy))
         post(event)
+        lastPosition = position; lastPostTime = now()
     }
 }
 
@@ -193,7 +212,12 @@ final class QuartzInjector: InputInjector {
     private var dockEnd: (CGEvent?, CGEvent)?
     private var dockRepeatDeadline: UInt64 = 0
     private var dockFinalDeadline: UInt64 = 0
+    /// The scroll direction of the applied settings (`settingsDidChange`, from the engine's applied snapshot) and of
+    /// the last scroll. A Dock swipe and a momentum coast latch it when they begin (F11, §6.4): a settings change
+    /// that lands mid-gesture must not flip the direction of the gesture under the fingers.
     private var naturalScroll = true
+    private var dockInverted = true
+    private var momentumNatural = true
     /// Fallback Dock path (§6.9.4): only the accumulated progress matters, no private events are built.
     private var fallbackProgress = 0.0
     /// Both buttons are tracked: a right click while the left button is held (drag lock, grace window) must not
@@ -218,8 +242,9 @@ final class QuartzInjector: InputInjector {
          postKeyEvent: @escaping (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) },
          postDockEvent: @escaping (CGEvent) -> Void = { $0.post(tap: .cgSessionEventTap) },
          postPointerEvent: @escaping (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) },
-         now: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
-        pointer = PointerState(post: postPointerEvent)
+         now: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
+         queryLocation: @escaping () -> CGPoint? = { CGEvent(source: nil)?.location }) {
+        pointer = PointerState(post: postPointerEvent, now: now, queryLocation: queryLocation)
         self.capabilities = capabilities; self.trials = trials; self.postKeyEvent = postKeyEvent
         self.dockPath = dockPath; self.postDockEvent = postDockEvent; self.now = now
         self.postScrollEvent = postScrollEvent
@@ -233,17 +258,18 @@ final class QuartzInjector: InputInjector {
         switch event {
         case .magnify, .rotate, .smartZoom, .gestureBegin, .gestureEnd:
             guard capabilities.gestureEvents else { return }
-            guard let location = CGEvent(source: nil)?.location,
+            guard let location = pointer.location(),
                   let gesture = GestureEventFactory.make(event, source: pointer.eventSource, location: location) else { return }
             postScrollEvent(gesture)
         case let .scrollMomentum(phase, dx, dy):
-            guard let location = CGEvent(source: nil)?.location,
-                  let wheel = scrollFactory.makeMomentum(dx: dx, dy: dy, phase: phase, natural: naturalScroll,
+            if phase == .begin { momentumNatural = naturalScroll }
+            guard let location = pointer.location(),
+                  let wheel = scrollFactory.makeMomentum(dx: dx, dy: dy, phase: phase, natural: momentumNatural,
                       source: pointer.eventSource, location: location) else { return }
             postScrollEvent(wheel)
         case let .scroll(dx, dy, phase, natural):
             naturalScroll = natural
-            guard let location = CGEvent(source: nil)?.location,
+            guard let location = pointer.location(),
                   let pair = scrollFactory.make(dx: dx, dy: dy, phase: phase, natural: natural,
                       source: pointer.eventSource, location: location) else { return }
             postScrollEvent(pair.wheel)
@@ -251,7 +277,7 @@ final class QuartzInjector: InputInjector {
         case let .pointerMove(dx, dy): pointer.move(dx: dx, dy: dy, heldButton: heldButton)
         case let .button(kind, phase, clickCount):
             if kind == .left { leftHeld = phase == .down } else { rightHeld = phase == .down }
-            guard let location = CGEvent(source: nil)?.location else { return }
+            guard let location = pointer.location() else { return }
             let button: CGMouseButton = kind == .left ? .left : .right
             let type: CGEventType
             switch (kind, phase) {
@@ -265,7 +291,11 @@ final class QuartzInjector: InputInjector {
             event.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
             postScrollEvent(event)
         case .forceClick(stage: 2):
-            if trials.forceClick, capabilities.dockSwipe, forceTrialStep == nil, postForceTrialStep(0) {
+            if trials.forceClick, capabilities.dockSwipe, forceTrialStep == nil, let first = forceTrialEvent(0) {
+                // A Force click is a left click whose pressure passes through the stages: the button goes down
+                // before stage 1 and up after the release stage (stage 0), so apps see the click the force rides on.
+                inject(.button(kind: .left, phase: .down, clickCount: 1))
+                postScrollEvent(first)
                 forceTrialStep = 1; forceTrialStart = now()
                 logger.notice("force click: private force event trial (G-FORCE)")
                 return
@@ -283,7 +313,7 @@ final class QuartzInjector: InputInjector {
             postKeyEvent(down); postKeyEvent(up)
         case .haptic(let kind): logger.debug("gesture haptic suggestion: \(String(describing: kind), privacy: .public)")
         case let .dockSwipe(kind, delta, phase, velocity):
-            if phase == .began { dockEnd = nil }
+            if phase == .began { dockEnd = nil; dockInverted = naturalScroll }
             if !capabilities.gestureEvents || (dockPath == .attachedHIDEvent && !capabilities.dockSwipe) {
                 guard delta.isFinite else { return }
                 switch phase {
@@ -294,9 +324,9 @@ final class QuartzInjector: InputInjector {
                 }
                 return
             }
-            guard let location = CGEvent(source: nil)?.location,
+            guard let location = pointer.location(),
                   let pair = dockFactory.make(kind: kind, delta: delta, phase: phase, exitVelocity: velocity,
-                      inverted: naturalScroll, source: pointer.eventSource, location: location) else { return }
+                      inverted: dockInverted, source: pointer.eventSource, location: location) else { return }
             let output: (CGEvent?, CGEvent)
             if dockPath == .attachedHIDEvent {
                 guard let attached = DockSwipeEventFactory.attached(from: pair.1, source: pointer.eventSource) else {
@@ -314,11 +344,11 @@ final class QuartzInjector: InputInjector {
             }
         case let .navigationSwipe(direction):
             guard capabilities.gestureEvents else { return }
-            guard let location = CGEvent(source: nil)?.location,
+            guard let location = pointer.location(),
                   let pair = GestureEventFactory.navigation(direction, source: pointer.eventSource, location: location) else { return }
             postScrollEvent(pair.0); postScrollEvent(pair.1)
         case .notificationCenter:
-            if trials.notificationCenter, capabilities.gestureEvents, let location = CGEvent(source: nil)?.location {
+            if trials.notificationCenter, capabilities.gestureEvents, let location = pointer.location() {
                 let attached = dockPath == .attachedHIDEvent && capabilities.dockSwipe
                 let sequence = attached
                     ? FluidGestureEventFactory.attachedNotificationCenterSequence(source: pointer.eventSource, location: location)
@@ -349,6 +379,7 @@ final class QuartzInjector: InputInjector {
         if forceTrialStep != nil, let last = ForceEventFactory.steps.indices.last {
             forceTrialStep = nil
             _ = postForceTrialStep(last)   // the release stage, so the force state never stays pressed
+            inject(.button(kind: .left, phase: .up, clickCount: 1))
         }
         if let pair = dockEnd {
             // §6.9.4 safety net: the end the re-posts would have repeated is posted once more right away.
@@ -360,11 +391,14 @@ final class QuartzInjector: InputInjector {
 
     /// G-FORCE trial: posts one step of the force sequence; false when the attached event cannot be built.
     private func postForceTrialStep(_ index: Int) -> Bool {
-        guard let location = CGEvent(source: nil)?.location,
-              let event = ForceEventFactory.attachedEvent(ForceEventFactory.steps[index], source: pointer.eventSource,
-                                                          location: location) else { return false }
+        guard let event = forceTrialEvent(index) else { return false }
         postScrollEvent(event)
         return true
+    }
+
+    private func forceTrialEvent(_ index: Int) -> CGEvent? {
+        guard let location = pointer.location() else { return nil }
+        return ForceEventFactory.attachedEvent(ForceEventFactory.steps[index], source: pointer.eventSource, location: location)
     }
 
     /// Discrete fallback (§6.9.4). It fires only when the swipe got at least half way (|progress| ≥ 0.5, owner
@@ -400,11 +434,15 @@ final class QuartzInjector: InputInjector {
             forceLookupDeadline = nil; inject(.lookUpAtPointer)
         }
         if let step = forceTrialStep {
-            if step >= ForceEventFactory.steps.count { forceTrialStep = nil }
-            else if time >= forceTrialStart &+ ForceEventFactory.steps[step].delayNs {
+            if step >= ForceEventFactory.steps.count {
+                forceTrialStep = nil; inject(.button(kind: .left, phase: .up, clickCount: 1))
+            } else if time >= forceTrialStart &+ ForceEventFactory.steps[step].delayNs {
                 if !postForceTrialStep(step) { logger.notice("force click trial: step \(step) could not be built") }
                 forceTrialStep = step + 1
-                if forceTrialStep == ForceEventFactory.steps.count { forceTrialStep = nil }
+                if forceTrialStep == ForceEventFactory.steps.count {
+                    forceTrialStep = nil
+                    inject(.button(kind: .left, phase: .up, clickCount: 1))   // after the release stage
+                }
             }
         }
         guard let pair = dockEnd else { return }

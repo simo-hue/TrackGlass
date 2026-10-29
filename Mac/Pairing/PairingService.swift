@@ -41,17 +41,31 @@ final class PairingService {
     private var handshakesReady = Set<ObjectIdentifier>()
     private var windowID = UUID()
     private let windowLifetime: Duration
+    /// A connection that has not delivered PAIR_REQUEST this long after it arrived is dropped, so a phone that
+    /// vanished mid-handshake (or a stray `nc` to the port) cannot hold the one pairing slot until the window expires.
+    private let requestTimeout: Duration
     var peersChanged: (() -> Void)?
     var windowExpired: (() -> Void)?
+    /// Called when a phone is waiting for the Allow click, so the window can come forward (it may be on another Space).
+    var approvalRequested: (() -> Void)?
+    /// Nothing more can happen in this pairing window (paired, declined, expired, failed, closed), and no answer is
+    /// still being sent to a phone: the window offers to start again.
+    var isFinished: Bool { !isOpen || (consumed && connections.isEmpty && approvalContinuation == nil) }
+    /// The last pairing in this window succeeded ("Pair another device" rather than "Try again").
+    private(set) var didPair = false
+    /// Connections in the pairing slot (tests).
+    var connectionCount: Int { connections.count }
 
     init(identity: PeerIdentity, store: PairingStore = PairingStore(),
          authorized: @escaping @MainActor () -> Bool = { AXIsProcessTrusted() },
          windowLifetime: Duration = .seconds(120),
+         requestTimeout: Duration = .seconds(5),
          approvalPolicy: (@MainActor (PairRequestMessage) async -> Bool)? = nil) {
         self.identity = identity
         self.store = store
         self.authorized = authorized
         self.windowLifetime = windowLifetime
+        self.requestTimeout = requestTimeout
         self.approvalPolicy = approvalPolicy
         refreshPeers()
     }
@@ -72,6 +86,7 @@ final class PairingService {
             pendingApproval = PendingApproval(phoneName: request.name,
                                               modelName: DeviceModelName.marketingName(modelIdentifier: request.modelIdentifier))
             status = "Allow “\(request.name)” to pair with this Mac?"
+            approvalRequested?()
         }
     }
 
@@ -80,6 +95,7 @@ final class PairingService {
         guard authorized() else { status = "Grant Accessibility permission before pairing."; return }
         isOpen = true
         consumed = false
+        didPair = false
         mode = .qr
         pinGeneration = 0
         let windowID = windowID
@@ -137,9 +153,14 @@ final class PairingService {
                     switch state {
                     case .ready:
                         self.port = self.listener?.port
-                        if !self.isAdvertised { self.status = "Waiting for Bonjour. Allow Local Network access for Trackglass." }
-                    case .failed(let error): self.fail(error.localizedDescription)
-                    case .waiting(let error): self.status = "Waiting: \(error.localizedDescription)"
+                        if !self.isAdvertised { self.status = "Waiting for Bonjour. Allow Local Network access for Trackglass for Mac." }
+                    case .failed(let error):
+                        LocalNetworkPermission.shared.report(error)
+                        self.fail(LocalNetworkPermission.message(for: error, failed: true))
+                    case .waiting(let error):
+                        LocalNetworkPermission.shared.report(error)
+                        self.status = LocalNetworkPermission.isPolicyDenied(error)
+                            ? LocalNetworkPermission.message(for: error, failed: false) : "Waiting: \(error.localizedDescription)"
                     default: break
                     }
                 }
@@ -153,6 +174,7 @@ final class PairingService {
                         self.payload = try? PairingPayload(pairID: payload.pairID, pairSecret: payload.pairSecret,
                                                           macName: payload.macName, bonjourInstanceName: name)
                         self.isAdvertised = true
+                        LocalNetworkPermission.shared.reportRegistered()
                         self.status = self.mode == .pin ? "Enter this code in Trackglass on your iPhone or iPad." : "Scan with Trackglass on your iPhone or iPad."
                     case .remove:
                         self.isAdvertised = false
@@ -202,8 +224,18 @@ final class PairingService {
     }
 
     private func accept(_ connection: NWConnection) {
+        // One slot (§3.4). A newcomer never evicts the connection holding it: an evicted handshake's key failure
+        // would go uncounted, letting pipelined PIN guesses escape the three-code limit. A connection that never
+        // sends PAIR_REQUEST loses the slot after `requestTimeout` instead.
         guard isOpen, !consumed, connections.isEmpty else { connection.cancel(); return }
         connections[ObjectIdentifier(connection)] = connection
+        let generation = generation
+        Task { [weak self, weak connection, requestTimeout] in
+            try? await Task.sleep(for: requestTimeout)
+            guard let self, let connection, self.generation == generation, !self.consumed,
+                  self.connections[ObjectIdentifier(connection)] != nil else { return }
+            self.remove(connection)
+        }
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             Task { @MainActor in
                 guard let self, let connection, self.connections[ObjectIdentifier(connection)] != nil else { return }
@@ -258,6 +290,8 @@ final class PairingService {
                     }
                     // Consume on the main actor before any response is queued, excluding concurrent requests.
                     self.consumed = true
+                    // The window's 120 s expiry no longer applies: the outcome of this request decides.
+                    self.deadline?.cancel(); self.deadline = nil
                     self.isAdvertised = false
                     self.listener?.cancel()
                     self.listener = nil
@@ -300,6 +334,7 @@ final class PairingService {
                             guard let self, self.generation == generation else { return }
                             if let connection { self.remove(connection) }
                             if error == nil {
+                                self.didPair = true
                                 self.status = "Paired with \(request.name)"
                             } else {
                                 // The phone never got the response, so it has no key: keep no half pairing.

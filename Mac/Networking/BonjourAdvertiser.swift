@@ -23,6 +23,10 @@ final class BonjourAdvertiser {
     private var registered = Set<String>()
     /// Consecutive listener failures; drives the restart backoff (1, 2, 4 … 30 s) and resets once a listener is ready.
     private var restartAttempts = 0
+    /// True between a start and `stop()`: retries after failures only rebuild listeners the app still wants
+    /// (not while the Mac is going to sleep or Accessibility was revoked).
+    private var wantsListeners = false
+    private var creationRetryPending = false
     private let logger = Logger(subsystem: "app.trackglass.mac", category: "net")
 
     init(defaults: UserDefaults = .standard, store: PairingStore = PairingStore()) {
@@ -45,9 +49,11 @@ final class BonjourAdvertiser {
         }
     }
 
-    func start() {
+    /// `promptForAccessibility`: only the launch shows the system's Accessibility prompt (§6.2); wake and
+    /// fast-user-switch restarts check silently, so an untrusted app does not re-raise it every time.
+    func start(promptForAccessibility: Bool = true) {
         guard control == nil else { return }
-        accessibilityPermission.requestAndMonitor()
+        accessibilityPermission.requestAndMonitor(prompt: promptForAccessibility)
         if accessibilityPermission.isTrusted {
             startListeners()
         } else {
@@ -61,11 +67,12 @@ final class BonjourAdvertiser {
 
     private func startListeners() {
         guard control == nil else { return }
+        wantsListeners = true
         do {
-            let keys = try store.all().map { (SymmetricKey(data: $0.ltk), $0.peerID.uuidString.lowercased()) }
-            let tcp = try NWListener(using: TLSConfig.parameters(control: TLSConfig.listenerOptions(keys: keys)))
+            let tcp = try makeControlListener(port: nil)
             let previousInput = input
             previousInput?.cancel()   // never two `_trackglass._udp` listeners
+            input = nil
             ready.remove("udp"); registered.remove("udp")
             let udp = try makeInputListener(peerID: admittedInputPeer, port: previousInput?.port)
             control = tcp
@@ -74,6 +81,45 @@ final class BonjourAdvertiser {
             attach(udp, kind: "udp")
         } catch {
             status = "Discovery failed: \(error.localizedDescription)"
+            scheduleCreationRetry()
+        }
+    }
+
+    /// Every paired phone's key on one TLS listener (§3.3).
+    private func makeControlListener(port: NWEndpoint.Port?) throws -> NWListener {
+        let keys = try store.all().map { (SymmetricKey(data: $0.ltk), $0.peerID.uuidString.lowercased()) }
+        let parameters = TLSConfig.parameters(control: TLSConfig.listenerOptions(keys: keys))
+        if let port, let reused = try? NWListener(using: parameters, on: port) { return reused }
+        return try NWListener(using: parameters)
+    }
+
+    /// A listener could not even be created (a Keychain error, a port problem): try again with the same backoff as
+    /// a failed listener, rebuilding only what is missing, instead of leaving the Mac unreachable until relaunch.
+    private func scheduleCreationRetry() {
+        guard !creationRetryPending else { return }
+        creationRetryPending = true
+        let delay = min(30, 1 << min(restartAttempts, 5))
+        restartAttempts += 1
+        logger.error("listener creation failed; retrying in \(delay) s")
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self else { return }
+            self.creationRetryPending = false
+            guard self.wantsListeners, self.accessibilityPermission.isTrusted else { return }
+            if self.control == nil && self.input == nil { self.startListeners(); return }
+            do {
+                if self.control == nil {
+                    let tcp = try self.makeControlListener(port: nil)
+                    self.control = tcp; self.attach(tcp, kind: "tcp")
+                }
+                if self.input == nil {
+                    let udp = try self.makeInputListener(peerID: self.admittedInputPeer, port: nil)
+                    self.input = udp; self.attach(udp, kind: "udp")
+                }
+            } catch {
+                self.status = "Discovery failed: \(error.localizedDescription)"
+                self.scheduleCreationRetry()
+            }
         }
     }
 
@@ -117,10 +163,12 @@ final class BonjourAdvertiser {
             refreshStatus()
         case .waiting(let error):
             ready.remove(kind)
-            status = "Discovery waiting: \(error.localizedDescription)"
+            status = LocalNetworkPermission.message(for: error, failed: false)
+            LocalNetworkPermission.shared.report(error)
         case .failed(let error):
             ready.remove(kind); registered.remove(kind)
-            status = "Discovery failed: \(error.localizedDescription)"
+            status = LocalNetworkPermission.message(for: error, failed: true)
+            LocalNetworkPermission.shared.report(error)
             scheduleRestart(kind)
         default: break
         }
@@ -145,7 +193,7 @@ final class BonjourAdvertiser {
 
     func registrationChanged(_ change: NWListener.ServiceRegistrationChange, kind: String) {
         switch change {
-        case .add: registered.insert(kind)
+        case .add: registered.insert(kind); LocalNetworkPermission.shared.reportRegistered()
         case .remove: registered.remove(kind)
         @unknown default: break
         }
@@ -155,6 +203,8 @@ final class BonjourAdvertiser {
     private func refreshStatus() {
         if ready.count == 2 && registered.count == 2 {
             status = "Advertising as \(name)"
+        } else if LocalNetworkPermission.shared.isDenied {
+            status = "Local Network access is off for Trackglass for Mac. Turn it on in System Settings → Privacy & Security → Local Network."
         } else {
             status = "Waiting for Bonjour. Check Local Network permission."
         }
@@ -169,15 +219,14 @@ final class BonjourAdvertiser {
         current.cancel()
         ready.remove("tcp"); registered.remove("tcp")
         do {
-            let keys = try store.all().map { (SymmetricKey(data: $0.ltk), $0.peerID.uuidString.lowercased()) }
-            let parameters = TLSConfig.parameters(control: TLSConfig.listenerOptions(keys: keys))
             // Same port when possible: a phone that just paired may connect through the SRV record it cached.
-            let replacement = try port.flatMap { try? NWListener(using: parameters, on: $0) } ?? NWListener(using: parameters)
+            let replacement = try makeControlListener(port: port)
             control = replacement
             attach(replacement, kind: "tcp")
         } catch {
             control = nil
             status = "Discovery failed: \(error.localizedDescription)"
+            scheduleCreationRetry()
         }
     }
 
@@ -194,6 +243,7 @@ final class BonjourAdvertiser {
         } catch {
             input = nil
             status = "Input listener failed: \(error.localizedDescription)"
+            scheduleCreationRetry()
         }
     }
 
@@ -212,6 +262,7 @@ final class BonjourAdvertiser {
     }
 
     func stop(monitorPermission: Bool = true) {
+        wantsListeners = false
         if monitorPermission { accessibilityPermission.stopMonitoring() }
         control?.cancel()
         input?.cancel()

@@ -1,11 +1,29 @@
 import CryptoKit
 import Foundation
 import Network
+import TrackglassEngine
 import TrackglassKit
 import XCTest
 @testable import TrackglassMac
 
 final class InputSecurityTests: XCTestCase {
+    func testFlowsFromUnknownSourcesAreBounded() {
+        // Every UDP source becomes a flow on the input listener; a LAN host spraying datagrams from many ports must
+        // not make them pile up for the length of a session.
+        let listener = InputListener()
+        listener.setAdmittedPeer(UUID(), geometry: EngineGeometry(widthMM: 100, heightMM: 60, isLandscape: true))
+        var flows: [NWConnection] = []
+        for port in UInt16(40_001)...UInt16(40_007) {
+            let flow = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .udp)
+            flows.append(flow)
+            listener.accept(flow)
+        }
+        XCTAssertLessThanOrEqual(listener.flowCount, InputListener.maximumFlows)
+        listener.setAdmittedPeer(nil)
+        XCTAssertEqual(listener.flowCount, 0)
+        flows.forEach { $0.cancel() }
+    }
+
     func testWrongPSKCannotCompleteControlHandshake() async throws {
         let expected = SymmetricKey(data: Data(repeating: 0x31, count: 32))
         let listener = try makeListener(input: false, key: expected, identity: "expected-phone")

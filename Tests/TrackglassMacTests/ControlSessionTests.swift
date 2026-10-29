@@ -112,6 +112,28 @@ final class ControlSessionTests: XCTestCase {
         try await eventually { retained.isConnected }
     }
 
+    func testDisconnectOnTheMacIsFinalForThePhoneButAManualReconnectWorks() async throws {
+        // §6.1 menu / Devices "Disconnect": BYE{5}. The phone treats it as final (its reconnect loop stops), and
+        // its user can still reconnect by hand.
+        let harness = try SessionHarness()
+        defer { harness.stop() }
+        let endpoint = try await harness.start()
+        let client = harness.client()
+        defer { client.disconnect() }
+        let phone = harness.phones[0].peerID
+        let connected = await client.connect(endpoint: endpoint, mac: harness.mac(for: 0), hello: harness.hello(0))
+        XCTAssertTrue(connected)
+        try await eventually { client.isConnected && harness.server.connectedPeerID == phone }
+        harness.server.disconnect(peerID: phone)
+        try await eventually { !client.isConnected && harness.server.connectedPeerID == nil }
+        XCTAssertEqual(client.status, ControlCloseMessage.disconnectedOnMac)
+        XCTAssertTrue(client.lastCloseWasFinal, "the phone must not reconnect by itself")
+        try await eventually { await harness.server.coordinator.activeSession == nil }
+        let manual = await client.connect(endpoint: endpoint, mac: harness.mac(for: 0), hello: harness.hello(0))
+        XCTAssertTrue(manual)
+        try await eventually { client.isConnected && harness.server.connectedPeerID == phone }
+    }
+
     func testThreeUnansweredPingsDisconnect() async throws {
         let harness = try SessionHarness(silent: true)
         defer { harness.stop() }

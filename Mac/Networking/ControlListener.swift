@@ -24,6 +24,10 @@ final class ControlListener {
     private var channels: [UUID: ControlChannel] = [:]
     private var rttByChannel: [UUID: UInt32] = [:]
     private var admitted: [UUID: UUID] = [:]
+    /// The admitted phone, marked in the menu and the Devices tab (§6.1).
+    var connectedPeerID: UUID? { admitted.values.first }
+    /// Open control channels (the quit path waits for their BYEs to go out).
+    var openChannelCount: Int { channels.count }
     private var generation = UUID()
     private let logger = Logger(subsystem: "app.trackglass.mac", category: "net")
     /// A session that has received nothing for this long (both sides PING every second) is a stale one the same
@@ -42,7 +46,8 @@ final class ControlListener {
         preferences.onChange = { [weak self] settings in
             Task { @MainActor [weak self] in self?.apply(settings) }
         }
-        if livePreferences { preferences.start() }
+        // §6.4 polling runs only while a phone is admitted (see `admit`); one read now fills Settings.
+        if livePreferences { preferences.pollOnce() }
     }
 
     func sendStatus(_ message: StatusMessage, to peerID: UUID) {
@@ -106,6 +111,7 @@ final class ControlListener {
                        let staleChannel = self.channels[stale],
                        MonotonicClock.nanoseconds() &- staleChannel.lastReceivedAt >= Self.staleSessionSilenceNs {
                         self.admitted.removeValue(forKey: stale)
+                        self.admittedChanged()
                         await self.coordinator.release(id: stale)
                         staleChannel.end(reason: 0, message: "Superseded by a reconnect")
                     }
@@ -119,6 +125,7 @@ final class ControlListener {
                         injectorMode: 1, settings: Self.message(for: self.trackpadSettings), activePhoneName: busyName ?? "")
                     if busyName != nil { channel.send(.welcome(welcome)); channel.end(reason: 2); return }
                     self.admitted[id] = hello.peerID
+                    self.admittedChanged()
                     // Input listener first, WELCOME second: the phone resolves `_trackglass._udp` as soon as it reads WELCOME.
                     self.inputIdentityChanged?(hello.peerID, EngineGeometry(widthMM: Double(hello.surfaceWidthMM), heightMM: Double(hello.surfaceHeightMM), isLandscape: hello.surfaceWidthMM > hello.surfaceHeightMM))
                     self.trackingOverride = Double(hello.trackingOverride)
@@ -147,6 +154,7 @@ final class ControlListener {
                 self.trackingOverride = 0
                 self.lastStatus = nil
                 self.inputIdentityChanged?(nil, nil)
+                self.admittedChanged()
             }
             Task { await self.coordinator.release(id: id) }
         }
@@ -167,7 +175,32 @@ final class ControlListener {
         }
     }
 
+    /// §6.4 polling runs only while a phone is admitted: every change to `admitted` goes through here.
+    private func admittedChanged() {
+        guard livePreferences else { return }
+        if admitted.isEmpty { preferences.stop() } else { preferences.start() }
+    }
+
     func prepareForSleep() { endAllSessions(reason: 4, message: "Mac sleeping") }
+
+    /// The app is quitting (menu, logout, Sparkle relaunch): every phone gets a user BYE.
+    func endAllSessionsForQuit() { endAllSessions(reason: 0, message: "Trackglass for Mac quit") }
+
+    /// Menu / Devices "Disconnect" (§6.1): BYE reason 5, which the phone treats as final — it stops reconnecting by
+    /// itself until its user taps Reconnect (§4.5).
+    func disconnect(peerID: UUID) {
+        for (id, admittedPeer) in admitted where admittedPeer == peerID {
+            channels[id]?.end(reason: 5, message: ControlCloseMessage.disconnectedOnMac)
+        }
+    }
+
+    /// The admitted phone's datagrams stopped while its control channel lives on (`InputListener`): end the session
+    /// with BYE so the phone's reconnect loop rebuilds both channels (§8).
+    func inputPathDied(peerID: UUID) {
+        for (id, admittedPeer) in admitted where admittedPeer == peerID {
+            channels[id]?.end(reason: 0, message: "Input path lost")
+        }
+    }
 
     /// §8.5: Accessibility was revoked while connected — every session ends with a user-reason BYE.
     func permissionRevoked() { endAllSessions(reason: 0, message: "Accessibility permission revoked") }

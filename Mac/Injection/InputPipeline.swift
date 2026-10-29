@@ -19,6 +19,14 @@ final class InputPipeline: @unchecked Sendable {
     private var lastFrameTime: UInt64?
     private var lastReceiveTime: UInt64 = 0
     private var lastInputUptime: UInt64 = 0
+    /// Uptime when the pipeline was created, i.e. when the phone was admitted (dead-input-path detection).
+    private let createdUptime: UInt64
+    /// The phone sends a frame or a heartbeat at least every 0.5 s (§4.5), so this much silence means the
+    /// datagram path is gone even though the control channel still answers PINGs.
+    static let inputPathSilenceNs: UInt64 = 3_000_000_000
+    /// Before the first datagram the phone is still resolving `_trackglass._udp` and running the DTLS handshake;
+    /// its own watchdog gives up after 5 s (`SessionClient.inputPathTimeout`), so the Mac waits a little longer.
+    static let firstDatagramGraceNs: UInt64 = 6_000_000_000
     var diagnosticEngineState: UInt8 { engine.diagnosticState }
     var onHaptic: ((HapticKind) -> Void)?
     var onEstimatedTick: ((UInt64) -> Void)?
@@ -26,16 +34,38 @@ final class InputPipeline: @unchecked Sendable {
     private(set) var backwardsTimeFrames = 0
     /// Receive → post durations of accepted frames (SPEC §6.10), read by the status timer.
     private(set) var latency = LatencyStats()
+    /// The settings the Mac asked for last; the engine applies them when no gesture is in progress (§6.4).
+    private var requestedSettings: TrackpadSettings
+    /// The engine's applied-settings generation the injector last learned (F11): the injector follows the engine's
+    /// snapshot, so a change made mid-gesture reaches the injector only when the engine applies it.
+    private var injectorSettingsGeneration: Int
+    /// Where `startRecording` writes (tests); nil is the user's Application Support/Trackglass/Recordings.
+    var recordingsDirectory: URL?
+
+    /// UserDefaults key: `defaults write <bundle id> TGUseAppleScrollCurves -bool YES` scrolls with Apple's
+    /// parametric scroll curves instead of the shipped fallback (2026-10-29, F2). The parametric path's units and
+    /// report-rate scaling are not verified against a real trackpad yet (G-SCR / tgaccel data from the owner's
+    /// Mac): it measured 3–23 × the trackpad's scroll distance and depended on the frame rate, so it is opt-in.
+    static let appleScrollCurvesKey = "TGUseAppleScrollCurves"
+
+    static func makeScrollAcceleration(settings: TrackpadSettings, defaults: UserDefaults = .standard) -> any AccelerationModel {
+        guard defaults.bool(forKey: appleScrollCurvesKey) else { return ScrollFallbackAcceleration() }
+        return PointerAccelerationProvider.makeScroll(settings: settings)
+    }
 
     init(queue: DispatchQueue, geometry: EngineGeometry, settings: TrackpadSettings = TrackpadSettings(),
-         injector: InputInjector = QuartzInjector(), acceleration: (any AccelerationModel)? = nil) {
-        self.queue = queue; self.geometry = geometry
+         injector: InputInjector = QuartzInjector(), acceleration: (any AccelerationModel)? = nil,
+         createdUptime: UInt64 = DispatchTime.now().uptimeNanoseconds) {
+        self.queue = queue; self.geometry = geometry; self.createdUptime = createdUptime
         let accelerationModel = acceleration ?? PointerAccelerationProvider.make(settings: settings)
-        self.engine = GestureEngine(settings: settings, geometry: geometry, acceleration: accelerationModel,
-            scrollAcceleration: PointerAccelerationProvider.makeScroll(settings: settings))
+        let engine = GestureEngine(settings: settings, geometry: geometry, acceleration: accelerationModel,
+            scrollAcceleration: InputPipeline.makeScrollAcceleration(settings: settings))
+        self.engine = engine
         self.injector = injector
+        requestedSettings = settings
+        injectorSettingsGeneration = engine.settingsGeneration
         // Before confinement is armed: the pipeline may be created off its queue (tests); nothing runs on it yet.
-        injector.settingsDidChange(settings)
+        injector.settingsDidChange(engine.appliedSettings)
         (injector as? QuartzInjector)?.confinementQueue = queue
         timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: .milliseconds(8))
@@ -59,9 +89,10 @@ final class InputPipeline: @unchecked Sendable {
         lastFrameTime = frame.frameTime
         lastReceiveTime = receiveTime
         lastInputUptime = lastReceiveTime
-        if let recorder, !recorder.append(frameBytes: data, captureTimeNs: lastReceiveTime) { stopRecording() }
-        events.clear(); engine.process(frame, into: &events); injectEvents(); updateTimer()
+        events.clear(); engine.process(frame, into: &events); injectEvents(); syncInjectorSettings(); updateTimer()
         latency.record(nanoseconds: DispatchTime.now().uptimeNanoseconds &- receiveTime)
+        // After the events are posted (P9): the disk write is not part of the receive → post latency.
+        if let recorder, !recorder.append(frameBytes: data, captureTimeNs: receiveTime) { stopRecording() }
     }
     func resetLatency() { dispatchPrecondition(condition: .onQueue(queue)); latency.reset() }
     private var lastSequence: UInt32?
@@ -70,10 +101,21 @@ final class InputPipeline: @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         guard geometry != self.geometry else { return }
         self.geometry = geometry
-        events.clear(); engine.setGeometry(geometry, into: &events); injectEvents(); updateTimer()
+        recorder?.recordGeometry(geometry, atNs: lastFrameTime ?? 0)
+        events.clear(); engine.setGeometry(geometry, into: &events); injectEvents(); syncInjectorSettings(); updateTimer()
     }
     func setSettings(_ settings: TrackpadSettings) {
-        dispatchPrecondition(condition: .onQueue(queue)); engine.setSettings(settings); injector.settingsDidChange(settings)
+        dispatchPrecondition(condition: .onQueue(queue))
+        // Every SURFACE re-sends the settings; only a real change is a recording event.
+        if settings != requestedSettings { recorder?.recordSettings(settings, atNs: lastFrameTime ?? 0) }
+        requestedSettings = settings
+        engine.setSettings(settings); syncInjectorSettings()
+    }
+    /// The injector learns the settings the engine applies, when it applies them (§6.4 deferral, F11).
+    private func syncInjectorSettings() {
+        guard engine.settingsGeneration != injectorSettingsGeneration else { return }
+        injectorSettingsGeneration = engine.settingsGeneration
+        injector.settingsDidChange(engine.appliedSettings)
     }
     func displayDidSleep() { dispatchPrecondition(condition: .onQueue(queue)); injector.displayDidSleep() }
 
@@ -90,13 +132,16 @@ final class InputPipeline: @unchecked Sendable {
         }
         prematureHeartbeatSequence = nil
         guard engine.hasActiveContacts else { return }
-        events.clear(); engine.forceLiftoff(releaseDragLock: false, into: &events); injectEvents(); updateTimer()
+        events.clear(); engine.forceLiftoff(releaseDragLock: false, into: &events); injectEvents(); syncInjectorSettings(); updateTimer()
     }
     func startRecording() {
         dispatchPrecondition(condition: .onQueue(queue))
         guard recorder == nil else { return }
         do {
-            recorder = try ReplayRecorder(geometry: geometry)
+            let recorder = try ReplayRecorder(geometry: geometry, settings: engine.appliedSettings, directory: recordingsDirectory)
+            // A change still waiting for the end of the current gesture is replayed from the first frame on.
+            if requestedSettings != engine.appliedSettings { recorder.recordSettings(requestedSettings, atNs: 0) }
+            self.recorder = recorder
             logger.info("recording input session to \(self.recorder!.url.path, privacy: .private)")
             onRecordingChanged?(true)
         } catch {
@@ -118,10 +163,19 @@ final class InputPipeline: @unchecked Sendable {
     func stop() {
         dispatchPrecondition(condition: .onQueue(queue))
         if timerRunning { timer.suspend(); timerRunning = false }
-        events.clear(); engine.forceLiftoff(releaseDragLock: true, into: &events); injectEvents()
+        events.clear(); engine.forceLiftoff(releaseDragLock: true, into: &events); injectEvents(); syncInjectorSettings()
         // The timer will not run again: whatever the injector still had scheduled is posted now (§6.9.4).
         injector.flush()
         stopRecording()
+    }
+
+    /// True when the admitted phone's datagrams stopped (or never started) while its control channel may still be
+    /// alive: the session is then ended so the phone rebuilds both channels instead of showing "Connected" with a
+    /// trackpad that does nothing (§8).
+    func inputPathIsDead(now: UInt64 = DispatchTime.now().uptimeNanoseconds) -> Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
+        if lastInputUptime == 0 { return now >= createdUptime && now - createdUptime >= Self.firstDatagramGraceNs }
+        return now >= lastInputUptime && now - lastInputUptime >= Self.inputPathSilenceNs
     }
 
     /// §6.3: three seconds without any datagram (frame or heartbeat) while connected means the engine
@@ -131,7 +185,7 @@ final class InputPipeline: @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         guard lastInputUptime != 0, now &- lastInputUptime >= 3_000_000_000,
               engine.needsTick || engine.hasActiveContacts || engine.diagnosticState != 0 else { return }
-        events.clear(); engine.forceLiftoff(releaseDragLock: true, into: &events); injectEvents(); updateTimer()
+        events.clear(); engine.forceLiftoff(releaseDragLock: true, into: &events); injectEvents(); syncInjectorSettings(); updateTimer()
     }
     private func injectEvents() {
         for index in 0..<events.count {
@@ -161,6 +215,7 @@ final class InputPipeline: @unchecked Sendable {
             engine.tick(now: estimatedPhoneTime, into: &events)
         }
         injectEvents()
+        syncInjectorSettings()
         updateTimer()
     }
 }

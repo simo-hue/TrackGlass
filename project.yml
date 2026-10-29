@@ -118,14 +118,14 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         TGProductName: $(TG_PRODUCT_NAME)
         TGBundlePrefix: $(TG_BUNDLE_PREFIX)
-        NSLocalNetworkUsageDescription: Trackglass finds and talks to Trackglass for Mac on your local network.
+        NSLocalNetworkUsageDescription: Lets Trackglass on your iPhone or iPad find and connect to this Mac on your local network.
         NSBonjourServices:
           - _trackglass._tcp
           - _trackglass._udp
         TGWebsiteURL: $(TG_WEBSITE_URL)
         TGRepoURL: $(TG_REPO_URL)
         LSUIElement: true
-        # Sparkle 2 (SPEC §6.11): EdDSA-signed appcast committed by Scripts/release-mac.sh; key from Config/Local.xcconfig.
+        # Sparkle 2 (SPEC §6.11): EdDSA-signed appcast committed by Scripts/release-mac.sh; public key TG_SPARKLE_PUBLIC_KEY from Config/Shared.xcconfig.
         SUFeedURL: $(TG_APPCAST_URL)
         SUPublicEDKey: $(TG_SPARKLE_PUBLIC_KEY)
         SUEnableAutomaticChecks: true
@@ -212,3 +212,4 @@ schemes:
         - TrackglassiOSUITests
       environmentVariables:
         TG_SOAK_SECONDS: $(TG_SOAK_SECONDS)
+        TG_SOAK_EXPECT_CONNECTED: $(TG_SOAK_EXPECT_CONNECTED)

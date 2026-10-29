@@ -28,7 +28,7 @@
 		<string>_trackglass._udp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Trackglass finds and talks to Trackglass for Mac on your local network.</string>
+	<string>Lets Trackglass on your iPhone or iPad find and connect to this Mac on your local network.</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>

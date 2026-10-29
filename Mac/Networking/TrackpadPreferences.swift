@@ -19,11 +19,13 @@ final class TrackpadPreferences: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }; return snapshot
     }
 
+    /// Polls every 2 s (§6.4). `ControlListener` runs it only while a phone is admitted: an always-on login item
+    /// must not enumerate HID devices and copy preference domains every 2 s with nobody connected.
     func start() {
         queue.async { [weak self] in
             guard let self, self.timer == nil else { return }
             let source = DispatchSource.makeTimerSource(queue: self.queue)
-            source.schedule(deadline: .now(), repeating: .seconds(2))
+            source.schedule(deadline: .now(), repeating: .seconds(2), leeway: .milliseconds(500))
             source.setEventHandler { [weak self] in self?.poll() }
             self.timer = source; source.resume()
         }
@@ -31,6 +33,11 @@ final class TrackpadPreferences: @unchecked Sendable {
 
     func stop() {
         queue.async { [weak self] in self?.timer?.cancel(); self?.timer = nil }
+    }
+
+    /// One read in the background (launch: Settings shows the Mac's tracking speed before any phone connects).
+    func pollOnce() {
+        queue.async { [weak self] in self?.poll() }
     }
 
     /// §6.4: the preferences are read "every 2 s **and immediately on session start**". Called on HELLO so
@@ -72,7 +79,8 @@ final class TrackpadPreferences: @unchecked Sendable {
         // §6.4: the Bluetooth trackpad's keys take precedence while it is connected; keys it lacks fall back to the built-in domain.
         let selected = validated(bluetoothTrackpadConnected() ? builtIn.merging(bluetooth) { $1 } : builtIn, reportUnknown: reportUnknown)
         return makeSnapshot(selected: selected, global: validated(global, reportUnknown: reportUnknown),
-            dock: validated(readDomain("com.apple.dock"), reportUnknown: reportUnknown), doubleClickInterval: NSEvent.doubleClickInterval)
+            dock: validated(readDomain("com.apple.dock", keys: dockKeys), reportUnknown: reportUnknown),
+            doubleClickInterval: NSEvent.doubleClickInterval)
     }
 
     static func validated(_ values: [String: Any], reportUnknown: (String) -> Void) -> [String: Any] {
@@ -138,9 +146,13 @@ final class TrackpadPreferences: @unchecked Sendable {
         )
     }
 
-    private static func readDomain(_ domain: String) -> [String: Any] {
+    /// The only Dock keys §6.4 needs; the Dock domain also holds large bookmark blobs that are not copied.
+    static let dockKeys = ["showMissionControlGestureEnabled", "showAppExposeGestureEnabled",
+                           "showLaunchpadGestureEnabled", "showDesktopGestureEnabled"]
+
+    private static func readDomain(_ domain: String, keys: [String]? = nil) -> [String: Any] {
         CFPreferencesAppSynchronize(domain as CFString)
-        return CFPreferencesCopyMultiple(nil, domain as CFString, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) as? [String: Any] ?? [:]
+        return CFPreferencesCopyMultiple(keys.map { $0 as CFArray }, domain as CFString, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) as? [String: Any] ?? [:]
     }
 
     private static func readGlobalDomain() -> [String: Any] {
@@ -159,7 +171,8 @@ final class TrackpadPreferences: @unchecked Sendable {
         // Enumerating and reading properties needs no IOHIDManagerOpen; opening would make macOS
         // request Input Monitoring, which §6.2 forbids.
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
-        IOHIDManagerSetDeviceMatching(manager, nil)
+        // Only Bluetooth devices are materialized (not every HID service on the Mac).
+        IOHIDManagerSetDeviceMatching(manager, [kIOHIDTransportKey: "Bluetooth"] as CFDictionary)
         guard let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> else { return false }
         return devices.contains { device in
             let transport = IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String

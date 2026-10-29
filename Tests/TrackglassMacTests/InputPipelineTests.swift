@@ -76,6 +76,24 @@ final class InputPipelineTests: XCTestCase {
         }
     }
 
+    func testSilentInputPathIsReportedDeadAfterTheGracePeriods() {
+        // §8: the phone sends a datagram at least every 0.5 s. Nothing within 6 s of admission (the phone's own
+        // watchdog gives up at 5 s), or 3 s of silence after the last datagram, means the input path is gone.
+        let queue = DispatchQueue(label: "pipeline-dead-path-test")
+        let created: UInt64 = 1_000_000_000_000
+        let pipeline = InputPipeline(queue: queue, geometry: EngineGeometry(widthMM: 100, heightMM: 60, isLandscape: true),
+                                     injector: RecordingInjector(), createdUptime: created)
+        queue.sync {
+            XCTAssertFalse(pipeline.inputPathIsDead(now: created + 5_900_000_000))
+            XCTAssertTrue(pipeline.inputPathIsDead(now: created + 6_000_000_000))
+            pipeline.heartbeat(sequence: 0)
+            let now = DispatchTime.now().uptimeNanoseconds
+            XCTAssertFalse(pipeline.inputPathIsDead(now: now + 2_900_000_000))
+            XCTAssertTrue(pipeline.inputPathIsDead(now: now + 3_100_000_000))
+            pipeline.stop()
+        }
+    }
+
     func testStopPostsWhatTheInjectorStillHadScheduled() {
         let queue = DispatchQueue(label: "pipeline-flush-test")
         let injector = RecordingInjector()
@@ -131,6 +149,72 @@ final class InputPipelineTests: XCTestCase {
             XCTAssertTrue(injector.events.contains(.button(kind: .left, phase: .up, clickCount: 2)))
             pipeline.stop()
         }
+    }
+
+    func testTheInjectorLearnsSettingsWhenTheEngineAppliesThem() {
+        // F11: a change made while a finger is down waits for the end of the gesture in the engine (§6.4); the
+        // injector follows the engine's applied snapshot, not the request.
+        let queue = DispatchQueue(label: "pipeline-settings-test")
+        let injector = RecordingInjector()
+        let pipeline = InputPipeline(queue: queue, geometry: EngineGeometry(widthMM: 100, heightMM: 60, isLandscape: true),
+                                     injector: injector)
+        queue.sync {
+            pipeline.consume(Self.data(sequence: 1, time: 1_000_000_000, phase: .began))
+            pipeline.setSettings(TrackpadSettings(naturalScrolling: false))
+            XCTAssertEqual(injector.settings?.naturalScrolling, true, "deferred while the finger is down")
+            pipeline.consume(Self.data(sequence: 2, time: 1_400_000_000, phase: .ended))
+            XCTAssertEqual(injector.settings?.naturalScrolling, false)
+            pipeline.setSettings(TrackpadSettings(naturalScrolling: true))
+            XCTAssertEqual(injector.settings?.naturalScrolling, true, "applied at once when idle")
+            pipeline.stop()
+        }
+    }
+
+    func testScrollUsesTheFallbackModelUnlessAppleCurvesAreOptedIn() throws {
+        // F2: the Apple parametric scroll path is opt-in until its units are verified (G-SCR).
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "trackglass-scroll-model-test"))
+        defer { defaults.removePersistentDomain(forName: "trackglass-scroll-model-test") }
+        XCTAssertTrue(InputPipeline.makeScrollAcceleration(settings: TrackpadSettings(), defaults: defaults) is ScrollFallbackAcceleration)
+        defaults.set(true, forKey: InputPipeline.appleScrollCurvesKey)
+        // Opted in, the Apple curves are used when this Mac's registry or the bundled archive provides them.
+        let optedIn = InputPipeline.makeScrollAcceleration(settings: TrackpadSettings(), defaults: defaults)
+        guard Bundle.main.url(forResource: "DefaultAccelCurves", withExtension: "json") != nil else {
+            throw XCTSkip("no bundled curves in this host")
+        }
+        XCTAssertTrue(optedIn is ScrollAccelerator)
+    }
+
+    func testRecordingWritesASettingsSidecarTgreplayCanRead() throws {
+        // §6.10: `tgreplay run x.tgrec --settings x.settings.json` replays a Mac recording with its settings changes.
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let queue = DispatchQueue(label: "pipeline-recording-test")
+        let geometry = EngineGeometry(widthMM: 100, heightMM: 60, isLandscape: true)
+        let pipeline = InputPipeline(queue: queue, geometry: geometry, settings: TrackpadSettings(clicking: false),
+                                     injector: RecordingInjector())
+        pipeline.recordingsDirectory = directory
+        queue.sync {
+            pipeline.startRecording()
+            pipeline.consume(Self.data(sequence: 1, time: 1_000_000_000, phase: .began))
+            pipeline.consume(Self.data(sequence: 2, time: 1_100_000_000, phase: .ended))
+            pipeline.setSettings(TrackpadSettings(naturalScrolling: false))
+            pipeline.setGeometry(EngineGeometry(widthMM: 60, heightMM: 100, isLandscape: false))
+            pipeline.stop()
+        }
+        let files = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+        XCTAssertEqual(files.count, 2)
+        let recording = try XCTUnwrap(files.first { $0.hasSuffix(".tgrec") })
+        let sidecarName = try XCTUnwrap(files.first { $0.hasSuffix(".settings.json") })
+        XCTAssertEqual(sidecarName, recording.replacingOccurrences(of: ".tgrec", with: ".settings.json"))
+        let sidecar = try JSONDecoder().decode(ReplaySidecar.self, from: Data(contentsOf: directory.appendingPathComponent(sidecarName)))
+        XCTAssertEqual(sidecar.settings, TrackpadSettings(clicking: false))
+        XCTAssertEqual(sidecar.geometry, geometry)
+        XCTAssertEqual(sidecar.acceleration.model, "unitGain")
+        XCTAssertEqual(sidecar.settingsChanges, [.init(atNs: 1_100_000_000, settings: TrackpadSettings(naturalScrolling: false))])
+        XCTAssertEqual(sidecar.geometryChanges, [.init(atNs: 1_100_000_000, geometry: EngineGeometry(widthMM: 60, heightMM: 100, isLandscape: false))])
+        // The keys tgreplay's settings file reads (Tools/tgreplay/main.swift `ReplaySettings`).
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent(sidecarName))) as? [String: Any])
+        XCTAssertTrue(Set(["settings", "geometry", "acceleration", "settingsChanges", "geometryChanges"]).isSubset(of: Set(json.keys)))
     }
 
     private static func data(sequence: UInt32, time: UInt64, phase: Contact.Phase = .moved, x: Float = 10) -> Data {

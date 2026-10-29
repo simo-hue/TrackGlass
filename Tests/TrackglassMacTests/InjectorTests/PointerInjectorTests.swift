@@ -54,6 +54,26 @@ final class PointerInjectorTests: XCTestCase {
         XCTAssertEqual(pointerEvents.first?.getIntegerValueField(.mouseEventDeltaX), 1)
     }
 
+    func testPointerPositionIsTakenFromTheLastPostForFiftyMilliseconds() {
+        // P6: inside a gesture the pointer is where the last posted event put it; the window server is asked again
+        // only after a pause, when another device may have moved the pointer.
+        var time: UInt64 = 0
+        var queries = 0
+        var posted: [CGEvent] = []
+        let injector = QuartzInjector(postScrollEvent: { posted.append($0) }, postPointerEvent: { posted.append($0) },
+                                      now: { time }, queryLocation: { queries += 1; return CGPoint(x: 100, y: 100) })
+        injector.inject(.pointerMove(dx: 5, dy: 0))
+        time = 8_000_000; injector.inject(.pointerMove(dx: 5, dy: 0))
+        time = 16_000_000; injector.inject(.button(kind: .left, phase: .down, clickCount: 1))
+        time = 57_000_000; injector.inject(.button(kind: .left, phase: .up, clickCount: 1))
+        XCTAssertEqual(queries, 1)
+        XCTAssertEqual(posted.map(\.location), [CGPoint(x: 105, y: 100), CGPoint(x: 110, y: 100),
+                                                 CGPoint(x: 110, y: 100), CGPoint(x: 110, y: 100)])
+        time = 58_000_000; injector.inject(.pointerMove(dx: 1, dy: 0))   // 50 ms after the last move: asks again
+        XCTAssertEqual(queries, 2)
+        XCTAssertEqual(posted.last?.location, CGPoint(x: 101, y: 100))
+    }
+
     func testDegradedListReportsTheFallbacksTheInjectorActuallyUses() {
         // Even with every private symbol resolved, force click and Notification Center use their fallbacks today (G-FORCE/G-NC pending).
         var full = PrivateAPICapabilities()

@@ -80,12 +80,25 @@ final class GestureInjectorTests: XCTestCase {
             trials: PrivateGestureTrials(notificationCenter: false, forceClick: true),
             postKeyEvent: { _ in XCTFail("Keyboard fallback used during the trial") }, now: { time })
         injector.inject(.forceClick(stage: 2))
-        XCTAssertEqual(posted.count, 1); XCTAssertTrue(injector.needsTick)
-        time = 39_000_000; injector.tick(); XCTAssertEqual(posted.count, 1)
-        time = 40_000_000; injector.tick(); XCTAssertEqual(posted.count, 2)
-        time = 80_000_000; injector.tick(); XCTAssertEqual(posted.count, 3)
+        // The left button goes down before stage 1 and up after the release stage (F12, 2026-10-29).
+        XCTAssertEqual(posted.map(\.type), [.leftMouseDown, TGEventTypeGesture]); XCTAssertTrue(injector.needsTick)
+        time = 39_000_000; injector.tick(); XCTAssertEqual(posted.count, 2)
+        time = 40_000_000; injector.tick(); XCTAssertEqual(posted.count, 3)
+        time = 80_000_000; injector.tick()
+        XCTAssertEqual(posted.map(\.type), [.leftMouseDown, TGEventTypeGesture, TGEventTypeGesture, TGEventTypeGesture, .leftMouseUp])
         XCTAssertFalse(injector.needsTick)
-        XCTAssertTrue(posted.allSatisfy { $0.type == TGEventTypeGesture })
+    }
+    func testInterruptedForceTrialStillReleasesTheStageAndTheButton() throws {
+        guard TGPrivateAPIGetCapabilities().dockSwipe else { throw XCTSkip("HIDEvent attachment is unavailable on this OS") }
+        var time: UInt64 = 0
+        var posted: [CGEvent] = []
+        var caps = PrivateAPICapabilities(); caps.gestureEvents = true; caps.dockSwipe = true
+        let injector = QuartzInjector(postScrollEvent: { posted.append($0) }, capabilities: caps,
+            trials: PrivateGestureTrials(notificationCenter: false, forceClick: true), postKeyEvent: { _ in }, now: { time })
+        injector.inject(.forceClick(stage: 2))
+        time = 10_000_000; injector.flush()   // the session ends before stage 2
+        XCTAssertEqual(posted.map(\.type), [.leftMouseDown, TGEventTypeGesture, TGEventTypeGesture, .leftMouseUp])
+        XCTAssertFalse(injector.needsTick)
     }
     func testForceStepsFollowTheSpecifiedStagesAndPressures() throws {
         XCTAssertEqual(ForceEventFactory.steps.map(\.stage), [1, 2, 0])

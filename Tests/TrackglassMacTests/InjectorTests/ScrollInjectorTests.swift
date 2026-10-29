@@ -19,6 +19,19 @@ final class ScrollInjectorTests: XCTestCase {
             XCTAssertEqual(event.getIntegerValueField(TGFieldDirectionInvertedFromDevice), 0)
         }
     }
+    func testMomentumKeepsTheDirectionItBeganWith() {
+        // F11: Natural scrolling changed while the content coasts does not reverse the coast.
+        var captured: [CGEvent] = []
+        let injector = QuartzInjector(postScrollEvent: { captured.append($0) })
+        injector.inject(.scroll(dxPoints: 0, dyPoints: 10, phase: .ended, naturalInverted: true))
+        captured.removeAll()
+        injector.inject(.scrollMomentum(phase: .begin, dxPoints: 0, dyPoints: 8))
+        injector.settingsDidChange(TrackpadSettings(naturalScrolling: false))
+        injector.inject(.scrollMomentum(phase: .continued, dxPoints: 0, dyPoints: 7))
+        injector.inject(.scrollMomentum(phase: .end, dxPoints: 0, dyPoints: 0))
+        XCTAssertEqual(captured.count, 3)
+        XCTAssertTrue(captured.allSatisfy { $0.getIntegerValueField(TGFieldDirectionInvertedFromDevice) == 1 })
+    }
     func testInjectorPostsWheelThenGestureWithAllSpecifiedFields() throws {
         for natural in [true, false] {
             var captured: [CGEvent] = []

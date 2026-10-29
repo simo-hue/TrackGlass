@@ -118,6 +118,24 @@ final class DockSwipeInjectorTests: XCTestCase {
         XCTAssertEqual(events.last?.getIntegerValueField(TGFieldDockInverted), 1)
     }
 
+    func testADockSwipeKeepsTheDirectionItBeganWith() {
+        // F11: a settings change applied while the fingers are down must not flip the swipe under them.
+        var events: [CGEvent] = []
+        var capabilities = PrivateAPICapabilities()
+        capabilities.gestureEvents = true
+        let injector = QuartzInjector(dockPath: .legacyFields, capabilities: capabilities, postDockEvent: { events.append($0) })
+        injector.settingsDidChange(TrackpadSettings(naturalScrolling: true))
+        injector.inject(.dockSwipe(kind: .horizontal, progressDelta: 0.3, phase: .began, exitVelocity: 0))
+        injector.settingsDidChange(TrackpadSettings(naturalScrolling: false))
+        injector.inject(.dockSwipe(kind: .horizontal, progressDelta: 0.3, phase: .changed, exitVelocity: 0))
+        injector.inject(.dockSwipe(kind: .horizontal, progressDelta: 0, phase: .ended, exitVelocity: 1))
+        let companions = events.filter { $0.type == TGEventTypeDockCompanion }
+        XCTAssertEqual(companions.count, 3)
+        XCTAssertTrue(companions.allSatisfy { $0.getIntegerValueField(TGFieldDockInverted) == 1 })
+        injector.inject(.dockSwipe(kind: .horizontal, progressDelta: 0.3, phase: .began, exitVelocity: 0))
+        XCTAssertEqual(events.last?.getIntegerValueField(TGFieldDockInverted), 0, "the next swipe uses the new setting")
+    }
+
     func testFlushPostsAPendingDockEndAtOnce() {
         // A session that ends inside the re-post window must not drop the §6.9.4 safety-net end.
         var time: UInt64 = 0

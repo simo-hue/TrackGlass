@@ -139,7 +139,7 @@ final class PairingExchangeTests: XCTestCase {
         XCTAssertNil(service.port)
     }
 
-    func testRenderedQRCodePreservesPairingPayload() throws {
+    @MainActor func testRenderedQRCodePreservesPairingPayload() throws {
         let payload = try PairingPayload(pairID: Data(repeating: 19, count: 8),
                                          pairSecret: Data(repeating: 93, count: 32),
                                          macName: "Simone’s Mac", bonjourInstanceName: "Simone’s Mac (pairing)")
