@@ -1,31 +1,20 @@
 import Foundation
 
 struct ScrollMomentum {
-    private struct Sample { var x = 0.0, y = 0.0; var time: UInt64 = 0 }
-    private var samples = [Sample](repeating: Sample(), count: 3)
-    private var sampleCount = 0, next = 0
+    /// §6.8: the release velocity is the scroll motion of the last 50 ms before the lift divided by that span, so
+    /// fingers that stopped before lifting do not coast (the old per-sample average kept the last moving frames).
+    private var motion = RecentMotion()
     private var vx = 0.0, vy = 0.0
     private var lastTick: UInt64 = 0
     private var began = false
     private(set) var active = false
 
-    mutating func clearSamples() { sampleCount = 0; next = 0 }
+    mutating func clearSamples() { motion.clear() }
     mutating func record(dx: Double, dy: Double, dt: UInt64, at time: UInt64) {
-        guard dt > 0 else { return }
-        let factor = 1_000_000_000 / Double(dt)
-        samples[next] = Sample(x: dx * factor, y: dy * factor, time: time)
-        next = (next + 1) % 3; sampleCount = min(sampleCount + 1, 3)
+        motion.record(dx: dx, dy: dy, dt: dt, at: time)
     }
     mutating func start(now: UInt64, enabled: Bool) {
-        vx = 0; vy = 0
-        var count = 0
-        for index in 0..<sampleCount {
-            let sample = samples[index]
-            if now >= sample.time, now - sample.time <= 50_000_000 {
-                vx += sample.x; vy += sample.y; count += 1
-            }
-        }
-        if count > 0 { vx /= Double(count); vy /= Double(count) }
+        (vx, vy) = motion.velocity(at: now)
         active = enabled && hypot(vx, vy) >= 60
         lastTick = now; began = false; clearSamples()
     }

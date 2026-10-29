@@ -11,6 +11,6 @@
     "kind": "pinch",
     "phase": "ended",
     "progressDelta": 0,
-    "exitVelocity": -30.0
+    "exitVelocity": -15
   }
 ]

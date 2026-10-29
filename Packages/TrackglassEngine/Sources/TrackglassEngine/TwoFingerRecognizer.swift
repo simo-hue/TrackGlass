@@ -10,6 +10,8 @@ struct TwoFingerRecognizer {
     private var edgeCandidate = false, edgeTriggered = false
     private var originX = 0.0, originY = 0.0
     var hasActiveGesture: Bool { scrollActive || pinchActive || rotateActive || edgeTriggered }
+    /// A zoom or rotation took part in this gesture: no momentum follows it (§6.8 momentum is a scroll's).
+    var zoomOrRotateActive: Bool { pinchActive || rotateActive }
 
     mutating func begin(x: Double, y: Double, distance: Double, angle: Double, time: UInt64, rightEdge: Bool = false) {
         previous = (x, y, time); path = 0; scrollActive = false
@@ -37,10 +39,17 @@ struct TwoFingerRecognizer {
             previousAngle = angle; totalAngle = 0
             return
         }
+        // Two-finger arbitration (2026-10-29, after the owner's 4/5-finger "bigger change wins"): a scroll activates
+        // only once the centroid has travelled at least as far as the spread changed, so a pinch anchored on a still
+        // thumb (which drags the centroid along) never scrolls. Before a scroll, a pinch needs more spread change than
+        // centroid travel; during a scroll it needs a quarter of the travel, so a long scroll whose finger spacing
+        // drifts a few millimetres never starts zooming while a deliberate pinch still joins the scroll (PLAN M6.6:
+        // scroll and pinch together). Both measured since the fingers landed; an active sub-gesture stays active.
+        let spreadChange = abs(distance - startDistance)
         if suppressActivation && !scrollActive { path = 0 }
         else {
             path += hypot(dx, dy)
-            if settings.scrollEnabled, path > 1.5 {
+            if settings.scrollEnabled, scrollActive || (path > 1.5 && (!settings.pinchEnabled || path >= spreadChange)) {
                 let delta = acceleration.accelerate(dxMM: settings.horizontalScrollEnabled ? dx : 0,
                     dyMM: dy, dtNanoseconds: lastDeltaTime)
                 if delta.0 != 0 || delta.1 != 0 {
@@ -56,19 +65,21 @@ struct TwoFingerRecognizer {
         while angleDelta < -.pi { angleDelta += 2 * .pi }
         totalAngle += angleDelta
         let pinch = settings.pinchEnabled && previousDistance > 0.0001 &&
-            (pinchActive || abs(distance - startDistance) > 2.5)
+            (pinchActive || (spreadChange > 2.5 && spreadChange > (scrollActive ? 0.25 * path : path)))
         // §6.5.7: the 15 mm spread (ROTATE_MIN_SPREAD) is an activation precondition; an activated
         // rotation stays active until lift even if the fingers close up afterwards.
         let rotate = settings.rotateEnabled &&
             (rotateActive || (distance > 15 && abs(totalAngle) > 5 * .pi / 180))
         if (pinch || rotate) && !bracketOpen { events.append(.gestureBegin); bracketOpen = true }
         if pinch {
-            let delta = distance / previousDistance - 1
+            // `.began` carries the change since the fingers landed (the 2.5 mm it took to activate is part of
+            // the zoom, §10.3 C6); later events carry one frame's change.
+            let delta = pinchActive ? distance / previousDistance - 1 : (startDistance > 0.0001 ? distance / startDistance - 1 : 0)
             if delta != 0 || !pinchActive { events.append(.magnify(delta: delta, phase: pinchActive ? .changed : .began)) }
             pinchActive = true
         }
         if rotate {
-            let delta = angleDelta * 180 / .pi
+            let delta = (rotateActive ? angleDelta : totalAngle) * 180 / .pi
             if delta != 0 || !rotateActive { events.append(.rotate(deltaDegrees: delta, phase: rotateActive ? .changed : .began)) }
             rotateActive = true
         }

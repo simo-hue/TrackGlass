@@ -150,7 +150,9 @@ final class MultiFingerGestureTests: XCTestCase {
         XCTAssertEqual(phases.first, .began)
         XCTAssertEqual(phases.last, .ended)
         XCTAssertGreaterThanOrEqual(phases.filter { $0 == .changed }.count, 9, "live tracking, not one jump")
-        XCTAssertEqual(exitVelocity, -10.0 / 110 * 100, accuracy: 1e-9)
+        // Progress per second over the last 50 ms of motion (§6.5.8): five 10 mm frames. The lift frame follows
+        // the last one within a frame interval, so its own (unknown) motion is not counted as stillness.
+        XCTAssertEqual(exitVelocity, -50.0 / 110 / 0.05, accuracy: 1e-9)
         XCTAssertTrue(events.contains(.haptic(.spaceSwitched)))
     }
 
