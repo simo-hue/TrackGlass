@@ -24,6 +24,7 @@ final class GestureFixtureTests: XCTestCase {
             let geometryChanges = (settings.geometryChanges ?? []).sorted { $0.atNs < $1.atNs }
             let settingsChanges = (settings.settingsChanges ?? []).sorted { $0.atNs < $1.atNs }
             var settingsIndex = 0
+            var requestedSettings = settings.settings
             var tickIndex = 0, geometryIndex = 0
             while let record = try reader.next() {
                 let frame = try record.frameBytes.withUnsafeBytes { try TouchFrameDecoder.decode($0) }
@@ -34,7 +35,8 @@ final class GestureFixtureTests: XCTestCase {
                     guard min(nextTick, nextGeometry, settingsTime) < frame.frameTime else { break }
                     var events = EventBuffer()
                     if settingsTime <= min(nextTick, nextGeometry) {
-                        engine.setSettings(settingsChanges[settingsIndex].settings); settingsIndex += 1
+                        requestedSettings = try settingsChanges[settingsIndex].settings.applied(to: requestedSettings)
+                        engine.setSettings(requestedSettings); settingsIndex += 1
                     } else if nextTick < nextGeometry {
                         engine.tick(now: nextTick, into: &events); tickIndex += 1
                     } else {
@@ -50,7 +52,8 @@ final class GestureFixtureTests: XCTestCase {
                 let settingsTime = settingsIndex < settingsChanges.count ? settingsChanges[settingsIndex].atNs : UInt64.max
                 var events = EventBuffer()
                 if settingsTime <= min(nextTick, nextGeometry) {
-                    engine.setSettings(settingsChanges[settingsIndex].settings); settingsIndex += 1
+                    requestedSettings = try settingsChanges[settingsIndex].settings.applied(to: requestedSettings)
+                        engine.setSettings(requestedSettings); settingsIndex += 1
                 } else if nextTick < nextGeometry {
                     engine.tick(now: nextTick, into: &events); tickIndex += 1
                 } else {
@@ -131,4 +134,4 @@ private enum FixtureBuilder {
     }
 }
 
-private struct FixtureSettingsChange: Decodable { let atNs: UInt64; let settings: TrackpadSettings }
+private struct FixtureSettingsChange: Decodable { let atNs: UInt64; let settings: TrackpadSettingsPatch }

@@ -1,5 +1,21 @@
 [
   {
+    "t": "button",
+    "kind": "left",
+    "phase": "down",
+    "clickCount": 1
+  },
+  {
+    "t": "button",
+    "kind": "left",
+    "phase": "up",
+    "clickCount": 1
+  },
+  {
+    "t": "haptic",
+    "kind": "click"
+  },
+  {
     "t": "pointerMove",
     "dx": 2,
     "dy": 0

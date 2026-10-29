@@ -27,12 +27,13 @@ final class DragSafetyTests: XCTestCase {
     }
 
     /// Tap, then a second touch that moves: the button is down and the second contact is the drag contact.
+    /// The press goes out once the touch moves (or the settle window shows one finger), §6.5.6 2026-10-29.
     private func startTapAndAHalfDrag(_ engine: GestureEngine) {
         process(engine, frame(1_000 * ms, [(1, .began, 30, 50)]))
         process(engine, frame(1_050 * ms, [(1, .ended, 30, 50)]))
-        let down = process(engine, frame(1_200 * ms, [(2, .began, 30, 50)]))
-        XCTAssertTrue(down.contains(.button(kind: .left, phase: .down, clickCount: 2)))
-        process(engine, frame(1_250 * ms, [(2, .moved, 36, 50)]))
+        var down = process(engine, frame(1_200 * ms, [(2, .began, 30, 50)]))
+        down += process(engine, frame(1_250 * ms, [(2, .moved, 36, 50)]))
+        XCTAssertEqual(down.prefix(1), [.button(kind: .left, phase: .down, clickCount: 2)], "\(down)")
     }
 
     func testVanishedDragContactReleasesAfterGraceWindow() {
@@ -158,8 +159,9 @@ final class DragSafetyTests: XCTestCase {
             let engine = engine(TrackpadSettings(dragging: true, smartZoomEnabled: smartZoom))
             startTapAndAHalfDrag(engine)
             process(engine, frame(1_300 * ms, [(2, .ended, 36, 50)]))   // grace window opens
-            process(engine, frame(1_350 * ms, [(3, .began, 30, 60), (4, .began, 45, 60)]))
-            var events = process(engine, frame(1_400 * ms, [(3, .ended, 30, 60), (4, .ended, 45, 60)]))
+            // Two fingers landing inside the grace window are a two-finger gesture, not a re-grab: the drag ends.
+            var events = process(engine, frame(1_350 * ms, [(3, .began, 30, 60), (4, .began, 45, 60)]))
+            events += process(engine, frame(1_400 * ms, [(3, .ended, 30, 60), (4, .ended, 45, 60)]))
             events += tick(engine, 1_700 * ms)
             events += tick(engine, 1_900 * ms)
             XCTAssertEqual(events.filter { $0 == .button(kind: .left, phase: .up, clickCount: 2) }.count, 1, "smartZoom \(smartZoom): \(events)")

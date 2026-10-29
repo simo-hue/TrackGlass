@@ -210,7 +210,9 @@ private enum TGReplay {
         }
         let changes = (configuration.geometryChanges ?? []).sorted { $0.atNs < $1.atNs }
         let settingsChanges = (configuration.settingsChanges ?? []).sorted { $0.atNs < $1.atNs }
+        for change in settingsChanges { _ = try change.settings.applied(to: configuration.settings) }   // reject a malformed change up front
         var settingsIndex = 0
+        var requestedSettings = configuration.settings
         var tickIndex = 0, changeIndex = 0
         var random = seed
         var lastAcceptedFrameTime: UInt64?
@@ -234,7 +236,11 @@ private enum TGReplay {
                 guard min(tickTime, changeTime, settingsTime) < limit else { break }
                 var buffer = EventBuffer()
                 if settingsTime <= min(tickTime, changeTime) {
-                    engine.setSettings(settingsChanges[settingsIndex].settings); settingsIndex += 1
+                    // Partial changes apply on top of what was last requested (the engine may still defer it, §6.4).
+                    if let next = try? settingsChanges[settingsIndex].settings.applied(to: requestedSettings) {
+                        requestedSettings = next; engine.setSettings(next)
+                    }
+                    settingsIndex += 1
                 } else if tickTime < changeTime {
                     engine.tick(now: tickTime, into: &buffer); tickIndex += 1
                     emulateLiftoffTimeout(now: tickTime, into: &buffer)
@@ -394,7 +400,7 @@ do {
     exit(EXIT_FAILURE)
 }
 
-private struct SettingsChange: Decodable { let atNs: UInt64; let settings: TrackpadSettings }
+private struct SettingsChange: Decodable { let atNs: UInt64; let settings: TrackpadSettingsPatch }
 
 extension TGRecReader {
     /// A recording the app was still writing when it died ends mid-record: replay its complete frames.

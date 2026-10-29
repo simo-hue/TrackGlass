@@ -18,9 +18,10 @@ struct MultiFingerRecognizer {
     private var progress = 0.0, lastDelta = 0.0
     private var directions = (0.0, 0.0, 0.0)
     private var movementCount = 0
-    /// Progress deltas with their frame times: the exit velocity is the progress of the last 50 ms (§6.5.8).
+    /// Per-frame centroid (x, y) and spread motion since the fingers landed, before and after the axis locks: the
+    /// exit velocity is the last 50 ms of it along the locked axis (§6.5.8), whatever came before the swipe.
     private var motion = RecentMotion()
-    private var startTime: UInt64 = 0
+    private var spreadMotion = RecentMotion()
     private var previousTime: UInt64 = 0
     var active: Bool { kind != nil || navigationSent }
 
@@ -28,14 +29,18 @@ struct MultiFingerRecognizer {
         fingerCount = fingers; start = sample; previous = sample
         axis = nil; kind = nil; navigationSent = false; progress = 0; lastDelta = 0
         directions = (0, 0, 0); movementCount = 0
-        motion.clear(); startTime = time; previousTime = time
+        motion.clear(); spreadMotion.clear(); previousTime = time
     }
 
     mutating func update(_ sample: Sample, time: UInt64, settings: TrackpadSettings, into events: inout EventBuffer) {
         let dx = sample.x - previous.x, dy = sample.y - previous.y, dr = sample.radius - previous.radius
         previous = sample
         let frameStart = previousTime
-        if time > previousTime { previousTime = time }
+        if time > previousTime {
+            previousTime = time
+            motion.record(dx: dx, dy: dy, dt: time - frameStart, at: time)
+            spreadMotion.record(dx: dr, dt: time - frameStart, at: time)
+        }
         guard !navigationSent else { return }
         let totalX = sample.x - start.x, totalY = sample.y - start.y
         if axis == nil {
@@ -85,9 +90,6 @@ struct MultiFingerRecognizer {
         }
         guard delta != 0 else { return }
         events.append(.dockSwipe(kind: axis, progressDelta: delta, phase: kind == nil ? .began : .changed, exitVelocity: 0))
-        // The `.began` delta covers the travel since the fingers landed; later ones cover one frame.
-        let covered = first ? startTime : frameStart
-        motion.record(dx: delta, dt: time > covered ? time - covered : 1, at: time)
         kind = axis; progress += delta; lastDelta = delta
         directions = (directions.1, directions.2, delta); movementCount = min(movementCount + 1, 3)
     }
@@ -99,12 +101,19 @@ struct MultiFingerRecognizer {
             let reversed = movementCount == 3 && directions.0 * progress < 0 &&
                 directions.1 * progress < 0 && directions.2 * progress < 0
             let cancel = cancelled || reversed
+            let release = max(now ?? previousTime, previousTime)
+            let exitVelocity: Double
+            switch kind {
+            case .horizontal: exitVelocity = -motion.velocity(at: release).0 / 110
+            case .vertical: exitVelocity = -motion.velocity(at: release).1 / 60
+            case .pinch: exitVelocity = spreadMotion.velocity(at: release).0 / 40
+            }
             events.append(.dockSwipe(kind: kind, progressDelta: 0, phase: cancel ? .cancelled : .ended,
-                                    exitVelocity: motion.velocity(at: max(now ?? previousTime, previousTime)).0))
+                                    exitVelocity: exitVelocity))
             if !cancel, kind == .horizontal, abs(progress) >= 0.5 { events.append(.haptic(.spaceSwitched)) }
         }
         // Reset in place (no new storage): the recognizer is reused for the next gesture (§7).
         fingerCount = 0; axis = nil; kind = nil; navigationSent = false; progress = 0; lastDelta = 0
-        directions = (0, 0, 0); movementCount = 0; motion.clear()
+        directions = (0, 0, 0); movementCount = 0; motion.clear(); spreadMotion.clear()
     }
 }

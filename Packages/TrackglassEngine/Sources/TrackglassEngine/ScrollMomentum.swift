@@ -29,7 +29,8 @@ struct ScrollMomentum {
     @discardableResult
     mutating func cancel(into events: inout EventBuffer) -> Bool {
         guard active else { clearSamples(); return false }
-        events.append(.scrollMomentum(phase: .end, dxPoints: 0, dyPoints: 0))
+        // An `.end` only closes a momentum phase that began (a cancel before the first tick emits nothing).
+        if began { events.append(.scrollMomentum(phase: .end, dxPoints: 0, dyPoints: 0)) }
         active = false; began = false; vx = 0; vy = 0; clearSamples()
         return true
     }

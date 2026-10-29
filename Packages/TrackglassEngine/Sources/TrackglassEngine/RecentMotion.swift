@@ -6,6 +6,7 @@ import Foundation
 /// that the release frame's own interval is not counted as stillness when it follows the last delta within one
 /// frame (the lift sample's motion is not part of the deltas, so counting it would make the result depend on the
 /// frame rate); a longer pause before the release counts as no motion, so fingers that stopped do not coast.
+/// Stillness before the motion began does not count (fingers resting before a flick are not part of it).
 /// Storage is allocated once (§7).
 struct RecentMotion {
     private struct Entry { var time: UInt64 = 0; var dt: UInt64 = 0; var dx = 0.0; var dy = 0.0 }
@@ -20,7 +21,7 @@ struct RecentMotion {
     /// `dt` is the interval the delta covers, ending at `time`.
     mutating func record(dx: Double, dy: Double = 0, dt: UInt64, at time: UInt64) {
         guard dt > 0, dx.isFinite, dy.isFinite else { return }
-        if motionStart == nil { motionStart = time >= dt ? time - dt : 0 }
+        if motionStart == nil, dx != 0 || dy != 0 { motionStart = time >= dt ? time - dt : 0 }
         entries[next] = Entry(time: time, dt: dt, dx: dx, dy: dy)
         lastTime = time; lastInterval = dt
         next = (next + 1) % entries.count

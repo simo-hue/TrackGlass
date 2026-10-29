@@ -14,7 +14,8 @@ final class ScrollMomentumTests: XCTestCase {
         }
         engine.setSettings(TrackpadSettings(momentumScrollEnabled: false))
         events.clear(); engine.tick(now: 24_000_000, into: &events)
-        XCTAssertEqual(events.events, [.scrollMomentum(phase: .end, dxPoints: 0, dyPoints: 0)])
+        // Stopped before its first step: no momentum phase began, so there is no `.end` to close (§6.8).
+        XCTAssertEqual(events.events, [])
         XCTAssertFalse(engine.needsTick)
     }
     func testFlickDecaysToRestWithinSpecifiedInterval() {
