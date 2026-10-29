@@ -19,13 +19,22 @@ xcb() { xcodebuild "$@" ${SIGNING[@]+"${SIGNING[@]}"}; }
 swift test --package-path Packages/TrackglassKit
 swift test --package-path Packages/TrackglassEngine
 # SPEC §10.1 performance gates (encode/decode ≤ 300 ns, curve multiplier ≤ 50 ns) only assert in optimized
-# builds; run exactly those tests again in release so the budget is enforced, not just measured.
-swift test -c release --package-path Packages/TrackglassKit --filter 'TouchFrameTests/test(Encode|Decode)Performance'
-swift test -c release --package-path Packages/TrackglassEngine --filter 'PointerAccelerationCurveTests/testMultiplierAverageRuntimeIsAtMostFiftyNanoseconds'
+# builds; run exactly those tests again in release so the budget is enforced, not just measured. `swift test`
+# only warns when a filter matches nothing, so a renamed test would silently drop its gate: require a match.
+gate() {
+  local package="$1" filter="$2" output
+  output="$(swift test -c release --package-path "$package" --filter "$filter" 2>&1)" || { echo "$output"; return 1; }
+  echo "$output" | tail -3
+  grep -qE 'Executed [1-9][0-9]* tests?' <<<"$output" || { echo "performance gate '$filter' matched no test" >&2; return 1; }
+}
+gate Packages/TrackglassKit 'TouchFrameTests/test(Encode|Decode)Performance'
+gate Packages/TrackglassEngine 'PointerAccelerationCurveTests/testMultiplierAverageRuntimeIsAtMostFiftyNanoseconds'
 if [[ "${TG_CI_UNSIGNED:-0}" == 1 ]]; then
   # The Mac-hosted bundle needs the data-protection Keychain (keychain-access-groups), which an unsigned
-  # build cannot use; those tests stay on the signed release Mac. The Mac app is still built below.
-  echo "TG_CI_UNSIGNED=1: skipping TrackglassMacTests (requires a signed host app)"
+  # build cannot use; those tests run on the signed release Mac. They are still compiled here, so a test
+  # that no longer builds fails CI instead of surfacing at release time.
+  echo "TG_CI_UNSIGNED=1: building TrackglassMacTests without running them (requires a signed host app)"
+  xcb -project Trackglass.xcodeproj -scheme TrackglassMac -destination 'platform=macOS' build-for-testing
 else
   xcb -project Trackglass.xcodeproj -scheme TrackglassMac -destination 'platform=macOS' test
 fi
@@ -35,6 +44,8 @@ xcb -project Trackglass.xcodeproj -scheme TrackglassiOS -destination "${TG_IOS_T
 xcb -project Trackglass.xcodeproj -scheme TrackglassiOSSoak -destination "${TG_IOS_TEST_DESTINATION:-platform=iOS Simulator,name=iPhone 17}" build-for-testing
 xcb -project Trackglass.xcodeproj -scheme TrackglassiOS -destination 'generic/platform=iOS' build
 xcb -project Trackglass.xcodeproj -scheme TrackglassMac -configuration Debug build
+# The shipped configuration: optimized, universal (SPEC §1.4 supports Intel Macs too).
+xcb -project Trackglass.xcodeproj -scheme TrackglassMac -configuration Release -destination 'generic/platform=macOS' build
 TRACKGLASS_REPLAY_DERIVED_DATA="${TMPDIR:-/tmp}/trackglass-replay-ci"
 xcb -project Trackglass.xcodeproj -scheme tgreplay -configuration Debug \
   -destination 'platform=macOS' -derivedDataPath "$TRACKGLASS_REPLAY_DERIVED_DATA" build

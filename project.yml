@@ -14,7 +14,8 @@ packages:
     path: Packages/TrackglassEngine
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
-    from: 2.10.1
+    # Pinned: release builds must not float to a newer Sparkle than the generate_appcast on the release Mac.
+    exactVersion: 2.10.1
 targets:
   TrackglassiOS:
     type: application
@@ -84,6 +85,10 @@ targets:
       base:
         SWIFT_OBJC_BRIDGING_HEADER: Mac/Injection/Quartz/PrivateAPI/TGPrivateAPI.h
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # SPEC §1.5: the bundle users install is "Trackglass for Mac.app" (derived from TG_PRODUCT_NAME); the Swift
+        # module keeps the target name so `@testable import TrackglassMac` and the scheme are unchanged.
+        PRODUCT_NAME: $(TG_PRODUCT_NAME) for Mac
+        PRODUCT_MODULE_NAME: TrackglassMac
     sources:
       - Mac/App
       - Mac/Networking
@@ -176,6 +181,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: $(TG_BUNDLE_PREFIX).mac.tests
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_OBJC_BRIDGING_HEADER: Mac/Injection/Quartz/PrivateAPI/TGPrivateAPI.h
+        # The host app's product name differs from its target name (see TrackglassMac above).
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/$(TG_PRODUCT_NAME) for Mac.app/Contents/MacOS/$(TG_PRODUCT_NAME) for Mac
+        BUNDLE_LOADER: $(TEST_HOST)
     dependencies:
       - target: TrackglassMac
   tgreplay:

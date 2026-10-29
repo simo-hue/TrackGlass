@@ -16,6 +16,11 @@ Config/Local.xcconfig
 *.dmg
 # Sparkle release-notes fragments written beside the DMG by Scripts/release-mac.sh
 Releases/*.html
+# Sparkle by-products should generate_appcast ever run over Releases/ itself
+Releases/*.delta
+Releases/old_updates/
+# local CI logs (Scripts/ci.sh > output.txt)
+output.txt
 *.xcarchive
 *.ipa
 # signing material never enters the repo
