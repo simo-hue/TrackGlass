@@ -58,8 +58,12 @@ public final class ControlChannel {
                 switch state {
                 case .ready: self.onReady?(); self.receive()
                 case .failed(let error), .waiting(let error):
-                    if case .tls = error { self.close(ControlCloseMessage.pairAgain) }
-                    else { self.close("Connection lost") }
+                    // A refused key is "Pair again" (§3.2); a handshake the peer merely closed or aborted
+                    // (errSSLClosedGraceful −9805, errSSLClosedAbort −9806, errSSLClosedNoNotify −9816: a Mac going
+                    // to sleep or restarting its listener) is a lost connection that a reconnect survives.
+                    if case let .tls(status) = error, ![-9805, -9806, -9816].contains(status) {
+                        self.close(ControlCloseMessage.pairAgain)
+                    } else { self.close("Connection lost") }
                 case .cancelled: self.close("Disconnected")
                 default: break
                 }

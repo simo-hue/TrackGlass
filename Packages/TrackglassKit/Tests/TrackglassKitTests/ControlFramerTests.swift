@@ -19,6 +19,16 @@ final class ControlFramerTests: XCTestCase {
         wait(for: [done], timeout: 30)
         harness.stop()
     }
+
+    /// A message whose payload arrives in a later read than its length prefix, with the next message's prefix in
+    /// that same read: the framer must not deliver the next message with the previous one's length.
+    func testPayloadArrivingAfterAPauseWithTheNextPrefix() throws {
+        let done = expectation(description: "Paced reads reassemble")
+        let harness = try FramerHarness(done: done, fragmented: true, paced: true)
+        harness.start()
+        wait(for: [done], timeout: 30)
+        harness.stop()
+    }
 }
 
 // All mutable connection state is confined to queue; the test thread only starts/stops it.
@@ -27,21 +37,25 @@ private final class FramerHarness: @unchecked Sendable {
     private let listener: NWListener
     private let done: XCTestExpectation
     private let fragmented: Bool
+    private let paced: Bool
     private var client: NWConnection?
     private var server: NWConnection?
     private var received = 0
     private var finished = false
     private var count: Int { fragmented ? 20 : 1000 }
 
-    init(done: XCTestExpectation, fragmented: Bool) throws {
+    init(done: XCTestExpectation, fragmented: Bool, paced: Bool = false) throws {
         self.done = done
         self.fragmented = fragmented
+        self.paced = paced
         listener = try NWListener(using: Self.parameters(framed: true), on: .any)
     }
 
     private static func parameters(framed: Bool) -> NWParameters {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        // Every send leaves at once (no Nagle coalescing), so paced chunks arrive as separate reads.
+        (parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options)?.noDelay = true
         if framed {
             parameters.defaultProtocolStack.applicationProtocols.insert(
                 NWProtocolFramer.Options(definition: TGControlFramer.definition), at: 0)
@@ -80,6 +94,26 @@ private final class FramerHarness: @unchecked Sendable {
     }
 
     private func sendAll(_ connection: NWConnection) {
+        if paced {
+            // One stream cut 3 bytes into every payload; each read then holds the rest of one message and the
+            // prefix plus 3 bytes of the next, 30 ms after the previous read.
+            var stream = Data(), cuts = [0]
+            for index in 0..<count {
+                let data = payload(index)
+                var length = UInt32(data.count).littleEndian
+                stream.append(withUnsafeBytes(of: &length) { Data($0) })
+                cuts.append(stream.count + 3)
+                stream.append(data)
+            }
+            cuts.append(stream.count)
+            for part in 0..<(cuts.count - 1) {
+                let chunk = stream.subdata(in: cuts[part]..<cuts[part + 1])
+                queue.asyncAfter(deadline: .now() + .milliseconds(30 * part)) {
+                    connection.send(content: chunk, completion: .contentProcessed { if let error = $0 { self.fail(error) } })
+                }
+            }
+            return
+        }
         for index in 0..<count {
             let data = payload(index)
             if fragmented {
