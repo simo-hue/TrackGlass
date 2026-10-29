@@ -18,8 +18,9 @@
 # Guards: refuses a dirty working tree, a branch other than an up-to-date main, an existing tag (local or on
 # origin), a version mismatch, a Keychain Sparkle key that does not match TG_SPARKLE_PUBLIC_KEY, a build number
 # not above the appcast's newest, an exported app whose feed URL / key / versions differ from the tracked
-# configuration (a Config/Local.xcconfig override), and a signing team that differs from the previously shipped
-# app (SPEC §8.6, Scripts/assert-signing-team.sh). --dry-run stops before notarization. TG_RELEASE_SKIP_CI=1
+# configuration (a Config/Local.xcconfig override), an origin other than TG_REPO_URL, and a signing team that
+# differs from the previously shipped app (SPEC §8.6, Scripts/assert-signing-team.sh; required once the appcast
+# has a release). The appcast is pushed only after its download link answers. --dry-run stops before notarization. TG_RELEASE_SKIP_CI=1
 # skips the test run (only for re-running a release whose CI already passed on this commit).
 # Export options (Developer ID, automatic signing, the team ID from Config/Local.xcconfig) are written per run.
 set -euo pipefail
@@ -94,6 +95,10 @@ PY
 (( BUILD_NUMBER > LATEST_BUILD )) || fail "build number $BUILD_NUMBER is not above the appcast's newest ($LATEST_BUILD)"
 xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 || fail "notarytool profile '$NOTARY_PROFILE' is missing (xcrun notarytool store-credentials)"
 gh auth status >/dev/null 2>&1 || fail "gh is not authenticated (gh auth login)"
+# The DMG is uploaded to, the appcast pushed to and the appcast's download links built from one repository.
+lowercase() { tr '[:upper:]' '[:lower:]' <<<"$1"; }   # GitHub paths are case-insensitive; bash 3.2 has no ${x,,}
+ORIGIN_URL="$(git remote get-url origin | sed -E 's#^git@github\.com:#https://github.com/#; s#\.git$##; s#/$##')"
+[[ "$(lowercase "$ORIGIN_URL")" == "$(lowercase "${REPO_URL%/}")" ]] || fail "origin is $ORIGIN_URL but TG_REPO_URL is $REPO_URL; the appcast would point at the wrong repository"
 TEAM_ID="$(sed -n 's/^DEVELOPMENT_TEAM *= *//p' Config/Local.xcconfig | tr -d '[:space:]')"
 # The DMG is signed with this team's Developer ID identity, never whichever one the Keychain lists first.
 SIGNING_IDENTITY="$(security find-identity -v -p codesigning | grep 'Developer ID Application' | grep "($TEAM_ID)" | head -1 | awk '{print $2}' || true)"
@@ -149,8 +154,11 @@ PREVIOUS_APP="${TG_PREVIOUS_APP:-/Applications/$(basename "$APP")}"
 if [[ -d "$PREVIOUS_APP" ]]; then
   step "Asserting the signing team matches the previously shipped app"
   Scripts/assert-signing-team.sh "$APP" "$PREVIOUS_APP"
+elif (( LATEST_BUILD > 0 )); then
+  # A team change resets every user's Accessibility permission after the Sparkle update: never ship unchecked.
+  fail "the appcast already has a release but there is no previous app at $PREVIOUS_APP; install the last release there or set TG_PREVIOUS_APP to its .app"
 else
-  echo "note: no previous app at $PREVIOUS_APP; skipping the team assertion (set TG_PREVIOUS_APP to check)"
+  echo "note: first release (empty appcast) and no previous app at $PREVIOUS_APP; nothing to compare the signing team with"
 fi
 
 step "Building $DMG_NAME"
@@ -242,18 +250,23 @@ git commit -q -m "release: appcast for $VERSION"
 
 step "Creating GitHub release $TAG"
 recover() {
-  echo "error: the release stopped after the tag was pushed. Finish by hand:" >&2
-  echo "  gh release create $TAG 'Releases/$DMG_NAME' --title '$PRODUCT_NAME for Mac $VERSION' --notes-file '$NOTES'$([[ "$PRERELEASE" == 1 ]] && echo ' --prerelease')" >&2
+  echo "error: the release stopped after the appcast commit and tag were made locally. Finish by hand:" >&2
+  echo "  git push origin $TAG    # if the tag is not on origin yet" >&2
+  echo "  gh release create $TAG 'Releases/$DMG_NAME' --repo '$REPO_SLUG' --title '$PRODUCT_NAME for Mac $VERSION' --notes-file '$NOTES'$([[ "$PRERELEASE" == 1 ]] && echo ' --prerelease')" >&2
+  echo "  curl -fsSIL '$REPO_URL/releases/download/$TAG/$DMG_NAME'    # must succeed before the next step" >&2
   echo "  git push origin HEAD    # publishes the appcast commit (only once the DMG is downloadable)" >&2
+  echo "or undo the local steps: git tag -d $TAG && git reset --hard HEAD~1" >&2
 }
+trap recover ERR
 git tag -a "$TAG" -m "$PRODUCT_NAME for Mac $VERSION"
 git push origin "$TAG"
-trap recover ERR
 if [[ "$PRERELEASE" == 1 ]]; then
-  gh release create "$TAG" "Releases/$DMG_NAME" --title "$PRODUCT_NAME for Mac $VERSION" --notes-file "$NOTES" --prerelease
+  gh release create "$TAG" "Releases/$DMG_NAME" --repo "$REPO_SLUG" --title "$PRODUCT_NAME for Mac $VERSION" --notes-file "$NOTES" --prerelease
 else
-  gh release create "$TAG" "Releases/$DMG_NAME" --title "$PRODUCT_NAME for Mac $VERSION" --notes-file "$NOTES"
+  gh release create "$TAG" "Releases/$DMG_NAME" --repo "$REPO_SLUG" --title "$PRODUCT_NAME for Mac $VERSION" --notes-file "$NOTES"
 fi
+# The appcast goes live only once the link it carries answers (SPEC §6.11).
+curl -fsSIL --retry 5 --retry-delay 3 --retry-all-errors "$REPO_URL/releases/download/$TAG/$DMG_NAME" >/dev/null
 git push origin HEAD
 trap - ERR
 
