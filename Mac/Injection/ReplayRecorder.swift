@@ -38,6 +38,10 @@ final class ReplayRecorder {
     /// False when the frame could not be written (disk full, volume gone); the writer has closed itself and the
     /// pipeline stops the recording, so the failure is logged once instead of on every frame (§7).
     func append(frameBytes: Data, captureTimeNs: UInt64) -> Bool {
+        frameBytes.withUnsafeBytes { append(frameBytes: $0, captureTimeNs: captureTimeNs) }
+    }
+
+    func append(frameBytes: UnsafeRawBufferPointer, captureTimeNs: UInt64) -> Bool {
         do {
             try writer.append(captureTimeNs: captureTimeNs, frameBytes: frameBytes)
             return true
@@ -48,6 +52,20 @@ final class ReplayRecorder {
             return false
         }
     }
+
+    /// C1 (M6): a lift-off `InputPipeline.heartbeat()` forced is recorded as the TOUCH_FRAME the engine processed for
+    /// it (no contacts, synthetic lift-off flag, the last frame's time), so the replay lifts off where the Mac did.
+    /// Rare (a lost lift-off datagram); encoded on the stack. False when the write failed, as for `append`.
+    func appendSyntheticLiftoff(frameTime: UInt64, sequence: UInt32, captureTimeNs: UInt64) -> Bool {
+        let encoder = TouchFrameEncoder(frame: TouchFrame(sequence: sequence, frameTime: frameTime, isSyntheticLiftoff: true))
+        return withUnsafeTemporaryAllocation(byteCount: 28, alignment: 8) { buffer in
+            guard let written = try? encoder.encode(into: buffer) else { return true }
+            return append(frameBytes: UnsafeRawBufferPointer(start: buffer.baseAddress, count: written), captureTimeNs: captureTimeNs)
+        }
+    }
+
+    /// C1: the session ended while recording; the pipeline forced a lift-off that releases a drag lock.
+    func recordSessionEnd() { sidecar.forceLiftoffReleaseDragLock = true }
 
     /// `atNs`: the frame time of the last frame processed before the pipeline handed the change to the engine.
     func recordSettings(_ settings: TrackpadSettings, atNs: UInt64) {

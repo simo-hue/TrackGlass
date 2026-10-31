@@ -157,6 +157,39 @@ final class MacAppBehaviorTests: XCTestCase {
         XCTAssertEqual(listener.flowCount, 0)
         first.cancel(); late.cancel()
     }
+
+    // MARK: Sleep (§8.1)
+
+    func testSleepStopsTheInputSideBeforeReturningAndAdmissionWorksAfterWake() {
+        // L14: `stopForSleep` runs the session's teardown (held buttons released) on the input queue before it returns.
+        let listener = InputListener()
+        let geometry = EngineGeometry(widthMM: 100, heightMM: 60, isLandscape: true)
+        listener.setAdmittedPeer(UUID(), geometry: geometry)
+        let flow = NWConnection(host: "127.0.0.1", port: 40_201, using: .udp)
+        listener.accept(flow)
+        XCTAssertEqual(listener.flowCount, 1)
+        listener.stopForSleep()
+        XCTAssertEqual(listener.flowCount, 0)
+        let asleep = NWConnection(host: "127.0.0.1", port: 40_202, using: .udp)
+        listener.accept(asleep)
+        XCTAssertEqual(listener.flowCount, 0, "no phone is admitted while asleep")
+        listener.setAdmittedPeer(UUID(), geometry: geometry)   // after wake, a phone is admitted again
+        let awake = NWConnection(host: "127.0.0.1", port: 40_203, using: .udp)
+        listener.accept(awake)
+        XCTAssertEqual(listener.flowCount, 1)
+        listener.setAdmittedPeer(nil)
+        [flow, asleep, awake].forEach { $0.cancel() }
+    }
+
+    // MARK: Acknowledgements (M19)
+
+    func testAboutCarriesTheNoticesOfTheBundledSparkleCode() {
+        let text = Acknowledgements.text
+        for notice in ["Andy Matuschak", "Permission is hereby granted, free of charge", "Colin Percival",
+                       "Redistributions in binary form must reproduce", "Yuta Mori", "Orson Peters", "Mark Hamlin"] {
+            XCTAssertTrue(text.contains(notice), notice)
+        }
+    }
 }
 
 @MainActor

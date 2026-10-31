@@ -142,8 +142,16 @@ final class TrackpadPreferences: @unchecked Sendable {
             appExposeEnabled: bool(dock["showAppExposeGestureEnabled"]) ?? true,
             launchpadEnabled: bool(dock["showLaunchpadGestureEnabled"]) ?? true,
             showDesktopEnabled: bool(dock["showDesktopGestureEnabled"]) ?? true,
-            doubleClickIntervalNs: UInt64(max(0, doubleClickInterval) * 1_000_000_000)
+            doubleClickIntervalNs: Self.doubleClickIntervalNs(doubleClickInterval)
         )
+    }
+
+    /// L1: the user's double-click interval, clamped before the conversion (`UInt64(_:)` traps on an absurd or
+    /// infinite value from a hand-edited preference). NaN takes the Appendix A default of 0.5 s.
+    static let maximumDoubleClickInterval: TimeInterval = 5
+    static func doubleClickIntervalNs(_ seconds: TimeInterval) -> UInt64 {
+        guard !seconds.isNaN else { return 500_000_000 }
+        return UInt64(min(max(seconds, 0), maximumDoubleClickInterval) * 1_000_000_000)
     }
 
     /// The only Dock keys §6.4 needs; the Dock domain also holds large bookmark blobs that are not copied.

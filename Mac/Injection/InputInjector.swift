@@ -11,7 +11,7 @@ protocol InputInjector: AnyObject {
     func displayDidSleep()
     /// The Mac's trackpad settings as the engine applies them (Dock swipes follow the scroll direction).
     func settingsDidChange(_ settings: TrackpadSettings)
-    /// The session is ending: post now whatever `tick` would still have posted (Dock end re-posts, Look Up).
+    /// The session is ending: post now whatever `tick` would still have posted (Dock end re-posts, the force trial's release).
     func flush()
 }
 
@@ -33,25 +33,35 @@ final class PointerState {
     private let post: (CGEvent) -> Void
     private let now: () -> UInt64
     private let queryLocation: () -> CGPoint?
-    /// Where the last pointer event this process posted put the pointer, and when (P6, §7). Within
-    /// `locationCacheNs` of that post the pointer is still there, so every event of a gesture is placed without
-    /// asking the window server (`CGEvent(source: nil)` allocates an event and costs an IPC round trip per call).
-    /// After a pause the position is queried again: the user may have moved another mouse or trackpad meanwhile.
+    /// Where the last pointer event this process posted put the pointer, or where the window server last said it
+    /// was, and when (P6, M15, §6.7). Within `locationCacheNs` of that the pointer is still there, so every event of a
+    /// gesture is placed without asking the window server (`CGEvent(source: nil)` allocates an event and costs an IPC
+    /// round trip per call): scroll, momentum, gesture and Dock events ask at most once per 50 ms. After a pause, or
+    /// once the display configuration changed, the position is queried again: the user may have moved another mouse
+    /// or trackpad meanwhile, and a reconfiguration can move the pointer.
     private var lastPosition: CGPoint?
     private var lastPostTime: UInt64 = 0
+    private var cachedConfiguration = 0
     static let locationCacheNs: UInt64 = 50_000_000
+    /// L1: a pointer delta beyond this (points) is dropped like the scroll path drops one (`ScrollEventFactory`); only a
+    /// misbehaving phone sends it, and `Int64(_:)` of a huge rounded remainder would trap mid-session.
+    static let maximumDelta = 1_000_000.0
     init(post: @escaping (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) },
          now: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
          queryLocation: @escaping () -> CGPoint? = { CGEvent(source: nil)?.location }) {
         self.post = post; self.now = now; self.queryLocation = queryLocation
         eventSource = Self.sharedEventSource
     }
-    /// The pointer position events are posted at: the cached one shortly after a pointer post, else the live one.
+    /// The pointer position events are posted at: the cached one within 50 ms of a pointer post or of a query, else
+    /// the live one (which then serves the next 50 ms).
     func location() -> CGPoint? {
         let time = now()
-        if let lastPosition, time >= lastPostTime, time - lastPostTime < Self.locationCacheNs { return lastPosition }
-        lastPosition = nil
-        return queryLocation()
+        let configuration = displayBounds.configuration
+        if let lastPosition, configuration == cachedConfiguration, time >= lastPostTime,
+           time - lastPostTime < Self.locationCacheNs { return lastPosition }
+        lastPosition = queryLocation()
+        lastPostTime = time; cachedConfiguration = configuration
+        return lastPosition
     }
     /// §6.7: one `CGEventSource(.hidSystemState)` for the process, with local-event suppression disabled so
     /// posting never suppresses the user's physical devices. Sessions come and go; the source does not.
@@ -77,7 +87,8 @@ final class PointerState {
     /// Posts `.mouseMoved`, or `.leftMouseDragged` / `.rightMouseDragged` while that button is held (§6.7),
     /// so AppKit drag tracking (selection, window moves, drag-and-drop) sees the motion.
     func move(dx: Double, dy: Double, heldButton: ButtonKind? = nil) {
-        guard let current = location() else { return }
+        guard dx.isFinite, dy.isFinite, abs(dx) <= Self.maximumDelta, abs(dy) <= Self.maximumDelta,
+              let current = location() else { return }
         declareActivityIfNeeded()
         remainderX += dx; remainderY += dy
         let ix = remainderX.rounded(), iy = remainderY.rounded()
@@ -107,6 +118,9 @@ final class DisplayBounds: @unchecked Sendable {
     static let shared = DisplayBounds()
     private let lock = NSLock()
     private var displays: [CGRect] = []
+    private var refreshCount = 0
+    /// Changes whenever the displays are re-read, so `PointerState` drops a cached pointer position (M15).
+    var configuration: Int { lock.lock(); defer { lock.unlock() }; return refreshCount }
 
     private init() {
         refresh()
@@ -119,6 +133,7 @@ final class DisplayBounds: @unchecked Sendable {
     }
 
     private func refresh() {
+        defer { lock.lock(); refreshCount &+= 1; lock.unlock() }
         var count: UInt32 = 0
         guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return }
         var identifiers = [CGDirectDisplayID](repeating: 0, count: Int(count))
@@ -201,8 +216,7 @@ final class QuartzInjector: InputInjector {
     private let dockPath: DockSwipePath
     private let postDockEvent: (CGEvent) -> Void
     private let now: () -> UInt64
-    var needsTick: Bool { dockEnd != nil || forceLookupDeadline != nil || forceTrialStep != nil }
-    private var forceLookupDeadline: UInt64?
+    var needsTick: Bool { dockEnd != nil || forceTrialStep != nil }
     private var forceTrialStep: Int?
     private var forceTrialStart: UInt64 = 0
     private var dockEnd: (CGEvent?, CGEvent)?
@@ -297,9 +311,9 @@ final class QuartzInjector: InputInjector {
                 return
             }
             if trials.forceClick { logger.notice("force click trial: HID attachment unavailable, keyboard fallback") }
-            inject(.button(kind: .left, phase: .down, clickCount: 1))
-            inject(.button(kind: .left, phase: .up, clickCount: 1))
-            forceLookupDeadline = now() + 30_000_000
+            // §6.9.6 (H3, owner decision 2026-10-31): Look Up only, as for the three-finger tap. A finger resting still
+            // for 0.6 s must never click whatever is under the pointer (a link, a Send or Delete button).
+            inject(.lookUpAtPointer)
             logger.notice("force click: keyboard fallback")
         case .lookUpAtPointer:
             guard let down = CGEvent(keyboardEventSource: pointer.eventSource, virtualKey: 0x02, keyDown: true),
@@ -371,7 +385,6 @@ final class QuartzInjector: InputInjector {
 
     func flush() {
         assertConfined()
-        if forceLookupDeadline != nil { forceLookupDeadline = nil; inject(.lookUpAtPointer) }
         if forceTrialStep != nil, let last = ForceEventFactory.steps.indices.last {
             forceTrialStep = nil
             _ = postForceTrialStep(last)   // the release stage, so the force state never stays pressed
@@ -426,9 +439,6 @@ final class QuartzInjector: InputInjector {
     func tick() {
         assertConfined()
         let time = now()
-        if let deadline = forceLookupDeadline, time >= deadline {
-            forceLookupDeadline = nil; inject(.lookUpAtPointer)
-        }
         if let step = forceTrialStep {
             if step >= ForceEventFactory.steps.count {
                 forceTrialStep = nil; inject(.button(kind: .left, phase: .up, clickCount: 1))

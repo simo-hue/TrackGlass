@@ -1,5 +1,6 @@
 import XCTest
 import Network
+import TrackglassKit
 @testable import TrackglassMac
 
 final class BonjourAdvertiserTests: XCTestCase {
@@ -17,6 +18,34 @@ final class BonjourAdvertiserTests: XCTestCase {
         XCTAssertEqual(txt.getEntry(for: "im")?.data, Data("1".utf8))
         XCTAssertEqual(txt.getEntry(for: "nm")?.data, Data("Reference Mac".utf8))
     }
+    func testIdentityMadeOnOtherHardwareIsReplaced() {
+        // L7: Migration Assistant copies the peerID (UserDefaults) but not the pairings (this-device-only Keychain).
+        let id = UUID()
+        XCTAssertEqual(MacIdentity.decide(storedID: nil, storedFingerprint: nil, currentFingerprint: "a", hasPairings: true), .generate)
+        XCTAssertEqual(MacIdentity.decide(storedID: id, storedFingerprint: "a", currentFingerprint: "a", hasPairings: false), .keep)
+        XCTAssertEqual(MacIdentity.decide(storedID: id, storedFingerprint: "a", currentFingerprint: "b", hasPairings: true), .generate)
+        // No readable fingerprint: a working identity is never dropped.
+        XCTAssertEqual(MacIdentity.decide(storedID: id, storedFingerprint: "a", currentFingerprint: nil, hasPairings: false), .keep)
+        // An ID from before the fingerprint: kept while phones are paired under it, replaced when none could connect.
+        XCTAssertEqual(MacIdentity.decide(storedID: id, storedFingerprint: nil, currentFingerprint: "a", hasPairings: true), .keep)
+        XCTAssertEqual(MacIdentity.decide(storedID: id, storedFingerprint: nil, currentFingerprint: "a", hasPairings: false), .generate)
+    }
+
+    func testMigratedDefaultsGetANewPeerIDOnTheNewMac() throws {
+        let suite = "TrackglassIdentityTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = PairingStore(service: "app.trackglass.identity-tests.\(UUID())")
+        let original = MacIdentity.resolve(defaults: defaults, store: store, currentFingerprint: "old-mac")
+        XCTAssertEqual(MacIdentity.resolve(defaults: defaults, store: store, currentFingerprint: "old-mac"), original)
+        // The same defaults on another Mac (Migration Assistant): a new ID, which then stays.
+        let migrated = MacIdentity.resolve(defaults: defaults, store: store, currentFingerprint: "new-mac")
+        XCTAssertNotEqual(migrated, original)
+        XCTAssertEqual(MacIdentity.resolve(defaults: defaults, store: store, currentFingerprint: "new-mac"), migrated)
+        XCTAssertEqual(defaults.string(forKey: MacIdentity.peerIDKey), migrated.uuidString)
+        XCTAssertNotNil(MacIdentity.hardwareFingerprint(), "IOPlatformUUID is readable on a Mac")
+    }
+
     @MainActor func testListeningAloneDoesNotClaimAdvertising() throws {
         let suite = "TrackglassRegistrationTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

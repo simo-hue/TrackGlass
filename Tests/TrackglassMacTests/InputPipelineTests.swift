@@ -216,9 +216,84 @@ final class InputPipelineTests: XCTestCase {
         XCTAssertEqual(sidecar.acceleration.model, "unitGain")
         XCTAssertEqual(sidecar.settingsChanges, [.init(atNs: 1_100_000_000, settings: TrackpadSettings(naturalScrolling: false))])
         XCTAssertEqual(sidecar.geometryChanges, [.init(atNs: 1_100_000_000, geometry: EngineGeometry(widthMM: 60, heightMM: 100, isLandscape: false))])
+        // C1 (M6): replayed with the pipeline's ticks, and the session end's drag-lock-releasing lift-off.
+        XCTAssertTrue(sidecar.emulatePipeline)
+        XCTAssertEqual(sidecar.forceLiftoffReleaseDragLock, true)
         // The keys tgreplay's settings file reads (Tools/tgreplay/main.swift `ReplaySettings`).
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent(sidecarName))) as? [String: Any])
-        XCTAssertTrue(Set(["settings", "geometry", "acceleration", "settingsChanges", "geometryChanges"]).isSubset(of: Set(json.keys)))
+        XCTAssertTrue(Set(["settings", "geometry", "acceleration", "settingsChanges", "geometryChanges",
+                           "emulatePipeline", "forceLiftoffReleaseDragLock"]).isSubset(of: Set(json.keys)))
+    }
+
+    func testStoppingARecordingByHandRecordsNoSessionEnd() throws {
+        // C1: only a session that ended while recording gets the final forced lift-off in its replay.
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let queue = DispatchQueue(label: "pipeline-recording-stop-test")
+        let pipeline = InputPipeline(queue: queue, geometry: EngineGeometry(widthMM: 100, heightMM: 60, isLandscape: true),
+                                     injector: RecordingInjector())
+        pipeline.recordingsDirectory = directory
+        queue.sync {
+            pipeline.startRecording()
+            pipeline.consume(Self.data(sequence: 1, time: 1_000_000_000, phase: .began))
+            pipeline.stopRecording()
+            pipeline.stop()
+        }
+        let sidecarName = try XCTUnwrap(FileManager.default.contentsOfDirectory(atPath: directory.path).first { $0.hasSuffix(".settings.json") })
+        let sidecar = try JSONDecoder().decode(ReplaySidecar.self, from: Data(contentsOf: directory.appendingPathComponent(sidecarName)))
+        XCTAssertNil(sidecar.forceLiftoffReleaseDragLock)
+        XCTAssertTrue(sidecar.emulatePipeline)
+    }
+
+    func testHeartbeatLiftoffIsRecordedSoTheReplayMatchesTheLiveEvents() throws {
+        // C1 (M6): a lift-off the heartbeat forced (its datagrams were lost) is recorded as the frame the engine processed
+        // for it, so replaying the recording frame by frame gives the events the pipeline injected. No tick runs inside
+        // one block on the pipeline's queue, so frames are the only input on both sides.
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let queue = DispatchQueue(label: "pipeline-replay-test")
+        let geometry = EngineGeometry(widthMM: 100, heightMM: 60, isLandscape: true)
+        let settings = TrackpadSettings(dragging: true)
+        let injector = RecordingInjector()
+        let pipeline = InputPipeline(queue: queue, geometry: geometry, settings: settings, injector: injector,
+                                     acceleration: UnitGainAcceleration())
+        pipeline.recordingsDirectory = directory
+        var live: [GestureEvent] = []
+        queue.sync {
+            pipeline.startRecording()
+            pipeline.consume(Self.data(sequence: 1, time: 1_000_000_000, phase: .began))
+            pipeline.consume(Self.data(sequence: 2, time: 1_100_000_000, phase: .ended))
+            pipeline.consume(Self.data(sequence: 3, time: 1_200_000_000, phase: .began))
+            pipeline.consume(Self.data(sequence: 4, time: 1_250_000_000, phase: .moved, x: 16))
+            pipeline.heartbeat(sequence: 4)   // names the last frame: acted on at once
+            live = injector.events
+            pipeline.stop()
+        }
+        XCTAssertFalse(live.isEmpty)
+        let name = try XCTUnwrap(FileManager.default.contentsOfDirectory(atPath: directory.path).first { $0.hasSuffix(".tgrec") })
+        var reader = try TGRecReader(contentsOf: directory.appendingPathComponent(name))
+        let engine = GestureEngine(settings: settings, geometry: geometry, acceleration: UnitGainAcceleration(),
+                                   scrollAcceleration: UnitGainAcceleration())
+        var frames: [TouchFrame] = []
+        var replayed: [GestureEvent] = []
+        while let record = try reader.next() {
+            let frame = try record.frameBytes.withUnsafeBytes { try TouchFrameDecoder.decode($0) }
+            frames.append(frame)
+            var buffer = EventBuffer()
+            engine.process(frame, into: &buffer)
+            // The pipeline hands haptics to the phone, not to the injector.
+            replayed += buffer.events.filter { event in
+                if case .haptic = event { return false }
+                return true
+            }
+        }
+        XCTAssertEqual(frames.count, 5)
+        let liftoff = try XCTUnwrap(frames.last)
+        XCTAssertTrue(liftoff.isSyntheticLiftoff)
+        XCTAssertEqual(liftoff.contactCount, 0)
+        XCTAssertEqual(liftoff.frameTime, 1_250_000_000)
+        XCTAssertEqual(liftoff.header.sequence, 4)
+        XCTAssertEqual(replayed, live)
     }
 
     private static func data(sequence: UInt32, time: UInt64, phase: Contact.Phase = .moved, x: Float = 10) -> Data {

@@ -101,28 +101,37 @@ final class InputListener: @unchecked Sendable {
     }
 
     func setAdmittedPeer(_ peerID: UUID?, geometry: EngineGeometry? = nil) {
-        queue.async { [weak self] in
-            guard let self else { return }
-            self.admittedPeerID = peerID
-            self.didLogReady = false
-            self.inputPathDeadReported = false
-            self.loss.reset()
-            self.pipeline?.stop()
-            self.pipeline = nil
-            if let activity = self.activity { ProcessInfo.processInfo.endActivity(activity); self.activity = nil }
-            if let peerID, let geometry {
-                let pipeline = InputPipeline(queue: self.queue, geometry: geometry)
-                pipeline.onHaptic = { [onHaptic = self.onHaptic] kind in onHaptic(peerID, kind) }
-                pipeline.onRecordingChanged = { [weak self] recording in self?.onRecordingChanged?(recording) }
-                self.pipeline = pipeline
-                self.activity = ProcessInfo.processInfo.beginActivity(
-                    options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
-                    reason: "Trackglass is turning a phone's touches into trackpad input")
-            }
-            for connection in self.connections.values { connection.cancel() }
-            self.connections.removeAll(); self.flowStarted.removeAll(); self.readyFlows.removeAll(); self.receivers.removeAll()
-            self.setStatsTimerRunning(peerID != nil)
+        queue.async { [weak self] in self?.applyAdmittedPeer(peerID, geometry: geometry) }
+    }
+
+    /// L14 (§8.1): the Mac is about to sleep. Like `shutdown()`, the session's input side stops before this returns,
+    /// so a held button (a drag, a drag lock) is released before the system suspends, not after wake. Safe from the
+    /// main thread: nothing on the input queue ever waits for the main thread (its callbacks hop with `Task`).
+    func stopForSleep() {
+        queue.sync { applyAdmittedPeer(nil, geometry: nil) }
+    }
+
+    private func applyAdmittedPeer(_ peerID: UUID?, geometry: EngineGeometry?) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        admittedPeerID = peerID
+        didLogReady = false
+        inputPathDeadReported = false
+        loss.reset()
+        pipeline?.stop()
+        pipeline = nil
+        if let activity { ProcessInfo.processInfo.endActivity(activity); self.activity = nil }
+        if let peerID, let geometry {
+            let pipeline = InputPipeline(queue: queue, geometry: geometry)
+            pipeline.onHaptic = { [onHaptic = self.onHaptic] kind in onHaptic(peerID, kind) }
+            pipeline.onRecordingChanged = { [weak self] recording in self?.onRecordingChanged?(recording) }
+            self.pipeline = pipeline
+            activity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+                reason: "Trackglass is turning a phone's touches into trackpad input")
         }
+        for connection in connections.values { connection.cancel() }
+        connections.removeAll(); flowStarted.removeAll(); readyFlows.removeAll(); receivers.removeAll()
+        setStatsTimerRunning(peerID != nil)
     }
 
     /// Quitting (§6.1): the pipeline stops now, on its queue — every held button is released, a recording is
@@ -177,21 +186,20 @@ final class InputListener: @unchecked Sendable {
         receivers.removeValue(forKey: id)
     }
 
-    /// Makes room for a new flow: the oldest one still handshaking goes first, else the oldest of all (a phone
-    /// that rebuilt its input connection leaves its previous, now silent, flow behind).
+    /// Makes room for a new flow (M4): the newest one still handshaking goes first, so a handshake already under way
+    /// (the phone's, which starts right after admission) survives a spray of datagrams from new source ports; stalled
+    /// ones still expire after `handshakeTimeoutNs`. With every flow ready, the oldest goes (a phone that rebuilt its
+    /// input connection leaves its previous, now silent, flow behind).
     private func evictOneFlow() {
-        var victim: ObjectIdentifier?
-        var victimStarted = UInt64.max
-        var victimReady = true
-        for (id, started) in flowStarted {
-            let ready = readyFlows.contains(id)
-            if (victimReady && !ready) || (ready == victimReady && started < victimStarted) {
-                victim = id; victimStarted = started; victimReady = ready
-            }
-        }
-        guard let victim else { return }
+        guard let victim = Self.evictionVictim(started: flowStarted, ready: readyFlows) else { return }
         connections[victim]?.cancel()
         forgetFlow(victim)
+    }
+
+    static func evictionVictim<ID: Hashable>(started: [ID: UInt64], ready: Set<ID>) -> ID? {
+        let handshaking = started.filter { !ready.contains($0.key) }
+        if let newest = handshaking.max(by: { $0.value < $1.value }) { return newest.key }
+        return started.min(by: { $0.value < $1.value })?.key
     }
 
     /// Cancels flows whose DTLS handshake has not completed within `handshakeTimeoutNs` (called once a second).

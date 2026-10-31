@@ -181,6 +181,91 @@ final class ControlSessionTests: XCTestCase {
         XCTAssertNil(active)
     }
 
+    func testConnectionsThatNeverSendHelloAreCappedAndTimedOut() async throws {
+        // M3: anyone on the LAN can open control connections. At most 16 wait for HELLO at a time (a newcomer beyond
+        // that is refused, so a handshake already in progress survives) and each is closed `helloTimeout` after it was
+        // accepted.
+        let harness = try SessionHarness()
+        defer { harness.stop() }
+        harness.server.helloTimeout = .seconds(1)
+        let sink = try await harness.silentTCPEndpoint()
+        var idle: [NWConnection] = []
+        defer { idle.forEach { $0.cancel() } }
+        for _ in 0..<(ControlListener.maximumAwaitingHello + 8) {
+            let connection = NWConnection(to: sink, using: .tcp)
+            idle.append(connection)
+            harness.server.accept(connection)
+        }
+        XCTAssertEqual(harness.server.awaitingHelloCount, ControlListener.maximumAwaitingHello)
+        XCTAssertEqual(harness.server.openChannelCount, ControlListener.maximumAwaitingHello)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(harness.server.openChannelCount, ControlListener.maximumAwaitingHello, "open until the HELLO timeout")
+        try await eventually { harness.server.openChannelCount == 0 && harness.server.awaitingHelloCount == 0 }
+        // A phone that does send HELLO is admitted as usual and is not closed by the timeout.
+        let endpoint = try await harness.start()
+        let client = harness.client()
+        defer { client.disconnect() }
+        let connected = await client.connect(endpoint: endpoint, mac: harness.mac(for: 0), hello: harness.hello(0))
+        XCTAssertTrue(connected)
+        try await Task.sleep(for: .milliseconds(1_300))
+        XCTAssertTrue(client.isConnected)
+    }
+
+    func testForgetEndsEverySessionAndAStillPairedPhoneReconnects() async throws {
+        // L3 (§3.5): a HELLO cannot prove which paired phone sent it, so forgetting any phone ends every admitted
+        // session. A phone that is still paired is not told it is final: it reconnects by itself.
+        let harness = try SessionHarness()
+        defer { harness.stop() }
+        var endpoint = try await harness.start()
+        let retained = harness.client()
+        defer { retained.disconnect() }
+        let connected = await retained.connect(endpoint: endpoint, mac: harness.mac(for: 1), hello: harness.hello(1))
+        XCTAssertTrue(connected)
+        try await eventually { retained.isConnected && harness.server.connectedPeerID == harness.phones[1].peerID }
+        try harness.server.forget(harness.phones[0].peerID)
+        try await eventually { !retained.isConnected && harness.server.connectedPeerID == nil }
+        XCTAssertFalse(retained.lastCloseWasFinal, "a still-paired phone keeps reconnecting")
+        XCTAssertNotEqual(retained.status, ControlCloseMessage.pairAgain)
+        try await eventually { await harness.server.coordinator.activeSession == nil }
+        endpoint = try await harness.start()   // the app restarts the control listener with the remaining keys
+        let reconnected = await retained.connect(endpoint: endpoint, mac: harness.mac(for: 1), hello: harness.hello(1))
+        XCTAssertTrue(reconnected)
+    }
+
+    func testForgettingAPhoneEndsTheSessionItOpenedUnderAnotherPhonesID() async throws {
+        // L3: phone 2's key, HELLO claiming phone 1. Forgetting phone 2 ends that session at once; before, it lived on
+        // under phone 1's name until three PINGs went unanswered.
+        let harness = try SessionHarness()
+        defer { harness.stop() }
+        let endpoint = try await harness.start()
+        let posing = try await harness.admittedSilentConnection(endpoint: endpoint, phone: 1, claiming: 0)
+        defer { posing.cancel() }
+        try harness.server.forget(harness.phones[1].peerID)
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertNil(harness.server.connectedPeerID, "ended by the BYE, not by missed PINGs (≥ 3 s)")
+    }
+
+    func testUnexpectedMessagesAndAnInvalidSurfaceAreIgnoredNotAnsweredWithAFinalBye() async throws {
+        // L8b (§4.1): a known type the Mac does not expect from a phone (a newer phone's message, a repeated HELLO) is
+        // ignored, never answered with BYE 1, which the phone treats as final. L9 (C3): a SURFACE with a non-positive
+        // size keeps the previous geometry and the session.
+        let harness = try SessionHarness()
+        defer { harness.stop() }
+        let endpoint = try await harness.start()
+        let phone = try await harness.admittedSilentConnection(endpoint: endpoint, phone: 0)
+        defer { phone.cancel() }
+        try harness.send(.settings(ControlListener.defaultSettings), on: phone)
+        try harness.send(.haptic(HapticMessage(kind: 1, intensity: 255)), on: phone)
+        try harness.send(.hello(harness.hello(0)), on: phone)
+        try harness.send(.surface(SurfaceMessage(surfaceWidthMM: 0, surfaceHeightMM: 141, ppi: 460, trackingOverride: 0)), on: phone)
+        try await Task.sleep(for: .milliseconds(200))
+        let unchanged = await harness.server.coordinator.activeSession?.surface.surfaceWidthMM
+        XCTAssertEqual(unchanged, 65, "the HELLO geometry stays")
+        try harness.send(.surface(SurfaceMessage(surfaceWidthMM: 70, surfaceHeightMM: 141, ppi: 460, trackingOverride: 0)), on: phone)
+        try await eventually { await harness.server.coordinator.activeSession?.surface.surfaceWidthMM == 70 }
+        XCTAssertEqual(harness.server.connectedPeerID, harness.phones[0].peerID)
+    }
+
     private func eventually(file: StaticString = #filePath, line: UInt = #line, _ predicate: () async -> Bool) async throws {
         for _ in 0..<400 {
             if await predicate() { return }
@@ -201,6 +286,7 @@ private final class SessionHarness {
     private var listener: NWListener?
     private let silent: Bool
     private var silentConnections: [NWConnection] = []
+    private var sinks: [NWListener] = []
 
     /// The harness advertises no `_trackglass._udp` service, so the client's input-path watchdog must not end sessions.
     @MainActor func client() -> SessionClient {
@@ -240,21 +326,50 @@ private final class SessionHarness {
         throw Failure.timeout
     }
 
-    /// A phone that sent HELLO, was admitted and then went silent without closing its connection.
-    func admittedSilentConnection(endpoint: NWEndpoint, phone index: Int) async throws -> NWConnection {
+    /// A phone that sent HELLO, was admitted and then went silent without closing its connection. `claimed`: the phone
+    /// whose ID the HELLO claims (default: its own; another one is a paired phone posing as it, L3).
+    func admittedSilentConnection(endpoint: NWEndpoint, phone index: Int, claiming claimed: Int? = nil) async throws -> NWConnection {
         let options = TLSConfig.tlsOptions(psk: SymmetricKey(data: phones[index].ltk),
                                            identity: phones[index].peerID.uuidString.lowercased())
         let connection = NWConnection(to: endpoint, using: TLSConfig.parameters(control: options))
         connection.start(queue: .main)
         for _ in 0..<250 where connection.state != .ready { try await Task.sleep(for: .milliseconds(20)) }
-        let bytes = try ControlMessage.hello(hello(index)).encode(sequence: 0, sentAt: MonotonicClock.nanoseconds())
-        let context = NWConnection.ContentContext(identifier: "control", metadata: [NWProtocolFramer.Message(definition: TGControlFramer.definition)])
-        connection.send(content: bytes, contentContext: context, isComplete: true, completion: .idempotent)
+        let claimedIndex = claimed ?? index
+        try send(.hello(hello(claimedIndex)), on: connection)
         for _ in 0..<250 {
-            if await server.coordinator.activeSession?.peer.peerID == phones[index].peerID { return connection }
+            if await server.coordinator.activeSession?.peer.peerID == phones[claimedIndex].peerID,
+               server.connectedPeerID == phones[claimedIndex].peerID { return connection }
             try await Task.sleep(for: .milliseconds(20))
         }
         connection.cancel()
+        throw Failure.timeout
+    }
+
+    /// Sends one control message as a phone would (framed), on a raw connection.
+    func send(_ message: ControlMessage, on connection: NWConnection) throws {
+        let bytes = try message.encode(sequence: 0, sentAt: MonotonicClock.nanoseconds())
+        let context = NWConnection.ContentContext(identifier: "control", metadata: [NWProtocolFramer.Message(definition: TGControlFramer.definition)])
+        connection.send(content: bytes, contentContext: context, isComplete: true, completion: .idempotent)
+    }
+
+    /// A plain TCP endpoint whose far ends stay open and silent: connections that never send HELLO (M3).
+    func silentTCPEndpoint() async throws -> NWEndpoint {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        let sink = try NWListener(using: parameters)
+        sinks.append(sink)
+        sink.newConnectionHandler = { [weak self] connection in
+            Task { @MainActor in
+                guard let self else { connection.cancel(); return }
+                self.silentConnections.append(connection)
+                connection.start(queue: .main)
+            }
+        }
+        sink.start(queue: .main)
+        for _ in 0..<100 {
+            if let port = sink.port, port.rawValue != 0 { return .hostPort(host: "127.0.0.1", port: port) }
+            try await Task.sleep(for: .milliseconds(20))
+        }
         throw Failure.timeout
     }
 
@@ -270,6 +385,7 @@ private final class SessionHarness {
 
     func stop() {
         for connection in silentConnections { connection.cancel() }
+        for sink in sinks { sink.cancel() }
         server.stop()
         listener?.cancel()
         for phone in phones { try? store.delete(peerID: phone.peerID) }

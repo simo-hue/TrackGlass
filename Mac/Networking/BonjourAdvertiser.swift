@@ -32,12 +32,8 @@ final class BonjourAdvertiser {
     init(defaults: UserDefaults = .standard, store: PairingStore = PairingStore()) {
         self.store = store
         name = Host.current().localizedName ?? "Mac"
-        if let stored = defaults.string(forKey: "peerID"), let id = UUID(uuidString: stored) {
-            peerID = id
-        } else {
-            peerID = UUID()
-            defaults.set(peerID.uuidString, forKey: "peerID")
-        }
+        // L7: a new peerID when the stored one was made on other hardware (Migration Assistant copies UserDefaults).
+        peerID = MacIdentity.resolve(defaults: defaults, store: store)
         accessibilityPermission.onChange = { [weak self] trusted in
             guard let self else { return }
             if trusted { self.startListeners() }

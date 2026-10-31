@@ -60,9 +60,10 @@ struct TrackglassMacApp: App {
             object: nil, queue: .main) { [weak advertiser, weak control, inputListener] _ in
                 // Synchronously, before the observer returns: a hop through a Task could run after the system has
                 // already suspended networking, and the phone would only notice the Mac after three missed pings.
+                // The input side stops synchronously too (L14), so no button stays held through sleep.
                 MainActor.assumeIsolated {
                     control?.prepareForSleep()
-                    inputListener.setAdmittedPeer(nil)
+                    inputListener.stopForSleep()
                     advertiser?.stop()
                 }
             })

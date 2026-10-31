@@ -26,6 +26,18 @@ final class ControlListener {
     private var channels: [UUID: ControlChannel] = [:]
     private var rttByChannel: [UUID: UInt32] = [:]
     private var admitted: [UUID: UUID] = [:]
+    /// M3: channels that have not sent HELLO yet, oldest first. Anyone on the LAN can open them (TLS not even done),
+    /// so they are bounded like the pairing listener's slot and the input listener's flows: at most
+    /// `maximumAwaitingHello` at a time, each closed `helloTimeout` after it was accepted.
+    private var awaitingHello: [UUID] = []
+    static let maximumAwaitingHello = 16
+    /// The phone sends HELLO as soon as its TLS handshake completes. Tests shorten it.
+    var helloTimeout: Duration = .seconds(3)
+    /// Connections waiting for HELLO (tests).
+    var awaitingHelloCount: Int { awaitingHello.count }
+    private var loggedConnectionLimit = false
+    /// L8b / L9: what was already logged per channel, so a peer repeating it cannot flood the log.
+    private var channelNotices: [UUID: Set<String>] = [:]
     /// The admitted phone, marked in the menu and the Devices tab (§6.1).
     var connectedPeerID: UUID? { admitted.values.first }
     /// Open control channels (the quit path waits for their BYEs to go out).
@@ -77,15 +89,32 @@ final class ControlListener {
     }
 
     func accept(_ connection: NWConnection) {
+        // M3: full means a flood (a phone sends HELLO within one round trip of its TLS handshake). The newest pending
+        // connection, this one, is refused, so a handshake already in progress survives; every slot frees itself
+        // within `helloTimeout`.
+        guard awaitingHello.count < Self.maximumAwaitingHello else {
+            if !loggedConnectionLimit {
+                loggedConnectionLimit = true
+                logger.error("too many control connections without HELLO; refusing new ones until they time out")
+            }
+            connection.cancel()
+            return
+        }
+        loggedConnectionLimit = false   // the next flood is logged again
         let id = UUID()
         let channel = ControlChannel(connection: connection)
         channels[id] = channel
+        awaitingHello.append(id)
         channel.onMessage = { [weak self, weak channel] packet in
             guard let self, let channel, self.channels[id] === channel else { return }
             switch packet.message {
             case .hello(let hello):
+                // A second HELLO on a channel is a known message this side does not expect: ignored (L8b).
+                guard let pending = self.awaitingHello.firstIndex(of: id) else {
+                    self.noteOnce("ignored a repeated HELLO", channel: id); return
+                }
+                self.awaitingHello.remove(at: pending)
                 guard !self.quitting else { channel.end(reason: 0, message: "Trackglass for Mac quit"); return }
-                guard self.admitted[id] == nil else { channel.end(reason: 1); return }
                 guard hello.protocolVersion == 1 else { channel.end(reason: 1); return }
                 do {
                     guard try self.store.load(peerID: hello.peerID) != nil else {
@@ -149,13 +178,22 @@ final class ControlListener {
                     channel.startHeartbeat()
                 } catch { channel.close("Cannot read paired devices") }
             case .surface(let surface):
-                guard self.admitted[id] != nil else { channel.end(reason: 1); return }
+                guard self.admitted[id] != nil else { self.noteOnce("ignored SURFACE before admission", channel: id); return }
+                // L9 / C3: one bad layout pass on the phone must not end the session (BYE 1 is final for the phone).
+                // The previous geometry stays.
+                guard surface.surfaceWidthMM.isFinite, surface.surfaceHeightMM.isFinite,
+                      surface.surfaceWidthMM > 0, surface.surfaceHeightMM > 0 else {
+                    self.noteOnce("ignored SURFACE with an invalid size", channel: id); return
+                }
                 await self.coordinator.updateSurface(id: id, surface: surface)
                 self.trackingOverride = Double(surface.trackingOverride)
                 self.inputSettingsChanged?(Self.effectiveSettings(self.trackpadSettings, override: self.trackingOverride))
                 self.inputGeometryChanged?(EngineGeometry(widthMM: Double(surface.surfaceWidthMM), heightMM: Double(surface.surfaceHeightMM), isLandscape: surface.surfaceWidthMM > surface.surfaceHeightMM))
                 self.logger.info("SURFACE widthMM=\(surface.surfaceWidthMM) heightMM=\(surface.surfaceHeightMM) ppi=\(surface.ppi) override=\(surface.trackingOverride)")
-            default: channel.end(reason: 1)
+            default:
+                // L8b (§4.1): a known type this side does not expect here (a newer phone's message, a pairing message
+                // on a session channel) is ignored like an unknown one, never answered with the final BYE 1.
+                self.noteOnce("ignored unexpected control message type \(packet.header.type)", channel: id)
             }
         }
         channel.onRTT = { [weak self] rtt in self?.rttByChannel[id] = rtt }
@@ -163,10 +201,23 @@ final class ControlListener {
             guard let self else { return }
             self.channels.removeValue(forKey: id)
             self.rttByChannel.removeValue(forKey: id)
+            self.awaitingHello.removeAll { $0 == id }
+            self.channelNotices.removeValue(forKey: id)
             if self.admitted.removeValue(forKey: id) != nil { self.resetAdmittedState() }
             Task { await self.coordinator.release(id: id) }
         }
         channel.start()
+        let timeout = helloTimeout
+        Task { @MainActor [weak self, weak channel] in
+            try? await Task.sleep(for: timeout)
+            guard let self, let channel, self.channels[id] === channel, self.awaitingHello.contains(id) else { return }
+            channel.close("No HELLO in time")
+        }
+    }
+
+    private func noteOnce(_ notice: String, channel id: UUID) {
+        guard channelNotices[id, default: []].insert(notice).inserted else { return }
+        logger.info("\(notice, privacy: .public)")
     }
 
     /// No phone is admitted any more: the input side, the status line and the preference poller follow.
@@ -239,10 +290,21 @@ final class ControlListener {
         generation = UUID()
         for (id, channel) in channels {
             if admitted[id] == peerID { channel.end(reason: 3, message: "Pair again") }
+            // L3 (§3.5): a HELLO cannot prove which paired phone sent it, so a session admitted under another ID may be
+            // the forgotten phone posing as it. It ends too, with a BYE that is not final: a phone that is still paired
+            // reconnects by itself (the control listener restarts with the remaining keys), the forgotten one cannot.
+            else if admitted[id] != nil { channel.end(reason: 0, message: "Pairing changed") }
             // A handshake-complete channel that has not sent HELLO yet cannot be attributed to a peer
             // (Network.framework hides the PSK identity); drop it so a forgotten phone cannot keep it.
-            else if admitted[id] == nil { channel.close("Pairing changed") }
+            else { channel.close("Pairing changed") }
         }
+    }
+
+    /// L15: Settings shows the Mac's tracking speed; with no phone admitted nothing polls (§6.4), so the window asks
+    /// for one read when it opens. The read runs on the preferences queue; a change arrives through `onChange`.
+    func refreshPreferences() {
+        guard livePreferences, admitted.isEmpty else { return }
+        preferences.pollOnce()
     }
 
     private func apply(_ settings: TrackpadSettings) {

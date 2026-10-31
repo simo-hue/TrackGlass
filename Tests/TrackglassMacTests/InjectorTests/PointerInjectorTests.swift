@@ -74,6 +74,50 @@ final class PointerInjectorTests: XCTestCase {
         XCTAssertEqual(posted.last?.location, CGPoint(x: 101, y: 100))
     }
 
+    func testScrollAndMomentumAskTheWindowServerAtMostOncePerFiftyMilliseconds() {
+        // M15: scroll, momentum, gesture and Dock events do not move the pointer, so a queried position serves the next
+        // 50 ms too; before, every one of these events cost a window-server round trip and a `CGEvent` allocation.
+        var time: UInt64 = 0
+        var queries = 0
+        var posted = 0
+        let injector = QuartzInjector(postScrollEvent: { _ in posted += 1 }, postPointerEvent: { _ in posted += 1 },
+                                      now: { time }, queryLocation: { queries += 1; return CGPoint(x: 100, y: 100) })
+        for frame in 0..<40 {   // 40 scroll frames at 120 Hz
+            time = UInt64(frame) * 8_333_333
+            injector.inject(.scroll(dxPoints: 0, dyPoints: 3, phase: frame == 0 ? .began : .changed, naturalInverted: true))
+        }
+        injector.inject(.scroll(dxPoints: 0, dyPoints: 0, phase: .ended, naturalInverted: true))
+        for tick in 0..<40 {   // 40 momentum ticks on the 8 ms pipeline timer
+            time += 8_000_000
+            injector.inject(.scrollMomentum(phase: tick == 0 ? .begin : .continued, dxPoints: 0, dyPoints: 2))
+        }
+        injector.inject(.scrollMomentum(phase: .end, dxPoints: 0, dyPoints: 0))
+        XCTAssertGreaterThanOrEqual(posted, 82)
+        XCTAssertLessThanOrEqual(queries, Int(time / PointerState.locationCacheNs) + 1, "\(queries) queries in \(time / 1_000_000) ms")
+        // A pointer move after the coast starts from the cached position, and later moves follow it without asking.
+        let before = queries
+        injector.inject(.pointerMove(dx: 4, dy: 0))
+        time += 8_000_000; injector.inject(.pointerMove(dx: 4, dy: 0))
+        XCTAssertLessThanOrEqual(queries, before + 1)
+    }
+
+    func testAbsurdPointerDeltasAreDroppedWithoutTrapping() {
+        // L1: a finite but huge delta (a misbehaving paired phone) must not reach `Int64(_:)`, which traps; nor may it
+        // poison the sub-point remainders the next real motion adds to.
+        var posted: [CGEvent] = []
+        let injector = QuartzInjector(postScrollEvent: { _ in }, postPointerEvent: { posted.append($0) },
+                                      queryLocation: { CGPoint(x: 100, y: 100) })
+        for delta in [1e30, -1e19, 1_000_001, Double.infinity, -Double.infinity, Double.nan] {
+            injector.inject(.pointerMove(dx: delta, dy: 0))
+            injector.inject(.pointerMove(dx: 0, dy: delta))
+        }
+        XCTAssertTrue(posted.isEmpty)
+        injector.inject(.pointerMove(dx: 2, dy: 0))
+        XCTAssertEqual(posted.count, 1)
+        XCTAssertEqual(posted.first?.getIntegerValueField(.mouseEventDeltaX), 2)
+        XCTAssertEqual(posted.first?.getIntegerValueField(.mouseEventDeltaY), 0)
+    }
+
     func testDegradedListReportsTheFallbacksTheInjectorActuallyUses() {
         // Even with every private symbol resolved, force click and Notification Center use their fallbacks today (G-FORCE/G-NC pending).
         var full = PrivateAPICapabilities()

@@ -182,6 +182,8 @@ final class MacWindowCoordinator {
                     toggleRecording: { [weak self] in self?.toggleRecording() }))
         }
         model.refreshLoginState()
+        // L15: with no phone connected nothing polls the Mac's preferences; read them once so the tracking speed is current.
+        control.refreshPreferences()
         pairing.refreshPeers(); show(settings)
     }
 
@@ -276,6 +278,7 @@ private struct MacSettingsContent: View {
     @Bindable var control: ControlListener
     @Bindable var updates: UpdateController
     let toggleRecording: () -> Void
+    @State private var showsAcknowledgements = false
     private var website: URL? { (Bundle.main.object(forInfoDictionaryKey: "TGWebsiteURL") as? String).flatMap(URL.init(string:)) }
     private static func milliseconds(_ micros: UInt32) -> String { String(format: "%.2f ms", Double(micros) / 1_000) }
     var body: some View {
@@ -351,7 +354,29 @@ private struct MacSettingsContent: View {
                 Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
                 Text("Trackglass never leaves your network")
                 if let website { Link("Website", destination: website); Link("Privacy Policy", destination: website.appendingPathComponent("privacy.html")) }
+                // M19: the notices of the open-source code shipped inside the app (Sparkle and its bundled parts).
+                Button("Acknowledgements…") { showsAcknowledgements = true }
             }.tabItem { Label("About", systemImage: "info.circle") }
         }.padding(16).frame(width: 560, height: 440)
+        .sheet(isPresented: $showsAcknowledgements) { AcknowledgementsView() }
+    }
+}
+
+private struct AcknowledgementsView: View {
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Acknowledgements").font(.title2.bold())
+            ScrollView {
+                Text(Acknowledgements.text)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+        }.padding(20).frame(width: 520, height: 400)
     }
 }

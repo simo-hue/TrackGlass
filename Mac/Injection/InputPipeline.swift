@@ -133,6 +133,11 @@ final class InputPipeline: @unchecked Sendable {
         prematureHeartbeatSequence = nil
         guard engine.hasActiveContacts else { return }
         events.clear(); engine.forceLiftoff(releaseDragLock: false, into: &events); injectEvents(); syncInjectorSettings(); updateTimer()
+        // C1 (M6): the recording gets the frame the engine just processed, so its replay lifts off here too.
+        if let recorder, let lastFrameTime,
+           !recorder.appendSyntheticLiftoff(frameTime: lastFrameTime, sequence: lastSequence ?? 0, captureTimeNs: lastInputUptime) {
+            stopRecording()
+        }
     }
     func startRecording() {
         dispatchPrecondition(condition: .onQueue(queue))
@@ -166,6 +171,8 @@ final class InputPipeline: @unchecked Sendable {
         events.clear(); engine.forceLiftoff(releaseDragLock: true, into: &events); injectEvents(); syncInjectorSettings()
         // The timer will not run again: whatever the injector still had scheduled is posted now (§6.9.4).
         injector.flush()
+        // C1 (M6): the replay ends with the same drag-lock-releasing lift-off (written with the sidecar by `finish`).
+        recorder?.recordSessionEnd()
         stopRecording()
     }
 

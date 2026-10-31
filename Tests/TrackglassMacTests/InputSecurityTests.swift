@@ -24,6 +24,17 @@ final class InputSecurityTests: XCTestCase {
         flows.forEach { $0.cancel() }
     }
 
+    func testASprayOfNewFlowsEvictsTheNewestHandshakeNotThePhones() {
+        // M4: the phone's DTLS handshake starts right after admission, so it is the oldest one under way; a LAN host
+        // spraying datagrams from new source ports must replace its own newest flow, not the phone's.
+        let started: [Int: UInt64] = [1: 100, 2: 200, 3: 300, 4: 400]
+        XCTAssertEqual(InputListener.evictionVictim(started: started, ready: []), 4)
+        XCTAssertEqual(InputListener.evictionVictim(started: started, ready: [4]), 3, "a ready flow is not a handshake")
+        // Every flow ready: the oldest goes (a phone that rebuilt its input connection left the previous one behind).
+        XCTAssertEqual(InputListener.evictionVictim(started: started, ready: [1, 2, 3, 4]), 1)
+        XCTAssertNil(InputListener.evictionVictim(started: [Int: UInt64](), ready: []))
+    }
+
     func testWrongPSKCannotCompleteControlHandshake() async throws {
         let expected = SymmetricKey(data: Data(repeating: 0x31, count: 32))
         let listener = try makeListener(input: false, key: expected, identity: "expected-phone")

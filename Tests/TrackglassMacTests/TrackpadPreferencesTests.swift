@@ -18,6 +18,15 @@ final class TrackpadPreferencesTests: XCTestCase {
         XCTAssertEqual(valid.count, 1)
         XCTAssertEqual(valid["TrackpadPinch"] as? Bool, true)
     }
+    func testDoubleClickIntervalIsClampedBeforeTheIntegerConversion() {
+        // L1: `UInt64(_:)` traps on an absurd or infinite interval from a hand-edited preference.
+        XCTAssertEqual(TrackpadPreferences.doubleClickIntervalNs(0.5), 500_000_000)
+        XCTAssertEqual(TrackpadPreferences.doubleClickIntervalNs(-3), 0)
+        XCTAssertEqual(TrackpadPreferences.doubleClickIntervalNs(1e300), 5_000_000_000)
+        XCTAssertEqual(TrackpadPreferences.doubleClickIntervalNs(.infinity), 5_000_000_000)
+        XCTAssertEqual(TrackpadPreferences.doubleClickIntervalNs(-.infinity), 0)
+        XCTAssertEqual(TrackpadPreferences.doubleClickIntervalNs(.nan), 500_000_000)
+    }
     func testPhoneTrackingOverrideClampsWithoutChangingMacSnapshot() {
         let settings = TrackpadSettings(trackingSpeed: 0.5)
         XCTAssertEqual(ControlListener.effectiveSettings(settings, override: 0).trackingSpeed, 0.5)

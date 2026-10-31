@@ -14,19 +14,20 @@ final class GestureInjectorTests: XCTestCase {
         XCTAssertEqual(captured[0].getIntegerValueField(TGFieldGesturePhase), Int64(TGPhaseBegan))
         XCTAssertEqual(captured[1].getIntegerValueField(TGFieldGesturePhase), Int64(TGPhaseEnded))
     }
-    func testForceFallbackClicksThenLooksUpAfterDelay() {
-        var time: UInt64 = 0
+    func testForceFallbackOnlyLooksUpAndNeverClicks() {
+        // H3 (§6.9.6, owner decision 2026-10-31): a finger resting still for 0.6 s must never click whatever is under
+        // the pointer. The fallback is the Look Up keystroke alone (Ctrl+Cmd+D, as for the three-finger tap), at once.
         var mouse: [CGEvent] = [], keys: [CGEvent] = []
         let injector = QuartzInjector(postScrollEvent: { mouse.append($0) }, capabilities: PrivateAPICapabilities(),
-            postKeyEvent: { keys.append($0) }, now: { time })
+            postKeyEvent: { keys.append($0) }, postPointerEvent: { mouse.append($0) })
         injector.inject(.forceClick(stage: 2))
-        XCTAssertEqual(mouse.map(\.type), [.leftMouseDown, .leftMouseUp])
-        XCTAssertTrue(keys.isEmpty); XCTAssertTrue(injector.needsTick)
-        time = 29_000_000; injector.tick(); XCTAssertTrue(keys.isEmpty)
-        time = 30_000_000; injector.tick(); XCTAssertEqual(keys.count, 2)
-        XCTAssertEqual(keys.first?.getIntegerValueField(.keyboardEventKeycode), 2)
+        XCTAssertTrue(mouse.isEmpty, "no button event")
+        XCTAssertEqual(keys.map(\.type), [.keyDown, .keyUp])
+        XCTAssertEqual(keys.map { $0.getIntegerValueField(.keyboardEventKeycode) }, [2, 2])
         XCTAssertEqual(keys.first?.flags, [.maskControl, .maskCommand])
-        XCTAssertFalse(injector.needsTick)
+        XCTAssertFalse(injector.needsTick, "nothing is scheduled")
+        injector.tick(); injector.flush()
+        XCTAssertEqual(keys.count, 2); XCTAssertTrue(mouse.isEmpty)
     }
     func testNotificationCenterTrialPostsTheLegacyFluidGestureSequence() throws {
         var captured: [CGEvent] = []
@@ -60,16 +61,31 @@ final class GestureInjectorTests: XCTestCase {
         XCTAssertEqual(events.count, 3); XCTAssertEqual(attached, 3)
         XCTAssertNil(FluidGestureEventFactory.attachedNotificationCenterSequence(source: nil, location: .zero, attach: { _, _ in false }))
     }
-    func testForceTrialWithoutAttachmentFallsBackToClickAndLookUp() {
-        var time: UInt64 = 0
+    func testForceTrialWithoutAttachmentFallsBackToLookUpOnly() {
         var mouse: [CGEvent] = [], keys: [CGEvent] = []
         let injector = QuartzInjector(postScrollEvent: { mouse.append($0) }, capabilities: PrivateAPICapabilities(),
             trials: PrivateGestureTrials(notificationCenter: false, forceClick: true),
-            postKeyEvent: { keys.append($0) }, now: { time })
+            postKeyEvent: { keys.append($0) })
         injector.inject(.forceClick(stage: 2))
-        XCTAssertEqual(mouse.map(\.type), [.leftMouseDown, .leftMouseUp])
-        time = 30_000_000; injector.tick()
+        XCTAssertTrue(mouse.isEmpty)
         XCTAssertEqual(keys.count, 2); XCTAssertFalse(injector.needsTick)
+    }
+    func testNotificationCenterClockIsFoundByIdentifierInAnyLanguage() {
+        // M16 (§6.9.5): the identifier is stable; the description is localized ("Uhr" on a German Mac).
+        let identifiers: [String?] = ["com.apple.menuextra.battery", "com.apple.menuextra.wifi", "com.apple.menuextra.clock"]
+        let german: [String?] = ["Batterie", "WLAN", "Uhr"]
+        XCTAssertEqual(NotificationCenterAction.clockIndex(count: 3, identifier: { identifiers[$0] }, description: { german[$0] }), 2)
+        // Identifier first: a third-party item described as "Clock" does not win over the system clock.
+        let english: [String?] = ["Clock", "Wi-Fi", "Clock"]
+        XCTAssertEqual(NotificationCenterAction.clockIndex(count: 3, identifier: { identifiers[$0] }, description: { english[$0] }), 2)
+        // No identifiers (an older macOS): the English description is the fallback.
+        XCTAssertEqual(NotificationCenterAction.clockIndex(count: 3, identifier: { _ in nil }, description: { english[$0] }), 0)
+        XCTAssertNil(NotificationCenterAction.clockIndex(count: 3, identifier: { _ in nil }, description: { german[$0] }))
+        // Descriptions are only asked when no identifier matched.
+        var descriptionsAsked = 0
+        _ = NotificationCenterAction.clockIndex(count: 3, identifier: { identifiers[$0] },
+                                                description: { descriptionsAsked += 1; return german[$0] })
+        XCTAssertEqual(descriptionsAsked, 0)
     }
     func testForceTrialPostsStagesAtFortyMillisecondSpacing() throws {
         guard TGPrivateAPIGetCapabilities().dockSwipe else { throw XCTSkip("HIDEvent attachment is unavailable on this OS") }
