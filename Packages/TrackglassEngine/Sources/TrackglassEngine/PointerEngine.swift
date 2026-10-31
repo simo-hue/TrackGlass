@@ -54,7 +54,6 @@ private struct ContactSlot {
     var resting = false
     var restingEligible = true
     var ignoredForMode = false
-    var moved = false
     var x = 0.0
     var y = 0.0
     var startX = 0.0
@@ -147,15 +146,29 @@ public final class GestureEngine: @unchecked Sendable {
     /// travelled TAP_HYSTERESIS from where it landed is held back, released once it has, and dropped if it taps.
     private var heldMotion: (id: UInt8, dx: Double, dy: Double, dt: UInt64)?
     static let tapHysteresisMM = 0.5
-    /// Tap-and-a-half (§6.5.6, 2026-10-29): the repeat tap's press waits for the settle window to show one finger
-    /// (or for the finger to move beyond TAP_HYSTERESIS, or to lift as a double-click). A second finger joining
-    /// inside the window makes the repeat tap part of a scroll, a two-finger tap or a swipe, and nothing is pressed.
+    /// RESTING_STILL tolerance (§6.5.2): how far a contact may be from where it began and still be "not moving",
+    /// for the resting candidate itself and (2026-10-31) for "another contact moves".
+    static let restingToleranceMM = 1.5
+    /// TAP_HALF_PRESS_MARGIN (2026-10-31): `tick` runs on the *estimated* phone clock (§4.7), which can be ahead
+    /// of a frame still in flight. A decision a second finger could still undo (the tap-and-a-half press, the
+    /// grace-window re-grab) waits this much longer when it is taken from a tick instead of from a frame.
+    static let pressJitterMarginNs: UInt64 = 35_000_000
+    /// Geometry this close to square has no orientation to compare a frame's `surfaceIsLandscape` with (L10).
+    static let orientationToleranceMM = 1.0
+    /// Tap-and-a-half (§6.5.6, 2026-10-29, 2026-10-31): the repeat tap's press waits for the settle window to show
+    /// one finger (a frame stamped at or after `pressAt`, or a tick TAP_HALF_PRESS_MARGIN later) or for it to lift
+    /// as a double-click; its motion is held until then and follows as drag motion. A second finger joining inside
+    /// the window makes the repeat tap part of a scroll, a two-finger tap or a swipe, and nothing is pressed.
     private var pendingDragPress: (id: UInt8, count: Int, pressAt: UInt64)?
     /// A finger re-landing inside the drag grace window continues the held button; if a second finger joins it
     /// inside the settle window (a scroll or a two-finger tap), the drag ends there instead.
     private var pendingRegrab: (id: UInt8, until: UInt64)?
     /// Time of the last processed frame: a lift-off forced by a heartbeat ends contacts there (§6.5.10).
     private var lastFrameTime: UInt64 = 0
+    /// L10 (§8.7): `surfaceIsLandscape` of the last frame (nil: none yet, or square geometry after a change), and
+    /// whether frames of a new orientation are arriving before the SURFACE that resizes the geometry.
+    private var lastFrameLandscape: Bool?
+    private var awaitingGeometry = false
     public private(set) var needsTick = false
     /// The settings the engine currently applies (a change made during a gesture waits until it is idle, §6.4)
     /// and a counter that changes with them, so the injector follows the same snapshot (natural scrolling).
@@ -187,7 +200,10 @@ public final class GestureEngine: @unchecked Sendable {
     }
 
     public func process(_ frame: TouchFrame, into events: inout EventBuffer) {
-        guard frame.isSyntheticLiftoff else { processContacts(frame, into: &events); return }
+        guard frame.isSyntheticLiftoff else {
+            if orientationMatchesGeometry(frame, into: &events) { processContacts(frame, into: &events) }
+            return
+        }
         // §4.7 / §6.5.10: contacts the lift-off still finds tracked lost their `ended` frame. They end at the
         // lift-off's time through the ordinary vanished-contact path, so a tap still clicks, an activated
         // gesture ends with `.ended` and a drag contact opens its grace window (or engages the lock).
@@ -207,9 +223,37 @@ public final class GestureEngine: @unchecked Sendable {
         needsTick = tracker.trackedCount > 0 || dragReleaseDeadline != nil || momentum.active || pendingTwoFingerTap != nil
     }
 
+    /// §8.7 (L10, 2026-10-31): frames of a new orientation can overtake the SURFACE that announces it, and would be
+    /// classified with the old width and height (resting zone, corners, right edge). A frame whose orientation
+    /// changes away from the geometry's cancels what was in progress, as the geometry change will, and frames are
+    /// dropped until the geometry follows (or the orientation comes back). Only a *change* counts: a surface whose
+    /// flag never matched the geometry is processed as before, and square geometry has no orientation.
+    private func orientationMatchesGeometry(_ frame: TouchFrame, into events: inout EventBuffer) -> Bool {
+        let previous = lastFrameLandscape
+        lastFrameLandscape = frame.surfaceIsLandscape
+        guard let geometryLandscape = Self.orientation(of: geometry),
+              frame.surfaceIsLandscape != geometryLandscape else { awaitingGeometry = false; return true }
+        guard awaitingGeometry || previous == geometryLandscape else { return true }
+        if !awaitingGeometry {
+            awaitingGeometry = true
+            reset(into: &events, releaseDragLock: false, cancelGestures: true)
+        }
+        return false
+    }
+
+    private static func orientation(of geometry: EngineGeometry) -> Bool? {
+        guard abs(geometry.widthMM - geometry.heightMM) >= orientationToleranceMM else { return nil }
+        return geometry.widthMM > geometry.heightMM
+    }
+
     private func processContacts(_ frame: TouchFrame, into events: inout EventBuffer) {
         if momentum.active {
-            for index in 0..<frame.contactCount where frame[index].phase == .began && frame[index].kind == .finger {
+            // §6.8: a new contact stops the coast — a `began`, or (2026-10-31) a non-terminal contact the engine does
+            // not track yet because its `began` frame was lost.
+            for index in 0..<frame.contactCount where frame[index].kind == .finger {
+                let contact = frame[index]
+                let terminal = contact.phase == .ended || contact.phase == .cancelled
+                guard contact.phase == .began || (!terminal && tracker.index(for: contact.contactID) == nil) else { continue }
                 momentum.cancel(into: &events)
                 appendScroll(.mayBegin, into: &events); appendScroll(.cancelled, into: &events)
                 break
@@ -250,16 +294,13 @@ public final class GestureEngine: @unchecked Sendable {
                 contactCancelled = contactCancelled || contact.phase == .cancelled
                 contactLifted = contactLifted || tracker.slots[index].active
                 // UIKit's terminal sample routinely moves a little past the last `moved` one: fold it into the
-                // path (so a tap that only moved on lift is not a tap) and into a held drag's delta.
+                // path (so a tap that only moved on lift is not a tap) and into a held drag's last motion.
                 let previous = tracker.slots[index]
+                var liftDX = 0.0, liftDY = 0.0, liftDT: UInt64 = 0
                 if previous.active, frame.frameTime > previous.time, !previous.palm, !previous.resting,
                    x != previous.x || y != previous.y {
                     tracker.slots[index].pathLength += hypot(x - previous.x, y - previous.y)
-                    if dragButtonHeld && dragContactID == contact.contactID {
-                        dragDX += x - previous.x; dragDY += y - previous.y
-                        dragDT = frame.frameTime - previous.time; hasDragDelta = true
-                        movingPath = tracker.slots[index].pathLength; movingID = contact.contactID
-                    }
+                    liftDX = x - previous.x; liftDY = y - previous.y; liftDT = frame.frameTime - previous.time
                     // Plain pointer motion on the lift frame is not emitted: the mode leaves `.pointer` in the
                     // same frame and a sub-frame jump at lift-off is not what a trackpad does either.
                 }
@@ -269,25 +310,34 @@ public final class GestureEngine: @unchecked Sendable {
                     tapContacts[tapIndex].pathLength = pathLength
                     let quickTap = pathLength < 2.0 && frame.frameTime >= tapContacts[tapIndex].beganAt &&
                         frame.frameTime - tapContacts[tapIndex].beganAt <= 300_000_000
+                    emitDragLiftMotion(id: contact.contactID, dx: liftDX, dy: liftDY, dt: liftDT, path: pathLength,
+                                       quickTap: quickTap, into: &events)
                     endDragContact(id: contact.contactID, quickTap: quickTap, now: frame.frameTime, into: &events)
                 } else {
                     // A cancelled contact never clicks (§5.2); if it was dragging, release safely.
                     if contact.phase == .cancelled { tapContacts.removeAll { $0.id == contact.contactID } }
+                    else {
+                        emitDragLiftMotion(id: contact.contactID, dx: liftDX, dy: liftDY, dt: liftDT, path: pathLength,
+                                           quickTap: false, into: &events)
+                    }
                     endDragContact(id: contact.contactID, quickTap: false, now: frame.frameTime, into: &events)
                 }
                 tracker.slots[index].active = false; tracker.slots[index].seen = true
-                if heldMotion?.id == contact.contactID, !hasDragDelta || movingID != contact.contactID { heldMotion = nil }
+                if heldMotion?.id == contact.contactID { heldMotion = nil }
                 continue
             }
             if contact.phase == .began || !tracker.slots[index].active {
-                if heldMotion?.id == contact.contactID { heldMotion = nil }
                 if tracker.slots[index].active {
                     // §4.7: a `began` for a still-tracked ID first ends the old contact — as a lift whose `ended`
                     // was lost — so the count drops and the new contact follows the rules for a finger landing now.
                     endReusedContact(at: index, now: frame.frameTime, into: &events)
                     contactLifted = true
                 }
-                let lateExtra = mode != .idle && frame.frameTime > settleDeadline && tracker.effectiveCount > 0
+                if heldMotion?.id == contact.contactID { heldMotion = nil }
+                // §6.5.3: after the settle window a new finger is late. So is one landing inside it once a three-to-
+                // five-finger gesture has activated (2026-10-31): joining the set would jump its centroid and spread.
+                let lateExtra = mode != .idle && tracker.effectiveCount > 0 &&
+                    (frame.frameTime > settleDeadline || (mode == .multiFinger && multiFinger.active))
                 tracker.slots[index] = ContactSlot(id: contact.contactID, active: true, seen: true,
                     palm: Double(contact.majorRadius) > 11, x: x, y: y, startX: x, startY: y,
                     time: frame.frameTime, beganAt: frame.frameTime)
@@ -326,19 +376,21 @@ public final class GestureEngine: @unchecked Sendable {
                 tracker.slots[index].pathLength += hypot(x - previous.x, y - previous.y)
                 tracker.slots[index].frameDX = x - previous.x; tracker.slots[index].frameDY = y - previous.y
                 if previous.resting && !previous.ignoredForMode && originDistance > 3 {
-                    tracker.slots[index].resting = false
                     tracker.slots[index].restingEligible = false
-                    tracker.slots[index].moved = true
+                    if mode == .idle || mode == .pointer {
+                        // §6.5.2: it counts again and the mode re-evaluates (one finger points, two arm a scroll).
+                        tracker.slots[index].resting = false
+                    } else {
+                        // 2026-10-31: during a two-finger, multi-finger or releasing mode a set that grows would
+                        // freeze or corrupt the gesture; the thumb becomes a late finger (§6.5.3) instead.
+                        tracker.slots[index].ignoredForMode = true
+                    }
                 }
                 // A late finger (§6.5.3) does not drive the mode, but its motion is "another contact moves" for
-                // the resting-thumb rule (§6.5.2): a thumb that landed first and stays put is classified resting,
-                // and the moving finger then takes over (below, in `classifyRestingContacts`).
-                if previous.ignoredForMode && !previous.palm && hypot(x - previous.x, y - previous.y) > 0.05 {
-                    tracker.slots[index].moved = true
-                }
+                // the resting-thumb rule (§6.5.2, `classifyRestingContacts`): a thumb that landed first and stays
+                // put is classified resting, and the moving finger then takes over.
                 if !previous.palm && !previous.resting && (x != previous.x || y != previous.y) {
                     // Movement below 0.05 mm is accumulated by the emitters below, never dropped (§6.5.4).
-                    if hypot(x - previous.x, y - previous.y) > 0.05 { tracker.slots[index].moved = true }
                     if dragButtonHeld && dragContactID == contact.contactID {
                         dragDX = x - previous.x; dragDY = y - previous.y
                         dragDT = frame.frameTime - previous.time; hasDragDelta = true
@@ -365,6 +417,7 @@ public final class GestureEngine: @unchecked Sendable {
                 quickTap = slot.pathLength < 2.0 && frame.frameTime >= tapContacts[tapIndex].beganAt &&
                     frame.frameTime - tapContacts[tapIndex].beganAt <= 300_000_000
             }
+            emitDragLiftMotion(id: slot.id, dx: 0, dy: 0, dt: 0, path: slot.pathLength, quickTap: quickTap, into: &events)
             endDragContact(id: slot.id, quickTap: quickTap, now: frame.frameTime, into: &events)
         }
         tracker.finishFrame()
@@ -413,8 +466,10 @@ public final class GestureEngine: @unchecked Sendable {
         }
         // Touch-down hysteresis: a contact still within TAP_HYSTERESIS of where it landed does not move the pointer
         // (it may be a tap); its motion is held and released, unchanged, once the contact has travelled further.
+        // A repeat tap whose press is still waiting (§6.5.6) holds all its motion: it follows as drag motion at the
+        // press, and is dropped if a second finger joins or the contact lifts as a double-click.
         if hasPointerDelta || hasDragDelta {
-            if movingPath <= Self.tapHysteresisMM {
+            if movingPath <= Self.tapHysteresisMM || pendingDragPress?.id == movingID {
                 var held: (id: UInt8, dx: Double, dy: Double, dt: UInt64) = (movingID, 0, 0, 0)
                 if let current = heldMotion, current.id == movingID { held = current }
                 held.dx += hasDragDelta ? dragDX : moveDX; held.dy += hasDragDelta ? dragDY : moveDY
@@ -436,7 +491,7 @@ public final class GestureEngine: @unchecked Sendable {
         // emitted before the pointer leaves the place the first tap was made (§6.5.7).
         if (hasDragDelta || hasPointerDelta), movingPath >= 2.0 { flushPendingSecondaryClick(into: &events) }
         // A drag contact drives the pointer only while it is the one pointing finger: a second finger joining makes
-        // a scroll or a gesture, and its motion must not drag at the same time.
+        // a scroll or a gesture, and its motion must not drag at the same time (its lift: `emitDragLiftMotion`).
         if hasDragDelta, dragButtonHeld, !threeFingerDragActive, mode == .pointer {
             let delta = acceleration.accelerate(dxMM: dragDX, dyMM: dragDY, dtNanoseconds: dragDT)
             emitAccumulatedPointerMove(dx: delta.0, dy: delta.1, into: &events)
@@ -458,7 +513,7 @@ public final class GestureEngine: @unchecked Sendable {
         let previousCount = tracker.effectiveCount
         classifyRestingContacts(now: now)
         transitionMode(previousCount: previousCount, now: now, into: &events)
-        resolvePendingDragPress(now: now, into: &events)
+        resolvePendingDragPress(now: now, estimatedClock: true, into: &events)
         if stopMomentumRequested { momentum.cancel(into: &events); stopMomentumRequested = false }
         momentum.tick(now: now, into: &events)
         updateForceClick(now: now, into: &events)
@@ -495,6 +550,9 @@ public final class GestureEngine: @unchecked Sendable {
     public func setGeometry(_ geometry: EngineGeometry, into events: inout EventBuffer) {
         // §8.7: a surface change cancels whatever was in progress (the Dock snaps back).
         reset(into: &events, releaseDragLock: false, cancelGestures: true); self.geometry = geometry
+        // L10: frames are expected in the new orientation from now on; one still in flight from the old one is a
+        // change away from the geometry and is dropped.
+        awaitingGeometry = false; lastFrameLandscape = Self.orientation(of: geometry)
     }
 
     /// §6.5.10: a lift-off forced by a heartbeat, the 1.5 s timeout, a BYE or connection loss ends activated
@@ -526,20 +584,29 @@ public final class GestureEngine: @unchecked Sendable {
             (mode == .pendingScroll && twoFinger.hasActiveGesture)
         for i in tracker.slots.indices where !gestureActive {
             let contact = tracker.slots[i]
-            var anotherFingerMoved = false
-            for j in tracker.slots.indices where j != i && tracker.slots[j].active && !tracker.slots[j].palm && tracker.slots[j].moved {
-                anotherFingerMoved = true
-            }
             guard contact.active, !contact.palm, !contact.resting, contact.restingEligible,
-                  anotherFingerMoved,
                   contact.y >= geometry.heightMM - 18, now >= contact.beganAt,
                   now - contact.beganAt >= 150_000_000,
-                  hypot(contact.x - contact.startX, contact.y - contact.startY) <= 1.5 else { continue }
+                  hypot(contact.x - contact.startX, contact.y - contact.startY) <= Self.restingToleranceMM else { continue }
+            // §6.5.2 (2026-10-31): "another contact moves" means another non-palm contact is more than the resting
+            // tolerance from where it began — not one frame of touch jitter — or is a late finger that moved at all
+            // (it cannot be half of a two-finger tap with a contact that landed before the settle window closed, so
+            // a tap or a pointer stroke beside a still thumb works from its first motion). A contact that may still
+            // be half of a two-finger tap is never reclassified (the tap would become a left click).
+            var anotherFingerMoved = false, tapPartner = false
+            for j in tracker.slots.indices where j != i && tracker.slots[j].active && !tracker.slots[j].palm {
+                let other = tracker.slots[j]
+                if hypot(other.x - other.startX, other.y - other.startY) > Self.restingToleranceMM ||
+                    (other.ignoredForMode && other.pathLength > 0.05) { anotherFingerMoved = true }
+                if (!other.resting || other.ignoredForMode) && Self.mayBeTwoFingerTap(contact, other, now: now) { tapPartner = true }
+            }
+            guard anotherFingerMoved, !tapPartner else { continue }
             tracker.slots[i].resting = true
         }
         tracker.recount()
         // A late finger left as the only one on the glass becomes the primary: when the fingers that fixed the
-        // mode lift (or rest), the pointer follows the finger that remains, as on a real trackpad.
+        // mode lift (or rest), the pointer follows the finger that remains, as on a real trackpad. Several late
+        // fingers promoted together are a new set: three to five of them enter their gesture (`transitionMode`).
         guard tracker.effectiveCount == 0 else { return }
         var promoted = false
         for i in tracker.slots.indices where tracker.slots[i].active && tracker.slots[i].ignoredForMode && !tracker.slots[i].palm {
@@ -586,11 +653,18 @@ public final class GestureEngine: @unchecked Sendable {
             multiFinger.end(cancelled: cancelled, now: now, into: &events)
             mode = count == 0 ? .idle : .pointer
         }
-        if (3...5).contains(count), now <= settleDeadline,
+        // Three to five effective fingers enter (or re-enter) the gesture for their count. Inside the settle window
+        // that is fingers landing; after it, late fingers never raise the count, so a count reached then comes from
+        // reclassification — late fingers promoted, a thumb flagged resting — and returns to the mode for the new
+        // count as well (§6.5.3, 2026-10-31). Three fingers with three-finger drag on stay with the drag.
+        if (3...5).contains(count),
            !(count == 3 && settings.threeFingerDrag),
            (mode != .multiFinger || (!multiFinger.active && multiFinger.fingerCount != count)),
            let sample = multiFingerSample() {
             if mode == .pendingScroll { twoFinger.end(cancelled: true, natural: settings.naturalScrolling, into: &events) }
+            // A three-finger drag replaced by a four- or five-finger gesture lets go at once: no grace window, no
+            // Drag Lock, never a button held through a Dock swipe (2026-10-31).
+            if threeFingerDragActive { releaseDragForMultiFinger(into: &events) }
             mode = .multiFinger; multiFinger.begin(fingers: count, sample: sample, time: now)
         }
         // Two effective fingers in pointer mode always arm scrolling: inside the settle window (a normal
@@ -598,6 +672,8 @@ public final class GestureEngine: @unchecked Sendable {
         // because one contact was reclassified as resting (a set that drops by *lifting* is `releasing`, above).
         // Late extra fingers never raise the count (they are `ignoredForMode`), so no window check is needed.
         if mode == .pointer, previousCount != 2, count == 2 {
+            // §6.8: a scroll starting stops a coast that is still running (e.g. its fingers' `began` was lost).
+            momentum.cancel(into: &events)
             mode = .pendingScroll; appendScroll(.mayBegin, into: &events); pendingScrollSince = now
             (scrollAcceleration as? ScrollAccelerator)?.reset()
             momentum.clearSamples()
@@ -613,9 +689,28 @@ public final class GestureEngine: @unchecked Sendable {
     /// Ends the two-finger gesture; a scroll coasts (§6.8) unless a zoom or rotation took part in it.
     private func endTwoFinger(now: UInt64, cancelled: Bool, into events: inout EventBuffer) {
         if twoFinger.scrollActive && !twoFinger.zoomOrRotateActive && !cancelled {
-            momentum.start(now: now, enabled: settings.momentumScrollEnabled)
+            momentum.start(now: now, enabled: settings.momentumScrollEnabled, into: &events)
         }
         twoFinger.end(cancelled: cancelled, natural: settings.naturalScrolling, into: &events)
+    }
+
+    /// Two contacts that may still be a two-finger tap (§6.5.5): they began within TWO_FINGER_TAP_STAGGER of each
+    /// other, less than TAP_MAX_DURATION ago, and each has a path under TAP_MAX_MOVEMENT.
+    private static func mayBeTwoFingerTap(_ first: ContactSlot, _ second: ContactSlot, now: UInt64) -> Bool {
+        let earlier = min(first.beganAt, second.beganAt), later = max(first.beganAt, second.beganAt)
+        return later - earlier <= 100_000_000 && now >= earlier && now - earlier < 300_000_000 &&
+            first.pathLength < 2.0 && second.pathLength < 2.0
+    }
+
+    /// A three-finger drag that a four- or five-finger gesture takes over (§6.5.6, 2026-10-31): the button comes up
+    /// now, with no grace window and no Drag Lock (a lock the drag continued is released with it).
+    private func releaseDragForMultiFinger(into events: inout EventBuffer) {
+        threeFingerDragActive = false; threeFingerDragStart = nil; threeFingerDragPrevious = nil
+        threeFingerDragPreviousTime = 0; dragContactID = nil; dragReleaseDeadline = nil
+        guard dragButtonHeld else { return }
+        events.append(.button(kind: .left, phase: .up, clickCount: dragClickCount))
+        if dragLockEngaged { events.append(.haptic(.dragLockReleased)) }
+        dragButtonHeld = false; dragLockEngaged = false
     }
 
     /// §6.5.3 (2026-10-29): a late finger that landed outside the resting zone and then moves together with the
@@ -727,10 +822,36 @@ public final class GestureEngine: @unchecked Sendable {
         events.append(.button(kind: .left, phase: .down, clickCount: pending.count))
     }
 
+    /// Emits the motion held back for `id` (§6.5.4 hysteresis, or a tap-and-a-half press that was waiting) as one
+    /// pointer move; with the button down it is drag motion.
+    private func releaseHeldMotion(of id: UInt8, into events: inout EventBuffer) {
+        guard let held = heldMotion, held.id == id else { return }
+        heldMotion = nil
+        let delta = acceleration.accelerate(dxMM: held.dx, dyMM: held.dy, dtNanoseconds: held.dt)
+        emitAccumulatedPointerMove(dx: delta.0, dy: delta.1, into: &events)
+    }
+
+    /// L13 (2026-10-31): a drag contact's last motion — its lift sample, plus motion it still held because its
+    /// tap-and-a-half press was waiting — is drag motion. It goes out at the lift, before the lift opens the grace
+    /// window or engages the lock (the mode leaves `.pointer` in this frame). A quick lift that the tap turns into
+    /// the click release (a double-click) moves nothing, and neither does motion within TAP_HYSTERESIS.
+    private func emitDragLiftMotion(id: UInt8, dx: Double, dy: Double, dt: UInt64, path: Double, quickTap: Bool,
+                                    into events: inout EventBuffer) {
+        guard dragButtonHeld, dragContactID == id, !threeFingerDragActive, mode == .pointer else { return }
+        var dx = dx, dy = dy, dt = dt
+        if let held = heldMotion, held.id == id { heldMotion = nil; dx += held.dx; dy += held.dy; dt &+= held.dt }
+        guard !quickTap, path > Self.tapHysteresisMM, dx != 0 || dy != 0 else { return }
+        let delta = acceleration.accelerate(dxMM: dx, dyMM: dy, dtNanoseconds: dt)
+        emitAccumulatedPointerMove(dx: delta.0, dy: delta.1, into: &events)
+    }
+
     /// Decides a waiting tap-and-a-half press and a grace-window re-landing once the frame's mode is known: one
-    /// finger after the settle window (or moving) presses / keeps the drag; a second finger joining inside it turns
-    /// the repeat tap into whatever the fingers make, with no button held.
-    private func resolvePendingDragPress(now: UInt64, into events: inout EventBuffer) {
+    /// finger after the settle window presses / keeps the drag; a second finger joining inside it turns the repeat
+    /// tap into whatever the fingers make, with no button held. From a frame the window closes at its own time;
+    /// from a tick (`estimatedClock`, §4.7) only TAP_HALF_PRESS_MARGIN later, because a frame still in flight may
+    /// carry the second finger (2026-10-31: no early press on motion either; the motion is held meanwhile).
+    private func resolvePendingDragPress(now: UInt64, estimatedClock: Bool = false, into events: inout EventBuffer) {
+        let margin = estimatedClock ? Self.pressJitterMarginNs : 0
         if let regrab = pendingRegrab {
             if mode != .pointer || tracker.effectiveCount > 1, !settings.threeFingerDrag, dragButtonHeld,
                dragContactID == regrab.id, !threeFingerDragActive {
@@ -739,7 +860,7 @@ public final class GestureEngine: @unchecked Sendable {
                 dragButtonHeld = false; dragContactID = nil
                 if let tapIndex = tapContacts.firstIndex(where: { $0.id == regrab.id }) { tapContacts[tapIndex].dragSequence = false }
                 pendingRegrab = nil
-            } else if now >= regrab.until || dragContactID != regrab.id {
+            } else if now >= regrab.until &+ margin || dragContactID != regrab.id {
                 pendingRegrab = nil
             }
         }
@@ -751,7 +872,10 @@ public final class GestureEngine: @unchecked Sendable {
             if let tapIndex = tapContacts.firstIndex(where: { $0.id == pending.id }) { tapContacts[tapIndex].dragSequence = false }
             return
         }
-        if now >= pending.pressAt || tracker.slots[index].pathLength > Self.tapHysteresisMM { pressPendingDrag(into: &events) }
+        guard now >= pending.pressAt &+ margin else { return }
+        pressPendingDrag(into: &events)
+        // The motion held while the press waited is the drag's start; within TAP_HYSTERESIS it stays held as usual.
+        if tracker.slots[index].pathLength > Self.tapHysteresisMM { releaseHeldMotion(of: pending.id, into: &events) }
     }
 
     /// §4.7: a `began` for an ID that is still tracked means its `ended` was lost. The old contact ends here like
@@ -767,6 +891,7 @@ public final class GestureEngine: @unchecked Sendable {
             quickTap = slot.pathLength < 2.0 && now >= tapContacts[tapIndex].beganAt &&
                 now - tapContacts[tapIndex].beganAt <= 300_000_000
         }
+        emitDragLiftMotion(id: slot.id, dx: 0, dy: 0, dt: 0, path: slot.pathLength, quickTap: quickTap, into: &events)
         endDragContact(id: slot.id, quickTap: quickTap, now: now, into: &events)
         tracker.slots[index].active = false
         tracker.recount()
@@ -882,8 +1007,30 @@ public final class GestureEngine: @unchecked Sendable {
 
     private func expireTwoFingerTap(now: UInt64, into events: inout EventBuffer) {
         guard let pending = pendingTwoFingerTap, now >= pending.deadline else { return }
+        // §6.5.7 (2026-10-31): a tap set that began before the deadline and may still be a tap (down for less than
+        // TAP_MAX_DURATION) decides it when it ends: a second two-finger tap is smart zoom, anything else flushes.
+        if tapSetStillDown(beganBefore: pending.deadline, now: now) { return }
         pendingTwoFingerTap = nil
         if pending.secondaryEnabled { appendSecondaryClick(into: &events) }
+    }
+
+    private func tapSetStillDown(beganBefore deadline: UInt64, now: UInt64) -> Bool {
+        var firstBegan = UInt64.max, down = false
+        for contact in tapContacts {
+            firstBegan = min(firstBegan, contact.beganAt)
+            if contact.endedAt == nil { down = true }
+        }
+        return down && firstBegan < deadline && now >= firstBegan && now - firstBegan <= 300_000_000
+    }
+
+    /// Drag Lock ends with the next tap anywhere (§6.5.6): a two- or three-finger tap releases it first, then does
+    /// its own action (a one-finger tap is only the release, below).
+    private func releaseDragLockForTap(into events: inout EventBuffer) {
+        guard dragLockEngaged, dragButtonHeld, tapContacts.contains(where: { $0.releasesDragLock }) else { return }
+        events.append(.button(kind: .left, phase: .up, clickCount: dragClickCount))
+        events.append(.haptic(.dragLockReleased))
+        dragButtonHeld = false; dragLockEngaged = false; dragContactID = nil
+        previousClickTime = nil; previousClickCount = 0
     }
 
     private func emitTapIfComplete(now: UInt64, into events: inout EventBuffer) {
@@ -911,6 +1058,7 @@ public final class GestureEngine: @unchecked Sendable {
             return
         }
         if count == 3 {
+            releaseDragLockForTap(into: &events)
             flushPendingSecondaryClick(into: &events)
             if settings.threeFingerTapGesture == 2 { events.append(.lookUpAtPointer) }
             tapContacts.removeAll(keepingCapacity: true)
@@ -918,16 +1066,23 @@ public final class GestureEngine: @unchecked Sendable {
         }
         if count == 2 {
             let first = tapContacts[0], second = tapContacts[1]
-            guard settings.trackpadRightClick || settings.smartZoomEnabled,
-                  max(first.beganAt, second.beganAt) - min(first.beganAt, second.beganAt) <= 100_000_000 else {
+            guard max(first.beganAt, second.beganAt) - min(first.beganAt, second.beganAt) <= 100_000_000 else {
+                tapContacts.removeAll(keepingCapacity: true)
+                return
+            }
+            releaseDragLockForTap(into: &events)
+            guard settings.trackpadRightClick || settings.smartZoomEnabled else {
                 tapContacts.removeAll(keepingCapacity: true)
                 return
             }
             if settings.smartZoomEnabled {
-                if let pending = pendingTwoFingerTap, now < pending.deadline {
+                // The second tap counts when it *began* before the deadline (§6.5.7, 2026-10-31); the pending
+                // click was held for it while it was down (`expireTwoFingerTap`).
+                if let pending = pendingTwoFingerTap, firstBegan < pending.deadline {
                     pendingTwoFingerTap = nil
                     events.append(.smartZoom)
                 } else {
+                    flushPendingSecondaryClick(into: &events)   // never replaced unsent
                     pendingTwoFingerTap = (now &+ settings.doubleClickIntervalNs, settings.trackpadRightClick)
                 }
             } else { appendSecondaryClick(into: &events) }
@@ -937,10 +1092,15 @@ public final class GestureEngine: @unchecked Sendable {
         guard let contact = tapContacts.first else { tapContacts.removeAll(keepingCapacity: true); return }
         // A one-finger tap is not the second two-finger tap a pending secondary click waits for (§6.5.7).
         flushPendingSecondaryClick(into: &events)
-        if contact.releasesDragLock {
-            events.append(.button(kind: .left, phase: .up, clickCount: dragClickCount))
-            events.append(.haptic(.dragLockReleased))
-            dragButtonHeld = false; dragLockEngaged = false; dragContactID = nil
+        if contact.releasesDragLock || (dragButtonHeld && !contact.dragSequence && !threeFingerDragActive) {
+            // The next tap anywhere releases Drag Lock (§6.5.6). A finger that landed before the lock engaged, or
+            // while the drag's grace window was still to come, taps the held drag free too (2026-10-31): never a
+            // second press while the button is down.
+            if dragButtonHeld {
+                events.append(.button(kind: .left, phase: .up, clickCount: dragClickCount))
+                if dragLockEngaged { events.append(.haptic(.dragLockReleased)) }
+            }
+            dragButtonHeld = false; dragLockEngaged = false; dragContactID = nil; dragReleaseDeadline = nil
             previousClickTime = nil; previousClickCount = 0
             tapContacts.removeAll(keepingCapacity: true)
             return

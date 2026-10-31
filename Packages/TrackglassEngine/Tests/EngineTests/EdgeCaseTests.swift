@@ -95,14 +95,15 @@ final class EdgeCaseTests: XCTestCase {
     }
 
     func testRepeatTapStillDragsAndDoubleClicks() {
-        // Held still: the press goes out when the settle window closes (tick), then motion drags.
+        // Held still: the press goes out when the settle window has closed — from a tick, TAP_HALF_PRESS_MARGIN
+        // (35 ms) after it on the estimated clock (2026-10-31) — then motion drags.
         let drag = engine(TrackpadSettings(dragging: true))
         var events = process(drag, frame(0, [(1, .began, 30, 40)]))
         events += process(drag, frame(60 * ms, [(1, .ended, 30, 40)]))
         events += process(drag, frame(250 * ms, [(1, .began, 30, 40)]))
-        events += ticks(drag, from: 258 * ms, to: 330 * ms)
+        events += ticks(drag, from: 258 * ms, to: 350 * ms)
         XCTAssertEqual(leftButtons(events), click + [.button(kind: .left, phase: .down, clickCount: 2)])
-        events = process(drag, frame(340 * ms, [(1, .moved, 36, 40)]))
+        events = process(drag, frame(360 * ms, [(1, .moved, 36, 40)]))
         XCTAssertEqual(pointerTravel(events).0, 6, accuracy: 1e-9)
         // A quick repeat tap is a double-click: down and up on its lift.
         let double = engine(TrackpadSettings(dragging: true))

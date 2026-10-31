@@ -76,6 +76,8 @@ final class ContactLifecycleTests: XCTestCase {
             events += process(engine, frame((200 + UInt64(step) * 10) * ms,
                                            [(1, .stationary, 20, 135), (2, .moved, 30 + Float(step), 60)]))
         }
+        // The index landed after the settle window (a late finger), so its first motion rests the thumb (§6.5.2,
+        // 2026-10-31) and the index points from the next frame on.
         XCTAssertEqual(pointerTravel(events).0, 19, accuracy: 1e-9, "the index drives the pointer once the thumb rests")
         XCTAssertFalse(events.contains { if case .scroll = $0 { return true } else { return false } })
     }

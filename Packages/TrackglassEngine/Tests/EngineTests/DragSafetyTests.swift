@@ -27,12 +27,13 @@ final class DragSafetyTests: XCTestCase {
     }
 
     /// Tap, then a second touch that moves: the button is down and the second contact is the drag contact.
-    /// The press goes out once the touch moves (or the settle window shows one finger), §6.5.6 2026-10-29.
+    /// The press goes out with the first frame after the settle window that shows the touch alone (§6.5.6,
+    /// 2026-10-31: no longer earlier on motion).
     private func startTapAndAHalfDrag(_ engine: GestureEngine) {
         process(engine, frame(1_000 * ms, [(1, .began, 30, 50)]))
         process(engine, frame(1_050 * ms, [(1, .ended, 30, 50)]))
         var down = process(engine, frame(1_200 * ms, [(2, .began, 30, 50)]))
-        down += process(engine, frame(1_250 * ms, [(2, .moved, 36, 50)]))
+        down += process(engine, frame(1_270 * ms, [(2, .moved, 36, 50)]))
         XCTAssertEqual(down.prefix(1), [.button(kind: .left, phase: .down, clickCount: 2)], "\(down)")
     }
 

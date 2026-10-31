@@ -10,6 +10,9 @@ private struct ReplaySettings: Decodable {
     let geometryChanges: [GeometryChange]?
     let settingsChanges: [SettingsChange]?
     let forceLiftoffReleaseDragLock: Bool?
+    /// Mac recordings (§6.10, 2026-10-31): replay with the pipeline's 8 ms tick and 1.5 s lift-off timeout, as the
+    /// live session ran. Absent (hand-authored fixtures): only the fixture's own ticks.
+    let emulatePipeline: Bool?
 }
 
 private struct AccelerationSettings: Decodable {
@@ -78,7 +81,7 @@ private enum TGReplay {
             }
             let result = try replay(recording: URL(fileURLWithPath: arguments[1]),
                                     settingsURL: URL(fileURLWithPath: arguments[3]), dropFraction: fraction, seed: seed,
-                                    emulatePipeline: true)
+                                    emulatePipeline: true, forceFinalLiftoff: true)
             try checkInvariants(result)
             print("invariants passed (drop=\(fraction), seed=\(seed), timeoutLiftoffs=\(result.timeoutLiftoffs))")
         case "velocity-stats":
@@ -155,14 +158,18 @@ private enum TGReplay {
     private static let liftoffTimeoutNs: UInt64 = 1_500_000_000
     private static let settleBudgetNs: UInt64 = 10_000_000_000
 
-    /// `emulatePipeline` (the `invariants` command) adds what `InputPipeline` contributes on the Mac and a
-    /// recording cannot carry: the 8 ms tick from the first frame until the engine no longer asks for ticks,
-    /// and the 1.5 s no-frame lift-off timeout (§4.7). Only then does a dropped `ended`/lift-off datagram
-    /// exercise the engine's own recovery instead of being papered over by the tool's final forced lift-off,
-    /// which stays as the BYE-style safety net and must find nothing left to release.
+    /// `emulatePipeline` adds what `InputPipeline` contributes on the Mac and a recording cannot carry: the 8 ms
+    /// tick from the first frame until the engine no longer asks for ticks, and the 1.5 s no-frame lift-off timeout
+    /// (§4.7). `invariants` always emulates it; `run` and `verify-dir` follow the settings file's `emulatePipeline`
+    /// (set by Mac recordings, absent from hand-authored fixtures). Only then does a dropped `ended`/lift-off
+    /// datagram exercise the engine's own recovery instead of being papered over by the tool's final forced
+    /// lift-off (`forceFinalLiftoff`, `invariants` only), which stays as the BYE-style safety net and must find
+    /// nothing left to release.
     private static func replay(recording: URL, settingsURL: URL, dropFraction: Double = 0, seed: UInt64 = 1,
-                               emulatePipeline: Bool = false) throws -> ReplayResult {
+                               emulatePipeline requestedEmulation: Bool? = nil,
+                               forceFinalLiftoff: Bool = false) throws -> ReplayResult {
         let configuration = try JSONDecoder().decode(ReplaySettings.self, from: Data(contentsOf: settingsURL))
+        let emulatePipeline = requestedEmulation ?? configuration.emulatePipeline ?? false
         let acceleration: any AccelerationModel
         var scrollAcceleration: any AccelerationModel
         switch configuration.acceleration.model {
@@ -259,7 +266,11 @@ private enum TGReplay {
             var buffer = EventBuffer(); engine.process(frame, into: &buffer); events.append(contentsOf: buffer.events)
         }
         runScheduled(before: UInt64.max)
-        if let releaseDragLock = configuration.forceLiftoffReleaseDragLock {
+        // A Mac recording (§6.10, C1) ends with its session, after the pipeline's timer has run out the grace window,
+        // a pending secondary click and momentum: its session-end lift-off follows the settle loop below. Fixtures
+        // without the key keep the lift-off right after their last frame.
+        let sessionEndAfterSettling = configuration.emulatePipeline == true
+        if !sessionEndAfterSettling, let releaseDragLock = configuration.forceLiftoffReleaseDragLock {
             var buffer = EventBuffer(); engine.forceLiftoff(releaseDragLock: releaseDragLock, into: &buffer)
             events.append(contentsOf: buffer.events)
         }
@@ -278,9 +289,13 @@ private enum TGReplay {
             }
             settled = !engine.needsTick && !engine.hasActiveContacts
         }
+        if sessionEndAfterSettling, let releaseDragLock = configuration.forceLiftoffReleaseDragLock {
+            var buffer = EventBuffer(); engine.forceLiftoff(releaseDragLock: releaseDragLock, into: &buffer)
+            events.append(contentsOf: buffer.events)
+        }
         let eventsBeforeFinalLiftoff = events.count
         let dragLockEngaged = engine.isDragLockEngaged
-        let didForceFinalLiftoff = emulatePipeline || dropFraction > 0
+        let didForceFinalLiftoff = forceFinalLiftoff || dropFraction > 0
         if didForceFinalLiftoff {
             var buffer = EventBuffer(); engine.forceLiftoff(releaseDragLock: true, into: &buffer)
             events.append(contentsOf: buffer.events)
@@ -324,17 +339,28 @@ private enum TGReplay {
         print("verified \(files.count) fixtures")
     }
 
-    private static func heldButtons(in events: ArraySlice<GestureEvent>) -> Set<ButtonKind> {
-        var held = Set<ButtonKind>()
-        for event in events {
-            if case let .button(kind, phase, _) = event {
-                if phase == .down { held.insert(kind) } else { held.remove(kind) }
+    /// The buttons still held at the end of `events`, checked in order per button (a Set would hide down, down, up):
+    /// a press while that button is already down, or a release while it is up, is an invariant failure.
+    private static func heldButtons(in events: ArraySlice<GestureEvent>) throws -> Set<ButtonKind> {
+        var downs: [ButtonKind: Int] = [:]
+        for (position, event) in zip(events.indices, events) {
+            guard case let .button(kind, phase, _) = event else { continue }
+            let held = downs[kind, default: 0]
+            switch phase {
+            case .down:
+                guard held == 0 else { throw ReplayError.invariant("\(kind) button pressed again while held (event \(position))") }
+                downs[kind] = 1
+            case .up:
+                guard held > 0 else { throw ReplayError.invariant("\(kind) button released while not held (event \(position))") }
+                downs[kind] = 0
             }
         }
-        return held
+        return Set(downs.filter { $0.value > 0 }.keys)
     }
 
-    private static func activeGestures(in events: ArraySlice<GestureEvent>) -> Set<String> {
+    /// Gestures (and the momentum phase) still open at the end of `events`. A second momentum `.begin` before the
+    /// first one's `.end`, or a scroll `.began` while a momentum phase is open, is an invariant failure (§6.8).
+    private static func activeGestures(in events: ArraySlice<GestureEvent>) throws -> Set<String> {
         var gestures = Set<String>()
         func track(_ name: String, _ phase: GesturePhase) {
             switch phase {
@@ -343,21 +369,48 @@ private enum TGReplay {
             case .changed: break
             }
         }
-        for event in events {
+        for (position, event) in zip(events.indices, events) {
             switch event {
-            case let .scroll(_, _, phase, _): track("scroll", phase)
+            case let .scroll(_, _, phase, _):
+                if phase == .began, gestures.contains("momentum") {
+                    throw ReplayError.invariant("scroll began while a momentum phase was open (event \(position))")
+                }
+                track("scroll", phase)
             case let .magnify(_, phase): track("magnify", phase)
             case let .rotate(_, phase): track("rotate", phase)
             case let .dockSwipe(kind, _, phase, _): track("dock-" + kind.rawValue, phase)
             case let .scrollMomentum(phase, _, _):
-                if phase == .begin { gestures.insert("momentum") }
-                else if phase == .end { gestures.remove("momentum") }
+                if phase == .begin {
+                    guard !gestures.contains("momentum") else {
+                        throw ReplayError.invariant("momentum began again before its end (event \(position))")
+                    }
+                    gestures.insert("momentum")
+                } else if phase == .end { gestures.remove("momentum") }
             case .gestureBegin: gestures.insert("bracket")
             case .gestureEnd: gestures.remove("bracket")
             default: break
             }
         }
         return gestures
+    }
+
+    /// A drag lock is legitimate only for a drag (§6.5.6): between the press it holds and its `dragLockEngaged`
+    /// haptic, no scroll, zoom, rotation, Dock or system gesture may have started — that would be a button held
+    /// through a gesture and then locked (a tap-and-a-half pressed under a two-finger scroll, a three-finger drag
+    /// carried into a four-finger swipe).
+    private static func gestureUnderLockedDrag(in events: ArraySlice<GestureEvent>) -> GestureEvent? {
+        guard let lock = events.lastIndex(of: .haptic(.dragLockEngaged)),
+              let press = events[..<lock].lastIndex(where: { if case .button(.left, .down, _) = $0 { return true } else { return false } })
+        else { return nil }
+        for event in events[press..<lock] {
+            switch event {
+            case .scroll(_, _, .began, _), .magnify(_, .began), .rotate(_, .began), .dockSwipe(_, _, .began, _),
+                 .navigationSwipe, .notificationCenter, .smartZoom:
+                return event
+            default: continue
+            }
+        }
+        return nil
     }
 
     /// §6.10 safety invariants under loss. The engine (plus the emulated pipeline timer and 1.5 s timeout) must
@@ -369,21 +422,24 @@ private enum TGReplay {
         guard result.settledBeforeFinalLiftoff else {
             throw ReplayError.invariant("engine still tracked contacts or asked for ticks 10 s after the last frame")
         }
-        let heldBefore = heldButtons(in: beforeFinal)
+        let heldBefore = try heldButtons(in: beforeFinal)
         if result.dragLockEngagedBeforeFinalLiftoff {
             guard heldBefore == [.left] else {
                 throw ReplayError.invariant("drag lock engaged but held buttons are \(heldBefore) before the final lift-off")
             }
+            if let gesture = gestureUnderLockedDrag(in: beforeFinal) {
+                throw ReplayError.invariant("drag lock engaged after \(gesture) ran with the button held")
+            }
         } else if !heldBefore.isEmpty {
             throw ReplayError.invariant("a button remained down until the final forced lift-off: \(heldBefore)")
         }
-        let gesturesBefore = activeGestures(in: beforeFinal)
+        let gesturesBefore = try activeGestures(in: beforeFinal)
         guard gesturesBefore.isEmpty else {
             throw ReplayError.invariant("gestures remained active until the final forced lift-off: \(gesturesBefore.sorted())")
         }
-        let heldAfter = heldButtons(in: result.events[...])
+        let heldAfter = try heldButtons(in: result.events[...])
         if !heldAfter.isEmpty { throw ReplayError.invariant("a button remains down after replay: \(heldAfter)") }
-        let gesturesAfter = activeGestures(in: result.events[...])
+        let gesturesAfter = try activeGestures(in: result.events[...])
         guard gesturesAfter.isEmpty else { throw ReplayError.invariant("gestures remain active: \(gesturesAfter.sorted())") }
         guard !result.contactsRemain else { throw ReplayError.invariant("a contact remains active") }
         guard result.eventsAfterReset == 0 else { throw ReplayError.invariant("events emitted after forced final reset") }
