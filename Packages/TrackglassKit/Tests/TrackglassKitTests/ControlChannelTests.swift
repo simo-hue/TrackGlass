@@ -78,7 +78,7 @@ final class ControlChannelTests: XCTestCase {
                 guard error == nil, let data, let packet = try? ControlMessage.decode(data) else { return }
                 if case .ping(let ping) = packet.message, answers(ping.nonce) {
                     let pong = ControlMessage.pong(PongMessage(nonce: ping.nonce, echoSentAt: packet.header.sentAt))
-                    if let bytes = try? pong.encode(sequence: 0, sentAt: MonotonicClock.nanoseconds()) {
+                    if let bytes = try? pong.encode(sequence: 0, sentAt: MonotonicClock.wireNanoseconds()) {
                         let context = NWConnection.ContentContext(identifier: "control", metadata: [
                             NWProtocolFramer.Message(definition: TGControlFramer.definition)
                         ])
@@ -131,6 +131,30 @@ final class ControlChannelTests: XCTestCase {
         XCTAssertNil(closedWith, "two answered pings and one miss are not a dead link")
         try await eventually { closedWith != nil }
         XCTAssertEqual(closedWith, "Connection timed out")
+    }
+
+    func testOutgoingHeadersCarryTheWireClockNotUptime() async throws {
+        // M8 / C2: every header `sentAt` is `MonotonicClock.wireNanoseconds()` (time since the process epoch); the
+        // PING times the RTT is computed from are in the same domain, which `onRTT` firing above already covers.
+        let box = Box()
+        let before = MonotonicClock.wireNanoseconds()
+        let (listener, endpoint) = try await listener { connection in
+            connection.start(queue: .main)
+            connection.receiveMessage { data, _, _, _ in
+                let sentAt = data.flatMap { try? ControlMessage.decode($0).header.sentAt }
+                Task { @MainActor in box.sentAt = sentAt }
+            }
+        }
+        defer { listener.cancel() }
+        let channel = ControlChannel(connection: NWConnection(to: endpoint, using: Self.parameters()))
+        channel.onReady = { channel.send(.ping(PingMessage(nonce: 1))) }
+        channel.start()
+        try await eventually { box.sentAt != nil }
+        let after = MonotonicClock.wireNanoseconds()
+        let sentAt = try XCTUnwrap(box.sentAt)
+        XCTAssertGreaterThanOrEqual(sentAt, before)
+        XCTAssertLessThanOrEqual(sentAt, after)
+        channel.close()
     }
 
     func testOversizedLengthPrefixFailsTheConnection() async throws {
@@ -303,4 +327,5 @@ final class ControlChannelTests: XCTestCase {
     var servers: [ControlChannel] = []
     var serverClosedWith: String?
     var reply: ControlMessage?
+    var sentAt: UInt64?
 }

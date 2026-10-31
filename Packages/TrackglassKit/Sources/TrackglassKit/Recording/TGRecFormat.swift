@@ -38,6 +38,9 @@ public struct TGRecHeader: Equatable, Sendable {
 }
 
 public struct TGRecRecord: Equatable, Sendable {
+    /// One TOUCH_FRAME per record: at least its 28-byte fixed part, at most what the `u16 length` holds, so a frame
+    /// a newer phone extends with appended bytes (§4.1) is still recorded and replayed (§6.10, 2026-10-31).
+    public static let frameByteCountRange = 28...Int(UInt16.max)
     public let captureTimeNs: UInt64
     public let frameBytes: Data
 }
@@ -52,7 +55,7 @@ public struct TGRecWriter {
     }
 
     public mutating func append(captureTimeNs: UInt64, frameBytes: Data) throws {
-        guard (28...TouchFrame.maximumByteCount).contains(frameBytes.count) else { throw TGRecError.invalidFrameLength }
+        guard TGRecRecord.frameByteCountRange.contains(frameBytes.count) else { throw TGRecError.invalidFrameLength }
         _ = try frameBytes.withUnsafeBytes { try TouchFrameDecoder.decode($0) }
         appendInteger(captureTimeNs)
         appendInteger(UInt16(frameBytes.count))
@@ -96,7 +99,7 @@ public struct TGRecReader {
         let record = try data.withUnsafeBytes { bytes -> TGRecRecord in
             let timestamp = UInt64(littleEndian: bytes.loadUnaligned(fromByteOffset: offset, as: UInt64.self))
             let length = Int(UInt16(littleEndian: bytes.loadUnaligned(fromByteOffset: offset + 8, as: UInt16.self)))
-            guard (28...TouchFrame.maximumByteCount).contains(length) else { throw TGRecError.invalidFrameLength }
+            guard TGRecRecord.frameByteCountRange.contains(length) else { throw TGRecError.invalidFrameLength }
             guard data.count - offset - 10 >= length else { throw TGRecError.truncated }
             let payload = UnsafeRawBufferPointer(rebasing: bytes[(offset + 10)..<(offset + 10 + length)])
             _ = try TouchFrameDecoder.decode(payload)
@@ -128,7 +131,8 @@ public final class TGRecFileWriter {
         try writer.data.write(to: url, options: .atomic)
         handle = try FileHandle(forWritingTo: url)
         try handle.seekToEnd()
-        buffer.reserveCapacity(Self.flushThreshold + 10 + TouchFrame.maximumByteCount)
+        // Room for the largest record on top of a not-yet-flushed buffer, so appending never reallocates (§7).
+        buffer.reserveCapacity(Self.flushThreshold + 10 + TGRecRecord.frameByteCountRange.upperBound)
     }
 
     deinit {
@@ -142,7 +146,7 @@ public final class TGRecFileWriter {
     /// writer is closed for good and every later call throws `writerClosed` without touching the disk.
     public func append(captureTimeNs: UInt64, frameBytes: UnsafeRawBufferPointer) throws {
         guard !closed else { throw TGRecError.writerClosed }
-        guard (28...TouchFrame.maximumByteCount).contains(frameBytes.count) else { throw TGRecError.invalidFrameLength }
+        guard TGRecRecord.frameByteCountRange.contains(frameBytes.count) else { throw TGRecError.invalidFrameLength }
         _ = try TouchFrameDecoder.decode(frameBytes)
         var timestamp = captureTimeNs.littleEndian
         var length = UInt16(frameBytes.count).littleEndian

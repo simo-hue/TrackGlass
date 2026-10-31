@@ -38,6 +38,12 @@ public struct TouchFrameEncoder {
 }
 
 public enum TouchFrameDecoder {
+    /// Largest |x| or |y| a contact may carry (§4.4, L1): far beyond any screen, far below what overflows the Mac's
+    /// pointer arithmetic.
+    public static let maximumCoordinateMagnitudeMM: Float = 10_000
+    /// Largest `majorRadius` a contact may carry (§4.4, L1); it is never negative.
+    public static let maximumMajorRadiusMM: Float = 1_000
+
     public static func decode(_ buffer: UnsafeRawBufferPointer) throws -> TouchFrame {
         let header = try MessageHeader.decode(buffer)
         guard header.type == MessageType.touchFrame.rawValue else { throw TouchFrameCodecError.wrongMessageType }
@@ -54,13 +60,18 @@ public enum TouchFrameDecoder {
         )
         for index in 0..<count {
             let offset = 28 + index * 16
+            // §4.4 forward compatibility: a phase or kind added by a newer phone skips that contact only (the Mac
+            // then treats it as absent, §4.7); its other fields may mean something else, so they are not checked.
             guard let phase = Contact.Phase(rawValue: buffer[offset + 1]),
-                  let kind = Contact.Kind(rawValue: buffer[offset + 2]) else { throw TouchFrameCodecError.invalidContact }
+                  let kind = Contact.Kind(rawValue: buffer[offset + 2]) else { continue }
             let x = Float(bitPattern: UInt32(littleEndian: buffer.loadUnaligned(fromByteOffset: offset + 4, as: UInt32.self)))
             let y = Float(bitPattern: UInt32(littleEndian: buffer.loadUnaligned(fromByteOffset: offset + 8, as: UInt32.self)))
             let radius = Float(bitPattern: UInt32(littleEndian: buffer.loadUnaligned(fromByteOffset: offset + 12, as: UInt32.self)))
-            // NaN/infinite coordinates would reach pointer deltas unchanged; reject them (allocation-free branch).
-            guard x.isFinite, y.isFinite, radius.isFinite else { throw TouchFrameCodecError.invalidContact }
+            // NaN/infinite or absurd values would reach pointer deltas and integer conversions on the Mac; the whole
+            // frame is rejected (allocation-free branch). The comparisons are false for NaN.
+            guard x.isFinite, y.isFinite, radius.isFinite,
+                  x.magnitude <= maximumCoordinateMagnitudeMM, y.magnitude <= maximumCoordinateMagnitudeMM,
+                  radius >= 0, radius <= maximumMajorRadiusMM else { throw TouchFrameCodecError.invalidContact }
             frame.append(Contact(contactID: buffer[offset], phase: phase, kind: kind, x: x, y: y, majorRadius: radius))
         }
         return frame

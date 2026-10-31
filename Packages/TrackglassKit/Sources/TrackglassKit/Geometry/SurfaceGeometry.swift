@@ -24,6 +24,13 @@ public struct SurfaceGeometry: Equatable, Sendable {
         heightMM = boundsInPoints.height * mmPerPoint
     }
 
+    /// A size the phone may send in HELLO or SURFACE (C3, L9): both dimensions finite and > 0 as the wire's f32
+    /// (§4.5). A zero-size layout pass (scene transition, Stage Manager) is never sent; the last valid one stands.
+    public var isValid: Bool {
+        let width = Float(widthMM), height = Float(heightMM)
+        return width.isFinite && height.isFinite && width > 0 && height > 0
+    }
+
     public func toMM(point: SurfacePoint) -> SurfacePoint {
         SurfacePoint(x: point.x * mmPerPoint, y: point.y * mmPerPoint)
     }

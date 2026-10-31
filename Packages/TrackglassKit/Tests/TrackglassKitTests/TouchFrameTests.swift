@@ -85,14 +85,63 @@ final class TouchFrameTests: XCTestCase {
     }
 
     func testEveryContactFieldIsValidated() throws {
+        // §4.4 (2026-10-31): a phase or kind this version does not know skips that contact; the frame still decodes.
         var frame = TouchFrame(frameTime: 1)
         frame.append(Contact(contactID: 1, phase: .began, x: 10, y: 20, majorRadius: 4))
         var valid = Data(count: 44)
         _ = try valid.withUnsafeMutableBytes { try TouchFrameEncoder(frame: frame).encode(into: $0) }
         for (offset, value) in [(29, UInt8(0)), (29, 6), (30, 0), (30, 3)] {   // phase 1…5, kind 1…2
-            var bad = valid
-            bad[offset] = value
-            XCTAssertThrowsError(try bad.withUnsafeBytes { try TouchFrameDecoder.decode($0) }, "offset \(offset) = \(value)") {
+            var unknown = valid
+            unknown[offset] = value
+            let decoded = try unknown.withUnsafeBytes { try TouchFrameDecoder.decode($0) }
+            XCTAssertEqual(decoded.contactCount, 0, "offset \(offset) = \(value)")
+            XCTAssertEqual(decoded.frameTime, 1)
+        }
+    }
+
+    func testAContactOfAnUnknownKindOrPhaseIsSkippedAndTheOthersAreKept() throws {
+        // L8: a newer phone's new contact kind (or phase) must not make an older Mac drop the fingers beside it.
+        var frame = TouchFrame(frameTime: 5)
+        frame.append(Contact(contactID: 1, phase: .moved, x: 10, y: 20, majorRadius: 4))
+        frame.append(Contact(contactID: 2, phase: .moved, x: 30, y: 40, majorRadius: 4))
+        frame.append(Contact(contactID: 3, phase: .stationary, x: 50, y: 60, majorRadius: 4))
+        frame.append(Contact(contactID: 4, phase: .began, x: 70, y: 80, majorRadius: 4))
+        var data = Data(count: 28 + 4 * 16)
+        _ = try data.withUnsafeMutableBytes { try TouchFrameEncoder(frame: frame).encode(into: $0) }
+        data[28 + 16 + 2] = 3                                              // contact 2: kind 3
+        data[28 + 32 + 1] = 9                                              // contact 3: phase 9
+        // A skipped contact's values are not checked: they may mean something else to the newer phone.
+        withUnsafeBytes(of: Float.nan.bitPattern.littleEndian) { data.replaceSubrange((28 + 16 + 12)..<(28 + 16 + 16), with: $0) }
+        let decoded = try data.withUnsafeBytes { try TouchFrameDecoder.decode($0) }
+        XCTAssertEqual(decoded.contactCount, 2)
+        XCTAssertEqual(decoded[0], frame[0])
+        XCTAssertEqual(decoded[1], frame[3])
+    }
+
+    func testContactValuesOutsideTheirPhysicalRangeAreRejected() throws {
+        // L1: a huge but finite coordinate (or a negative / huge radius) never reaches the Mac's pointer arithmetic.
+        var frame = TouchFrame(frameTime: 1)
+        frame.append(Contact(contactID: 1, phase: .moved, x: 10, y: 20, majorRadius: 4))
+        var valid = Data(count: 44)
+        _ = try valid.withUnsafeMutableBytes { try TouchFrameEncoder(frame: frame).encode(into: $0) }
+        func decode(offset: Int, value: Float) throws -> TouchFrame {
+            var bytes = valid
+            withUnsafeBytes(of: value.bitPattern.littleEndian) { bytes.replaceSubrange(offset..<(offset + 4), with: $0) }
+            return try bytes.withUnsafeBytes { try TouchFrameDecoder.decode($0) }
+        }
+        let limit = TouchFrameDecoder.maximumCoordinateMagnitudeMM
+        for offset in [32, 36] {                                           // x, y of the first contact
+            for value in [limit, -limit, 0, -3.5] { XCTAssertNoThrow(try decode(offset: offset, value: value), "\(offset) = \(value)") }
+            for value in [limit.nextUp, -limit.nextUp, 3e38, -3e38] {
+                XCTAssertThrowsError(try decode(offset: offset, value: value), "\(offset) = \(value)") {
+                    XCTAssertEqual($0 as? TouchFrameCodecError, .invalidContact)
+                }
+            }
+        }
+        let radius = TouchFrameDecoder.maximumMajorRadiusMM
+        for value in [0, radius, 12.5] { XCTAssertNoThrow(try decode(offset: 40, value: value), "radius \(value)") }
+        for value in [-0.5, radius.nextUp, 3e38] {
+            XCTAssertThrowsError(try decode(offset: 40, value: value), "radius \(value)") {
                 XCTAssertEqual($0 as? TouchFrameCodecError, .invalidContact)
             }
         }

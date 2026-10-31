@@ -63,6 +63,20 @@ final class MessageHeaderTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(end - start, 2_000_000)
     }
 
+    func testWireClockIsTimeSinceOneProcessEpochNotUptime() {
+        // C2 / §4.2: header `sentAt` values are the monotonic clock minus one epoch captured once per process.
+        let first = MonotonicClock.wireNanoseconds()
+        let epoch = MonotonicClock.wireEpochNanoseconds
+        Thread.sleep(forTimeInterval: 0.002)
+        let second = MonotonicClock.wireNanoseconds()
+        let uptime = MonotonicClock.nanoseconds()
+        XCTAssertGreaterThan(epoch, 0)
+        XCTAssertGreaterThanOrEqual(second, first)
+        XCTAssertGreaterThanOrEqual(second - first, 2_000_000)
+        XCTAssertLessThanOrEqual(second + epoch, uptime, "wire time = monotonic time − the epoch, never uptime itself")
+        XCTAssertEqual(MonotonicClock.wireEpochNanoseconds, epoch, "the epoch is captured once")
+    }
+
     func testSequenceOrderingAndGapsAcrossWrap() {
         XCTAssertTrue(MessageHeader.sequence(1, isNewerThan: 0))
         XCTAssertTrue(MessageHeader.sequence(0, isNewerThan: 0xFFFF_FFFF))

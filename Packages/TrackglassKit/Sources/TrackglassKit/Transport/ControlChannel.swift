@@ -29,8 +29,8 @@ public final class ControlChannel {
     /// PING cadence (Appendix A: 1 s). Tests shorten it; the dead threshold is always three missed pings,
     /// i.e. the oldest of three *consecutive* unanswered pings is ≥ 3 × this interval old (§4.6).
     public var heartbeatInterval: Duration = .seconds(1)
-    /// `MonotonicClock` time of the last message received (or of `start()`). Both sides PING every second, so a
-    /// live peer is never silent for much longer than that.
+    /// `MonotonicClock.nanoseconds()` time of the last message received (or of `start()`); local only, never sent.
+    /// Both sides PING every second, so a live peer is never silent for much longer than that.
     public private(set) var lastReceivedAt: UInt64 = MonotonicClock.nanoseconds()
     /// True when the peer said retrying cannot help: BYE `unpaired`, `incompatible` or `disconnected on the Mac` (§4.5), or a message this
     /// side could not understand. A failed TLS handshake is not final: the Mac also aborts handshakes while it
@@ -72,8 +72,9 @@ public final class ControlChannel {
         connection.start(queue: .main)
     }
 
+    /// Headers carry the wire clock (§4.2, §5.10); PING times and the RTT use it too, so the echo compares alike.
     public func send(_ message: ControlMessage) {
-        transmit(message, sentAt: MonotonicClock.nanoseconds())
+        transmit(message, sentAt: MonotonicClock.wireNanoseconds())
     }
 
     private func transmit(_ message: ControlMessage, sentAt: UInt64, terminal: String? = nil,
@@ -110,13 +111,13 @@ public final class ControlChannel {
     }
 
     public func end(reason: UInt8 = 0, message: String = "Disconnected") {
-        transmit(.bye(ByeMessage(reason: reason)), sentAt: MonotonicClock.nanoseconds(), terminal: message)
+        transmit(.bye(ByeMessage(reason: reason)), sentAt: MonotonicClock.wireNanoseconds(), terminal: message)
     }
 
     /// `end(reason:message:)` that calls `sent` once the BYE has been processed by the network stack — or right away
     /// when it cannot be sent (channel already closing) — so a caller can end a background task after it.
     public func end(reason: UInt8 = 0, message: String = "Disconnected", sent: @escaping @MainActor @Sendable () -> Void) {
-        transmit(.bye(ByeMessage(reason: reason)), sentAt: MonotonicClock.nanoseconds(), terminal: message, sent: sent)
+        transmit(.bye(ByeMessage(reason: reason)), sentAt: MonotonicClock.wireNanoseconds(), terminal: message, sent: sent)
     }
 
     public func startHeartbeat() {
@@ -128,7 +129,7 @@ public final class ControlChannel {
             while !Task.isCancelled {
                 do { try await Task.sleep(for: interval) } catch { return }
                 guard let self, !self.closed, !self.closing else { return }
-                let now = MonotonicClock.nanoseconds()
+                let now = MonotonicClock.wireNanoseconds()
                 self.nonce &+= 1
                 self.pending[self.nonce] = now
                 self.transmit(.ping(PingMessage(nonce: self.nonce)), sentAt: now)
@@ -165,7 +166,7 @@ public final class ControlChannel {
                             // still pending, so misses are counted consecutively (§4.6 "3 missed = dead").
                             let answered = pong.nonce
                             self.pending = self.pending.filter { answered &- $0.key >= 0x8000_0000 }
-                            let now = MonotonicClock.nanoseconds()
+                            let now = MonotonicClock.wireNanoseconds()   // the PING's `sentAt` domain
                             if now >= pong.echoSentAt { self.onRTT?(UInt32(clamping: (now - pong.echoSentAt) / 1_000)) }
                         }
                     case .bye(let bye):

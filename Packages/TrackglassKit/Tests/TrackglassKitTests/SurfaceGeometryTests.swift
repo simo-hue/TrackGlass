@@ -21,6 +21,20 @@ final class SurfaceGeometryTests: XCTestCase {
         XCTAssertEqual(split.toMM(point: SurfacePoint(x: -10, y: 0)).x, -10 * split.mmPerPoint)
     }
 
+    func testOnlyAPositiveFiniteSizeIsSendable() {
+        // C3 (L9): a zero-size layout pass must never become HELLO or SURFACE.
+        func geometry(_ width: Double, _ height: Double) -> SurfaceGeometry {
+            SurfaceGeometry(ppi: 460, nativeScale: 3, boundsInPoints: SurfaceSize(width: width, height: height))
+        }
+        XCTAssertTrue(geometry(393, 852).isValid)
+        XCTAssertTrue(geometry(1, 1).isValid)
+        XCTAssertFalse(geometry(0, 852).isValid)
+        XCTAssertFalse(geometry(393, 0).isValid)
+        XCTAssertFalse(geometry(0, 0).isValid)
+        XCTAssertFalse(geometry(1e-300, 852).isValid, "rounds to 0 as the wire's f32")
+        XCTAssertFalse(geometry(1e300, 852).isValid, "overflows the wire's f32")
+    }
+
     func testPixelDensityFamiliesAndFallbacks() {
         for (identifier, ppi) in [("iPhone11,8", 326.0), ("iPhone12,8", 326), ("iPhone14,6", 326),
                                   ("iPhone13,4", 458), ("iPhone14,8", 458), ("iPhone14,4", 476),

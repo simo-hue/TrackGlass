@@ -100,8 +100,41 @@ final class TGRecTests: XCTestCase {
             XCTAssertThrowsError(try reader.next())
         }
         var bad = writer.data
-        bad[23] = 0xFF; bad[24] = 0xFF
+        bad[23] = 27; bad[24] = 0                     // shorter than a TOUCH_FRAME's fixed 28 bytes
         var reader = try TGRecReader(data: bad)
         XCTAssertThrowsError(try reader.next()) { XCTAssertEqual($0 as? TGRecError, .invalidFrameLength) }
+        bad[23] = 0xFF; bad[24] = 0xFF                // a legal length the file does not hold
+        reader = try TGRecReader(data: bad)
+        XCTAssertThrowsError(try reader.next()) { XCTAssertEqual($0 as? TGRecError, .truncated) }
+    }
+
+    func testRecordsLongerThanTodaysLargestFrameAreKept() throws {
+        // L8 (§4.1, §6.10): a newer phone may append bytes to TOUCH_FRAME; its recordings are not skipped.
+        var frame = TouchFrame(sequence: 3, frameTime: 9)
+        frame.append(Contact(contactID: 1, phase: .moved, x: 1, y: 2))
+        var extended = Data(count: 44)
+        _ = try extended.withUnsafeMutableBytes { try TouchFrameEncoder(frame: frame).encode(into: $0) }
+        let longest = extended + Data(repeating: 0xA5, count: Int(UInt16.max) - 44)
+        extended.append(Data(repeating: 7, count: 300))
+        let header = try TGRecHeader(origin: .mac, surfaceWidthMM: 65, surfaceHeightMM: 141)
+        var writer = TGRecWriter(header: header)
+        try writer.append(captureTimeNs: 1, frameBytes: extended)
+        try writer.append(captureTimeNs: 2, frameBytes: longest)
+        XCTAssertThrowsError(try writer.append(captureTimeNs: 3, frameBytes: longest + Data([0]))) {
+            XCTAssertEqual($0 as? TGRecError, .invalidFrameLength, "a u16 length cannot hold it")
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("tgrec")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let fileWriter = try TGRecFileWriter(header: header, url: url)
+        try fileWriter.append(captureTimeNs: 1, frameBytes: extended)
+        try fileWriter.append(captureTimeNs: 2, frameBytes: longest)
+        try fileWriter.finish()
+        XCTAssertEqual(try Data(contentsOf: url), writer.data)
+        var reader = try TGRecReader(data: writer.data)
+        XCTAssertEqual(try reader.next()?.frameBytes, extended)
+        let record = try XCTUnwrap(reader.next())
+        XCTAssertEqual(record.frameBytes.count, Int(UInt16.max))
+        XCTAssertEqual(try record.frameBytes.withUnsafeBytes { try TouchFrameDecoder.decode($0) }[0].x, 1)
+        XCTAssertNil(try reader.next())
     }
 }
