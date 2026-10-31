@@ -12,4 +12,9 @@ public enum MessageType: UInt8, CaseIterable, Sendable {
     case inputHeartbeat = 0x11
     case pairRequest = 0x20
     case pairResponse = 0x21
+    // §3.4 / §4.5 code pairing (2026-10-31): pairing channel only.
+    case pairCommit = 0x22
+    case pairNonce = 0x23
+    case pairReveal = 0x24
+    case pairConfirm = 0x25
 }

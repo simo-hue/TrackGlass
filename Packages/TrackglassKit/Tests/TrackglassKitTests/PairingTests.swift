@@ -9,7 +9,7 @@ final class PairingTests: XCTestCase {
                                          macName: "Simone’s Mac & café + #? 📱", bonjourInstanceName: "Mac / 你好 (pairing)")
         XCTAssertEqual(try PairingPayload(url: payload.url), payload)
         XCTAssertEqual(payload.identity, "AAECAwQFBgc")
-        // §3.4: the PIN path derives the same identity from the pairID alone (base64url, no padding,
+        // §3.4: code pairing derives the same identity from the pairID alone (base64url, no padding,
         // `-`/`_` alphabet), so a pairID whose standard base64 would contain `+`, `/` and `=` must match.
         XCTAssertEqual(PairingPayload.identity(forPairID: payload.pairID), payload.identity)
         let awkward = try PairingPayload(pairID: Data([0xFB, 0xFF, 0xBF, 0xFE, 0xFF, 0xFF, 0xFF, 0xFF]),
@@ -41,14 +41,116 @@ final class PairingTests: XCTestCase {
         XCTAssertNoThrow(try PairingPayload(url: URL(string: good)!))
     }
 
-    func testPINKeyRejectsBadInputs() {
-        XCTAssertThrowsError(try KeyDerivation.pinKey(pin: "001234", pairID: Data(count: 7)))
-        XCTAssertThrowsError(try KeyDerivation.pinKey(pin: "001234", pairID: Data(count: 9)))
-        XCTAssertThrowsError(try KeyDerivation.pinKey(pin: "12345", pairID: Data(count: 8)))
-        XCTAssertThrowsError(try KeyDerivation.pinKey(pin: "1234567", pairID: Data(count: 8)))
-        XCTAssertThrowsError(try KeyDerivation.pinKey(pin: "12345a", pairID: Data(count: 8)))
-        XCTAssertThrowsError(try KeyDerivation.pinKey(pin: "１２３４５６", pairID: Data(count: 8)), "full-width digits are not ASCII digits")
-        XCTAssertNoThrow(try KeyDerivation.pinKey(pin: "000000", pairID: Data(count: 8)))
+    func testCodeChannelKeyKnownAnswer() throws {
+        // §3.4 (2026-10-31), computed with Python hashlib/hmac and cross-checked with `cryptography`'s HKDF:
+        // HKDF-SHA256(ikm: "trackglass-code-channel-v1", salt: 00…07, info: "trackglass-pair-v2", 32 bytes).
+        let key = try KeyDerivation.codeChannelKey(pairID: Data(0..<8))
+        XCTAssertEqual(key.withUnsafeBytes { hex(Data($0)) }, "6ae0d35b0715376294df5fcd17cdf11f038bd5f1144d67fe77abedfcf5a30c89")
+        XCTAssertNotEqual(try KeyDerivation.codeChannelKey(pairID: Data(1...8)).withUnsafeBytes { hex(Data($0)) },
+                          key.withUnsafeBytes { hex(Data($0)) }, "each pairing window has its own channel key")
+        XCTAssertThrowsError(try KeyDerivation.codeChannelKey(pairID: Data(count: 7)))
+        XCTAssertThrowsError(try KeyDerivation.codeChannelKey(pairID: Data(count: 9)))
+    }
+
+    func testCommitmentKnownAnswerAndCheck() throws {
+        // SHA-256("trackglass-commit-v1" ‖ Nm ‖ macPK ‖ phonePK) with Nm = 80…9f and the key pairs of the LTK vectors.
+        let (phonePK, macPK) = try vectorPublicKeys()
+        let macNonce = Data(0x80..<0xA0)
+        let commitment = try KeyDerivation.commitment(macNonce: macNonce, macPublicKey: macPK, phonePublicKey: phonePK)
+        XCTAssertEqual(hex(commitment), "20f999f27c3a7f8962cdc119374928043b8750a11fe4fa0a538a9ab11b482b00")
+        XCTAssertTrue(KeyDerivation.commitmentMatches(commitment, macNonce: macNonce, macPublicKey: macPK, phonePublicKey: phonePK))
+        // A different nonce, a swapped or substituted key, or a damaged commitment does not open it.
+        XCTAssertFalse(KeyDerivation.commitmentMatches(commitment, macNonce: Data(0xC0..<0xE0), macPublicKey: macPK, phonePublicKey: phonePK))
+        XCTAssertFalse(KeyDerivation.commitmentMatches(commitment, macNonce: macNonce, macPublicKey: phonePK, phonePublicKey: macPK))
+        XCTAssertFalse(KeyDerivation.commitmentMatches(commitment, macNonce: macNonce, macPublicKey: Data(repeating: 9, count: 32), phonePublicKey: phonePK))
+        var damaged = commitment
+        damaged[31] ^= 1
+        XCTAssertFalse(KeyDerivation.commitmentMatches(damaged, macNonce: macNonce, macPublicKey: macPK, phonePublicKey: phonePK))
+        XCTAssertFalse(KeyDerivation.commitmentMatches(commitment.prefix(31), macNonce: macNonce, macPublicKey: macPK, phonePublicKey: phonePK))
+        XCTAssertFalse(KeyDerivation.commitmentMatches(commitment, macNonce: macNonce.prefix(31), macPublicKey: macPK, phonePublicKey: phonePK))
+        XCTAssertThrowsError(try KeyDerivation.commitment(macNonce: Data(count: 31), macPublicKey: macPK, phonePublicKey: phonePK))
+        XCTAssertEqual(KeyDerivation.randomNonce().count, 32)
+        XCTAssertNotEqual(KeyDerivation.randomNonce(), KeyDerivation.randomNonce())
+    }
+
+    func testComparisonCodeKnownAnswer() throws {
+        // SHA-256("trackglass-sas-v1" ‖ pairID 00…07 ‖ phone/Mac peerIDs of the LTK vectors ‖ phonePK ‖ macPK ‖ Np ‖ Nm),
+        // Np = c0…df, Nm = 80…9f: first four bytes b4 26 1d 5a = 3 022 396 762 → mod 10⁶ = 396762.
+        let (phonePK, macPK) = try vectorPublicKeys()
+        let (phoneID, macID) = try vectorPeerIDs()
+        func code(_ phoneNonce: Data, _ macNonce: Data, swapIDs: Bool = false) throws -> String {
+            try KeyDerivation.comparisonCode(pairID: Data(0..<8), phonePeerID: swapIDs ? macID : phoneID, macPeerID: swapIDs ? phoneID : macID,
+                                             phonePublicKey: phonePK, macPublicKey: macPK, phoneNonce: phoneNonce, macNonce: macNonce)
+        }
+        let phoneNonce = Data(0xC0..<0xE0), macNonce = Data(0x80..<0xA0)
+        XCTAssertEqual(try code(phoneNonce, macNonce), "396762")
+        // Np[0] = b4: first four bytes f7 e5 6a 3d = 4 159 007 293 → 007293.
+        var leadingZero = phoneNonce
+        leadingZero[0] = 0xB4
+        XCTAssertEqual(try code(leadingZero, macNonce), "007293", "leading zeros are kept")
+        XCTAssertEqual(try code(macNonce, phoneNonce), "205269", "the nonces are not interchangeable")
+        XCTAssertNotEqual(try code(phoneNonce, macNonce, swapIDs: true), "396762")
+        XCTAssertThrowsError(try code(Data(count: 31), macNonce))
+        XCTAssertThrowsError(try KeyDerivation.comparisonCode(pairID: Data(count: 7), phonePeerID: phoneID, macPeerID: macID, phonePublicKey: phonePK,
+                                                              macPublicKey: macPK, phoneNonce: Data(count: 32), macNonce: Data(count: 32)))
+        XCTAssertEqual(PairingText.formattedCode("007293"), "007 293")
+        XCTAssertEqual(PairingText.spokenCode("007293"), "0 0 7 2 9 3")
+    }
+
+    func testCodePairingLTKKnownAnswer() throws {
+        // HKDF-SHA256(ikm: X25519 ‖ Np ‖ Nm, salt: 00…07, info: "trackglass-ltk-v3" ‖ phoneID ‖ macID ‖ phonePK ‖ macPK),
+        // computed with Python `cryptography` (X25519 + HKDF) and cross-checked with hashlib/hmac.
+        let phone = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: Data(1...32))
+        let mac = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: Data(33...64))
+        let (phoneID, macID) = try vectorPeerIDs()
+        func derive(_ secret: SharedSecret, phoneNonce: Data = Data(0xC0..<0xE0), macNonce: Data = Data(0x80..<0xA0)) throws -> String {
+            try KeyDerivation.codePairingLTK(sharedSecret: secret, pairID: Data(0..<8), phonePeerID: phoneID, macPeerID: macID,
+                                             phonePublicKey: phone.publicKey.rawRepresentation, macPublicKey: mac.publicKey.rawRepresentation,
+                                             phoneNonce: phoneNonce, macNonce: macNonce).withUnsafeBytes { hex(Data($0)) }
+        }
+        let phoneSide = try KeyDerivation.sharedSecret(privateKey: phone, peerPublicKey: mac.publicKey.rawRepresentation)
+        let macSide = try KeyDerivation.sharedSecret(privateKey: mac, peerPublicKey: phone.publicKey.rawRepresentation)
+        XCTAssertEqual(try derive(phoneSide), "661814eba967509c456a638deb69ba38bc5335bd1ab28fe0aab75213a5617d9b")
+        XCTAssertEqual(try derive(macSide), try derive(phoneSide), "both sides derive the same LTK")
+        XCTAssertNotEqual(try derive(phoneSide, phoneNonce: Data(0x80..<0xA0), macNonce: Data(0xC0..<0xE0)), try derive(phoneSide))
+        // The QR derivation (v2) of the same exchange is a different key.
+        let qr = try KeyDerivation.pairingLTK(sharedSecret: phoneSide, pairingKey: SymmetricKey(data: Data(repeating: 0xA5, count: 32)),
+                                              pairID: Data(0..<8), phonePeerID: phoneID, macPeerID: macID,
+                                              phonePublicKey: phone.publicKey.rawRepresentation, macPublicKey: mac.publicKey.rawRepresentation)
+        XCTAssertNotEqual(qr.withUnsafeBytes { hex(Data($0)) }, try derive(phoneSide))
+        XCTAssertThrowsError(try KeyDerivation.codePairingLTK(sharedSecretBytes: Data(count: 32), pairID: Data(0..<8), phonePeerID: phoneID,
+                                                              macPeerID: macID, phonePublicKey: Data(count: 32), macPublicKey: Data(count: 32),
+                                                              phoneNonce: Data(count: 32), macNonce: Data(count: 16)))
+    }
+
+    func testPromptNamesAreSanitized() {
+        // §3.4 (2026-10-31): control and format characters (Cc, Cf — bidi overrides included) go, whitespace collapses.
+        XCTAssertEqual(PairingText.sanitizedName("Sam’s iPhone"), "Sam’s iPhone")
+        XCTAssertEqual(PairingText.sanitizedName("  Sam’s\t\n  iPhone \u{00A0} "), "Sam’s iPhone")
+        XCTAssertEqual(PairingText.sanitizedName("Sam\u{202E}enohPi\u{202C}"), "SamenohPi", "RIGHT-TO-LEFT OVERRIDE / POP removed")
+        XCTAssertEqual(PairingText.sanitizedName("a\u{2066}b\u{2069}\u{200B}c\u{200F}\u{FEFF}"), "abc", "isolates, ZWSP, RLM, BOM removed")
+        XCTAssertEqual(PairingText.sanitizedName("x\u{0000}\u{0007}\u{007F}\u{0085}y"), "x y", "C0/C1 controls removed, NEL is whitespace")
+        XCTAssertEqual(PairingText.sanitizedName("\u{202E}\u{0001} \n"), "")
+        XCTAssertEqual(PairingText.sanitizedName("Téléphone 📱 de Zoë"), "Téléphone 📱 de Zoë")
+        let long = PairingText.sanitizedName(String(repeating: "W", count: 100))
+        XCTAssertEqual(long.count, 40)
+        XCTAssertEqual(long, String(repeating: "W", count: 39) + "…")
+        XCTAssertEqual(PairingText.sanitizedName(String(repeating: "e\u{0301}", count: 41)).count, 40, "counts characters, not scalars")
+        XCTAssertEqual(PairingText.sanitizedName(String(repeating: "a", count: 40)), String(repeating: "a", count: 40), "40 fits")
+        XCTAssertEqual(PairingText.sanitizedName(String(repeating: "a", count: 38) + "  bcd"), String(repeating: "a", count: 38) + "…",
+                       "no space before the ellipsis")
+    }
+
+    private func vectorPublicKeys() throws -> (phone: Data, mac: Data) {
+        let phone = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: Data(1...32))
+        let mac = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: Data(33...64))
+        return (phone.publicKey.rawRepresentation, mac.publicKey.rawRepresentation)
+    }
+
+    private func vectorPeerIDs() throws -> (phone: UUID, mac: UUID) {
+        let phone = try XCTUnwrap(UUID(uuidString: "00112233-4455-6677-8899-AABBCCDDEEFF"))
+        let mac = try XCTUnwrap(UUID(uuidString: "FFEEDDCC-BBAA-9988-7766-554433221100"))
+        return (phone, mac)
     }
 
     func testMonotonicClockAgreesWithDispatchUptime() {
@@ -93,17 +195,6 @@ final class PairingTests: XCTestCase {
     }
 
     private func hex(_ data: Data) -> String { data.map { String(format: "%02x", $0) }.joined() }
-
-    func testHKDFKnownAnswer() throws {
-        // Computed independently with Python hashlib/hmac: extract(salt=00..07, IKM="001234"),
-        // then expand with info="trackglass-pair-v1" and counter=01, one SHA-256 block.
-        let key = try KeyDerivation.pinKey(pin: "001234", pairID: Data(0..<8))
-        let hex = key.withUnsafeBytes { $0.map { String(format: "%02x", $0) }.joined() }
-        XCTAssertEqual(hex, "f8a816f2569f6826c8df004ac61b9dc0081b9b59eba5f2544ca3faae5560289b")
-        for pin in ["12345", "1234567", "abcdef", "１２３４５６"] {
-            XCTAssertThrowsError(try KeyDerivation.pinKey(pin: pin, pairID: Data(0..<8)))
-        }
-    }
 
     func testPeerIdentity() throws {
         let peer = PeerIdentity(name: "Mac")

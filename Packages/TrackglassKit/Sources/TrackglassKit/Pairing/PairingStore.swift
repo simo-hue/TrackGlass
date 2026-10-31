@@ -88,6 +88,20 @@ public struct PairingStore: Sendable {
         if status != errSecItemNotFound { try check(status) }
     }
 
+    /// Saves `peer` and returns the record it replaced, if any (an unreadable one counts as none), so a pairing that
+    /// fails to complete can put the previous, still working key back with `restore` instead of deleting it (§3.4).
+    @discardableResult
+    public func replace(with peer: PairedPeer) throws -> PairedPeer? {
+        let previous = try? load(peerID: peer.peerID)
+        try save(peer)
+        return previous
+    }
+
+    /// Undoes `replace(with:)`: puts `previous` back, or deletes `peerID`'s record when there was none before.
+    public func restore(_ previous: PairedPeer?, peerID: UUID) throws {
+        if let previous { try save(previous) } else { try delete(peerID: peerID) }
+    }
+
     private func query(peerID: UUID? = nil) -> [String: Any] {
         var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                                     kSecAttrService as String: service,

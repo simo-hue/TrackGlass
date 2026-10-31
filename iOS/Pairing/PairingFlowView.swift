@@ -7,8 +7,12 @@ struct PairingFlowView: View {
     @State private var client = PairingClient()
     @State private var name = PhoneIdentityStore().name
     @State private var scanner = false
-    @State private var showPIN = false
+    @State private var showCodePairing = false
     @State private var pending: PairingPayload?
+    /// §3.4 (round 4, L4): a scanned code or a link for a Mac this device is already paired with waits for the user's
+    /// "Replace" (the name is the stored one, not the link's).
+    @State private var askReplace = false
+    @State private var existingName = ""
     /// A pairing link can be opened by any app or web page: it is only acted on after the user confirms it here
     /// (§3.4 "Never auto-pair"). Codes scanned with the in-app scanner are the user's own action already.
     @State private var awaitingLinkConfirmation: Bool
@@ -33,8 +37,8 @@ struct PairingFlowView: View {
                 Section("Your device name") { TextField("Name", text: $name).disabled(pairing) }
                 if awaitingLinkConfirmation, let link = pending {
                     Section {
-                        Text("A link asks to pair with “\(link.macName)”. Continue only if that Mac shows its pairing window in front of you.")
-                        Button("Pair with \(link.macName)") {
+                        Text("A link asks to pair with “\(PairingText.sanitizedName(link.macName))”. Continue only if that Mac shows its pairing window in front of you.")
+                        Button("Pair with \(PairingText.sanitizedName(link.macName))") {
                             PhoneIdentityStore().name = name
                             awaitingLinkConfirmation = false
                             status = "Looking for the Mac’s pairing window…"
@@ -50,11 +54,11 @@ struct PairingFlowView: View {
                         awaitingLinkConfirmation = false
                         scanner = true
                     }.disabled(pairing || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    Button("Use a code instead") {
+                    Button("Pair with a code") {
                         PhoneIdentityStore().name = name
                         pending = nil
                         awaitingLinkConfirmation = false
-                        showPIN = true
+                        showCodePairing = true
                     }.disabled(pairing || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     Text(status)
                 }
@@ -62,8 +66,21 @@ struct PairingFlowView: View {
             .navigationTitle("Pair with a Mac")
             .toolbar { Button("Done") { dismiss() } }
         }
-        .sheet(isPresented: $showPIN, onDismiss: { if didPair { dismiss() } }) {
-            PINEntryView(phoneName: name) { peer in finishPairing(peer) }
+        .sheet(isPresented: $showCodePairing, onDismiss: { if didPair { dismiss() } }) {
+            CodePairingView(phoneName: name) { peer in finishPairing(peer) }
+        }
+        .alert("Replace the pairing with “\(PairingText.sanitizedName(existingName))”?", isPresented: $askReplace) {
+            Button("Replace", role: .destructive) {
+                askReplace = false
+                tryPair(replacingExisting: true)
+            }
+            Button("Cancel", role: .cancel) {
+                askReplace = false
+                pending = nil
+                status = "Pairing cancelled. The existing pairing is unchanged."
+            }
+        } message: {
+            Text("This device is already paired with that Mac. Replace the pairing only if you are pairing the same Mac again.")
         }
         .fullScreenCover(isPresented: $scanner) {
             ZStack(alignment: .topTrailing) {
@@ -101,8 +118,8 @@ struct PairingFlowView: View {
         onPaired?(peer)
     }
 
-    private func tryPair() {
-        guard !pairing, !awaitingLinkConfirmation, let payload = pending,
+    private func tryPair(replacingExisting: Bool = false) {
+        guard !pairing, !awaitingLinkConfirmation, !askReplace, let payload = pending,
               let mac = browser.macs.first(where: { $0.instanceName == payload.bonjourInstanceName && $0.isPairing && $0.pairID == payload.pairID }) else { return }
         pairing = true
         status = "Pairing… Click Allow on the Mac when it asks."
@@ -111,13 +128,20 @@ struct PairingFlowView: View {
         let request = PairRequestMessage(peerID: identity.peerID, name: name,
                                          modelIdentifier: PhoneIdentityStore.modelIdentifier(), protocolVersion: MessageHeader.protocolVersion)
         exchange = Task {
-            defer { pairing = false; pending = nil }
+            defer { pairing = false }
             do {
-                let peer = try await client.pair(payload: payload, endpoint: mac.endpoint, expectedMacID: mac.peerID, request: request)
+                let peer = try await client.pair(payload: payload, endpoint: mac.endpoint, expectedMacID: mac.peerID, request: request,
+                                                 replacingExisting: replacingExisting)
+                pending = nil
                 finishPairing(peer)
                 dismiss()
-            } catch is CancellationError { status = "Pairing cancelled." }
-            catch { status = error.localizedDescription }
+            } catch PairingClient.Failure.alreadyPaired(let storedName) {
+                // Nothing was sent yet: the code stays pending until the user decides (§3.4, never a silent overwrite).
+                existingName = storedName
+                status = "This device is already paired with “\(PairingText.sanitizedName(storedName))”."
+                askReplace = true
+            } catch is CancellationError { pending = nil; status = "Pairing cancelled." }
+            catch { pending = nil; status = error.localizedDescription }
         }
     }
 }

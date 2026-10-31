@@ -167,9 +167,9 @@ public struct PairRequestMessage: Equatable, Sendable {
     }
 }
 
-/// §4.5 PAIR_RESPONSE. The LTK is no longer transmitted: the Mac answers with its own one-time X25519 public key and
-/// both sides derive the LTK with `KeyDerivation.pairingLTK` (§3.4), so a recorded pairing exchange — even one whose
-/// PIN is later brute-forced — does not reveal the long-term key.
+/// §4.5 PAIR_RESPONSE. The LTK is never transmitted: the Mac answers with its own one-time X25519 public key and both
+/// sides derive the LTK (§3.4: `KeyDerivation.pairingLTK` for QR, `codePairingLTK` for code pairing). In code pairing
+/// the key repeats the one PAIR_COMMIT committed to, and the message is sent only after Allow and PAIR_CONFIRM.
 public struct PairResponseMessage: Equatable, Sendable {
     public var peerID: UUID
     public var name: String
@@ -179,6 +179,32 @@ public struct PairResponseMessage: Equatable, Sendable {
         self.peerID = peerID
         self.name = name
         self.ephemeralPublicKey = ephemeralPublicKey
+    }
+}
+
+/// §4.5 PAIR_COMMIT (code pairing, 2026-10-31; Mac → phone, the answer to PAIR_REQUEST): the Mac's identity, its
+/// one-time X25519 public key and `commitment = SHA-256("trackglass-commit-v1" ‖ Nm ‖ macPK ‖ phonePK)`, which binds
+/// the Mac's nonce before the phone reveals its own (`KeyDerivation.commitment`).
+public struct PairCommitMessage: Equatable, Sendable {
+    public var peerID: UUID
+    public var name: String
+    public var ephemeralPublicKey: Data
+    public var commitment: Data
+
+    public init(peerID: UUID, name: String, ephemeralPublicKey: Data, commitment: Data) {
+        self.peerID = peerID
+        self.name = name
+        self.ephemeralPublicKey = ephemeralPublicKey
+        self.commitment = commitment
+    }
+}
+
+/// §4.5 PAIR_NONCE (phone → Mac, Np) and PAIR_REVEAL (Mac → phone, Nm): one 32-byte nonce.
+public struct PairNonceMessage: Equatable, Sendable {
+    public var nonce: Data
+
+    public init(nonce: Data) {
+        self.nonce = nonce
     }
 }
 
@@ -194,6 +220,11 @@ public enum ControlMessage: Equatable, Sendable {
     case bye(ByeMessage)
     case pairRequest(PairRequestMessage)
     case pairResponse(PairResponseMessage)
+    case pairCommit(PairCommitMessage)
+    case pairNonce(PairNonceMessage)
+    case pairReveal(PairNonceMessage)
+    /// The phone's user tapped "Matches" (empty payload).
+    case pairConfirm
     case unknown(type: UInt8)
 
     public var type: UInt8 {
@@ -209,6 +240,10 @@ public enum ControlMessage: Equatable, Sendable {
         case .bye: return MessageType.bye.rawValue
         case .pairRequest: return MessageType.pairRequest.rawValue
         case .pairResponse: return MessageType.pairResponse.rawValue
+        case .pairCommit: return MessageType.pairCommit.rawValue
+        case .pairNonce: return MessageType.pairNonce.rawValue
+        case .pairReveal: return MessageType.pairReveal.rawValue
+        case .pairConfirm: return MessageType.pairConfirm.rawValue
         case .unknown(let type): return type
         }
     }

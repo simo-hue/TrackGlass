@@ -80,6 +80,26 @@ final class PairingStoreTests: XCTestCase {
         XCTAssertEqual(try store.all(), [good])
     }
 
+    /// §3.4 (round 4, L5): a re-pair whose PAIR_RESPONSE never reaches the phone puts the previous, still working
+    /// pairing back instead of deleting it; a first pairing that fails leaves nothing behind.
+    func testReplaceReturnsThePreviousRecordAndRestorePutsItBack() throws {
+        let store = PairingStore(service: "app.trackglass.pairing.tests.\(UUID().uuidString)")
+        let id = UUID()
+        defer { try? store.delete(peerID: id) }
+        let old = PairedPeer(peerID: id, ltk: Data(repeating: 1, count: 32), name: "Phone",
+                             pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let new = PairedPeer(peerID: id, ltk: Data(repeating: 2, count: 32), name: "Phone",
+                             pairedAt: Date(timeIntervalSince1970: 1_800_000_000))
+        XCTAssertNil(try store.replace(with: old), "nothing was paired before")
+        XCTAssertEqual(try store.replace(with: new), old)
+        XCTAssertEqual(try store.load(peerID: id), new)
+        try store.restore(old, peerID: id)
+        XCTAssertEqual(try store.load(peerID: id), old, "the old key works again")
+        try store.restore(nil, peerID: id)
+        XCTAssertNil(try store.load(peerID: id), "a first pairing that failed leaves no record")
+        try store.restore(nil, peerID: id)
+    }
+
     func testInvalidKeyIsRejectedWithoutSaving() throws {
         let store = PairingStore(service: "app.trackglass.pairing.tests.\(UUID().uuidString)")
         let id = UUID()

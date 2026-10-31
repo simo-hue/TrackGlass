@@ -45,12 +45,6 @@ final class NoMacPanelTests: XCTestCase {
         XCTAssertTrue(OnboardingProgress.isCompleted(defaults: other, hasPairedMacs: { false }))
     }
 
-    func testPairingCodeFieldKeepsSixDigits() {
-        XCTAssertEqual(PINEntryView.sanitized("12 34-56"), "123456")
-        XCTAssertEqual(PINEntryView.sanitized("1234567"), "123456")
-        XCTAssertEqual(PINEntryView.sanitized("١٢٣abc4"), "4", "only ASCII digits count")
-    }
-
     @MainActor func testColourEditsOnABuiltInThemeBecomeTheCustomTheme() {
         let aluminum = SettingsSheet.edited(.preset(.aluminum), rgb: 0x112233, background: false)
         XCTAssertEqual(aluminum.id, .custom)

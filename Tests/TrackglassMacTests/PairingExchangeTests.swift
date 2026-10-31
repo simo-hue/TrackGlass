@@ -33,10 +33,67 @@ final class PairingExchangeTests: XCTestCase {
         XCTAssertNil(service.payload, "A used QR must no longer be shown")
         XCTAssertNil(service.port, "The pairing listener must stop")
         do {
-            _ = try await client.pair(payload: payload, endpoint: endpoint, expectedMacID: macID, request: request)
+            // `replacingExisting`: get past the phone's own replace check (L4) to the Mac, which must refuse the code.
+            _ = try await client.pair(payload: payload, endpoint: endpoint, expectedMacID: macID, request: request, replacingExisting: true)
             XCTFail("Used QR was accepted again")
         } catch {}
         XCTAssertEqual(try serverStore.all().count, 1)
+    }
+
+    /// §3.4 (round 4, L4): a scanned code or link never silently replaces this device's pairing with the same Mac.
+    @MainActor func testQRPairingAsksBeforeReplacingAnExistingPairing() async throws {
+        let macID = UUID(), phoneID = UUID()
+        let serverStore = PairingStore(service: "app.trackglass.tests.replace.mac.\(UUID())")
+        let phoneStore = PairingStore(service: "app.trackglass.tests.replace.phone.\(UUID())")
+        let service = PairingService(identity: PeerIdentity(peerID: macID, name: "Office Mac"), store: serverStore, authorized: { true },
+                                     approvalPolicy: { _ in true })
+        defer { service.close(); try? serverStore.delete(peerID: phoneID); try? phoneStore.delete(peerID: macID) }
+        let old = PairedPeer(peerID: macID, ltk: Data(repeating: 0x42, count: 32), name: "Old Office Mac",
+                             pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        try phoneStore.save(old)
+        service.open()
+        let endpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: try await port(of: service))
+        let payload = try XCTUnwrap(service.payload)
+        let request = PairRequestMessage(peerID: phoneID, name: "Phone", modelIdentifier: "iPhone16,2", protocolVersion: 1)
+        let client = PairingClient(store: phoneStore)
+        do {
+            _ = try await client.pair(payload: payload, endpoint: endpoint, expectedMacID: macID, request: request)
+            XCTFail("An existing pairing was replaced without asking")
+        } catch PairingClient.Failure.alreadyPaired(let name) {
+            XCTAssertEqual(name, "Old Office Mac", "the question names the stored pairing, not the link")
+        } catch { XCTFail("Expected alreadyPaired, got \(error)") }
+        XCTAssertEqual(try phoneStore.load(peerID: macID), old)
+        XCTAssertEqual(service.connectionCount, 0, "nothing was sent before the user decided")
+        XCTAssertNotNil(service.payload, "the code is still unused")
+        let mac = try await client.pair(payload: payload, endpoint: endpoint, expectedMacID: macID, request: request, replacingExisting: true)
+        XCTAssertNotEqual(mac.ltk, old.ltk)
+        XCTAssertEqual(try phoneStore.load(peerID: macID)?.ltk, mac.ltk)
+        XCTAssertEqual(try serverStore.load(peerID: phoneID)?.ltk, mac.ltk)
+    }
+
+    /// §3.4 (2026-10-31): the prompt and the stored record never carry control or bidi characters, nor a 64 KiB name.
+    @MainActor func testPromptShowsTheSanitizedPhoneName() async throws {
+        let macID = UUID(), phoneID = UUID()
+        let serverStore = PairingStore(service: "app.trackglass.tests.sanitize.mac.\(UUID())")
+        let phoneStore = PairingStore(service: "app.trackglass.tests.sanitize.phone.\(UUID())")
+        let service = PairingService(identity: PeerIdentity(peerID: macID, name: "Mac"), store: serverStore, authorized: { true })
+        defer { service.close(); try? serverStore.delete(peerID: phoneID); try? phoneStore.delete(peerID: macID) }
+        service.open()
+        let endpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: try await port(of: service))
+        let payload = try XCTUnwrap(service.payload)
+        let name = "  Sam’s\u{202E}enohPi\u{202C}\n\n" + String(repeating: "x", count: 100)
+        let request = PairRequestMessage(peerID: phoneID, name: name, modelIdentifier: "iPhone16,1", protocolVersion: 1)
+        let client = PairingClient(store: phoneStore)
+        let pairing = Task { @MainActor in try await client.pair(payload: payload, endpoint: endpoint, expectedMacID: macID, request: request) }
+        for _ in 0..<250 where service.pendingApproval == nil { try await Task.sleep(for: .milliseconds(20)) }
+        let pending = try XCTUnwrap(service.pendingApproval)
+        XCTAssertEqual(pending.phoneName, PairingText.sanitizedName(name))
+        XCTAssertTrue(pending.phoneName.hasPrefix("Sam’senohPi xxx"), pending.phoneName)
+        XCTAssertEqual(pending.phoneName.count, 40)
+        XCTAssertNil(pending.code, "the QR path asks without a comparison code")
+        service.respondToPendingPairing(allow: true)
+        _ = try await pairing.value
+        XCTAssertEqual(try serverStore.load(peerID: phoneID)?.name, pending.phoneName)
     }
 
     @MainActor func testPairingWaitsForTheUsersAllowClickBeforeStoringAnything() async throws {

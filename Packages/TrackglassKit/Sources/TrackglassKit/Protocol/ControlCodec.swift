@@ -78,7 +78,16 @@ extension ControlMessage {
             try writer.write(value.name)
             guard value.ephemeralPublicKey.count == 32 else { throw ControlCodecError.invalidKeyLength }
             writer.data.append(value.ephemeralPublicKey)
-        case .unknown: break
+        case .pairCommit(let value):
+            writer.write(value.peerID)
+            try writer.write(value.name)
+            guard value.ephemeralPublicKey.count == 32, value.commitment.count == 32 else { throw ControlCodecError.invalidKeyLength }
+            writer.data.append(value.ephemeralPublicKey)
+            writer.data.append(value.commitment)
+        case .pairNonce(let value), .pairReveal(let value):
+            guard value.nonce.count == 32 else { throw ControlCodecError.invalidKeyLength }
+            writer.data.append(value.nonce)
+        case .pairConfirm, .unknown: break
         }
         return writer.data
     }
@@ -162,6 +171,19 @@ extension ControlMessage {
                 name: reader.string(),
                 ephemeralPublicKey: reader.bytes(count: 32)
             ))
+        case .pairCommit:
+            message = .pairCommit(try PairCommitMessage(
+                peerID: reader.uuid(),
+                name: reader.string(),
+                ephemeralPublicKey: reader.bytes(count: 32),
+                commitment: reader.bytes(count: 32)
+            ))
+        case .pairNonce:
+            message = .pairNonce(try PairNonceMessage(nonce: reader.bytes(count: 32)))
+        case .pairReveal:
+            message = .pairReveal(try PairNonceMessage(nonce: reader.bytes(count: 32)))
+        case .pairConfirm:
+            message = .pairConfirm
         default:
             return ControlPacket(header: header, message: .unknown(type: header.type))
         }
@@ -171,19 +193,20 @@ extension ControlMessage {
         return ControlPacket(header: header, message: message)
     }
 
-    /// Surface dimensions and density feed pointer math and CGEvent coordinates directly; NaN,
-    /// infinite or non-positive values are rejected here rather than propagating (§8 robustness).
+    /// Surface dimensions and density feed pointer math and CGEvent coordinates directly; NaN and infinite values
+    /// are rejected here rather than propagating (§8 robustness), and so is a non-positive HELLO size or density.
+    /// A SURFACE with a zero or negative width/height still decodes (L9, 2026-10-31): the Mac ignores it and keeps
+    /// the previous geometry instead of ending the session as "incompatible", which the phone treats as final.
     private static func validateGeometry(_ message: ControlMessage) throws {
-        let values: [Float]
-        let override: Float
         switch message {
         case .hello(let hello):
-            values = [hello.surfaceWidthMM, hello.surfaceHeightMM, hello.ppi]; override = hello.trackingOverride
+            guard [hello.surfaceWidthMM, hello.surfaceHeightMM, hello.ppi].allSatisfy({ $0.isFinite && $0 > 0 }),
+                  hello.trackingOverride.isFinite else { throw ControlCodecError.invalidValue }
         case .surface(let surface):
-            values = [surface.surfaceWidthMM, surface.surfaceHeightMM, surface.ppi]; override = surface.trackingOverride
+            guard [surface.surfaceWidthMM, surface.surfaceHeightMM, surface.trackingOverride].allSatisfy(\.isFinite),
+                  surface.ppi.isFinite, surface.ppi > 0 else { throw ControlCodecError.invalidValue }
         default: return
         }
-        guard values.allSatisfy({ $0.isFinite && $0 > 0 }), override.isFinite else { throw ControlCodecError.invalidValue }
     }
 }
 

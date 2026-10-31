@@ -14,7 +14,7 @@ final class PairingSlotTests: XCTestCase {
         defer { service.close() }
         service.open()
         let port = try await port(of: service)
-        let pin = service.pin
+        let payload = try XCTUnwrap(service.payload)
         let stray = NWConnection(host: "127.0.0.1", port: port, using: .tcp)   // e.g. a port scan that stays open
         defer { stray.cancel() }
         stray.start(queue: .main)
@@ -22,7 +22,30 @@ final class PairingSlotTests: XCTestCase {
         try await eventually { service.connectionCount == 0 }
         XCTAssertTrue(service.isOpen)
         XCTAssertFalse(service.isFinished)
-        XCTAssertEqual(service.pin, pin, "a connection that never tried the key must not rotate the code")
+        XCTAssertEqual(service.payload?.pairID, payload.pairID, "a connection that never tried the key must not rotate the code")
+        XCTAssertEqual(service.payload?.pairSecret, payload.pairSecret)
+    }
+
+    /// §3.4 (2026-10-31): in code mode too, a connection that never completes TLS or never sends PAIR_REQUEST loses
+    /// the slot after the request timeout and is not one of the window's code sessions.
+    func testSilentConnectionInCodeModeIsNotASession() async throws {
+        let service = PairingService(identity: PeerIdentity(name: "Code Slot Mac"),
+                                     store: PairingStore(service: "app.trackglass.tests.slot.code.\(UUID())"),
+                                     authorized: { true }, requestTimeout: .milliseconds(300), approvalPolicy: { _ in true })
+        defer { service.close() }
+        service.open()
+        service.setMode(.code)
+        let port = try await port(of: service)
+        for _ in 0..<(PairingService.maxCodeSessions + 1) {
+            let stray = NWConnection(host: "127.0.0.1", port: port, using: .tcp)
+            defer { stray.cancel() }
+            stray.start(queue: .main)
+            try await eventually { service.connectionCount == 1 }
+            try await eventually { service.connectionCount == 0 }
+        }
+        XCTAssertTrue(service.isOpen)
+        XCTAssertEqual(service.codeSessions, 0)
+        XCTAssertEqual(service.mode, .code)
     }
 
     func testStalledConnectionIsDroppedAndThePhoneThenPairs() async throws {

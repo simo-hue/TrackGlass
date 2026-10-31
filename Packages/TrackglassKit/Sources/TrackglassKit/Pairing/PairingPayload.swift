@@ -26,8 +26,8 @@ public struct PairingPayload: Equatable, Sendable {
     /// `id=` item and the pairing listener's TXT `pid=`.
     public var identity: String { Self.identity(forPairID: pairID) }
 
-    /// The PIN path has no secret and therefore no `PairingPayload`; it derives the same identity from the
-    /// `pairID` alone, so the Mac (which registers `payload.identity`) and the phone agree by construction.
+    /// Code pairing has no secret and therefore no `PairingPayload`; it derives the same identity from the
+    /// `pairID` alone (TXT `pid=`), so the Mac (which registers `payload.identity`) and the phone agree by construction.
     public static func identity(forPairID pairID: Data) -> String { base64URL(pairID) }
 
     public var url: URL {

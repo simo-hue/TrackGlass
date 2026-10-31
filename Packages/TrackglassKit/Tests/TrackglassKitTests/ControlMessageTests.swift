@@ -24,6 +24,12 @@ final class ControlMessageTests: XCTestCase {
             .pairRequest(PairRequestMessage(peerID: peer, name: "iPad", modelIdentifier: "iPad8,1", protocolVersion: 1,
                                             ephemeralPublicKey: Data(32..<64))),
             .pairResponse(PairResponseMessage(peerID: peer, name: "Mac", ephemeralPublicKey: Data(0..<32))),
+            .pairCommit(PairCommitMessage(peerID: peer, name: "Simone’s Mac", ephemeralPublicKey: Data(64..<96),
+                                          commitment: Data(96..<128))),
+            .pairNonce(PairNonceMessage(nonce: Data(128..<160))),
+            .pairReveal(PairNonceMessage(nonce: Data(160..<192))),
+            .pairConfirm,
+            // Keep last: testWelcomeActivePhoneNameWireLayout uses it.
             .welcome(WelcomeMessage(status: 1, macPeerID: peer, macName: "Mac", macOSVersion: "27.0.1",
                                     injectorMode: 1, settings: settings, activePhoneName: "Téléphone 📱"))
         ]
@@ -44,7 +50,10 @@ final class ControlMessageTests: XCTestCase {
             .hello(HelloMessage(protocolVersion: 1, peerID: peer, name: "P", modelIdentifier: "m", surfaceWidthMM: 65,
                                 surfaceHeightMM: 0, ppi: 460, maxContacts: 10, displayHz: 120, caps: 0, trackingOverride: 0)),
             .surface(SurfaceMessage(surfaceWidthMM: 141, surfaceHeightMM: 65, ppi: .infinity, trackingOverride: 0)),
-            .surface(SurfaceMessage(surfaceWidthMM: 141, surfaceHeightMM: 65, ppi: 460, trackingOverride: .nan))
+            .surface(SurfaceMessage(surfaceWidthMM: 141, surfaceHeightMM: 65, ppi: 460, trackingOverride: .nan)),
+            .surface(SurfaceMessage(surfaceWidthMM: .nan, surfaceHeightMM: 65, ppi: 460, trackingOverride: 0)),
+            .surface(SurfaceMessage(surfaceWidthMM: 141, surfaceHeightMM: -.infinity, ppi: 460, trackingOverride: 0)),
+            .surface(SurfaceMessage(surfaceWidthMM: 141, surfaceHeightMM: 65, ppi: 0, trackingOverride: 0))
         ]
         for message in bad {
             XCTAssertThrowsError(try ControlMessage.decode(message.encode(sequence: 0, sentAt: 0))) { error in
@@ -53,6 +62,13 @@ final class ControlMessageTests: XCTestCase {
         }
         let good = ControlMessage.surface(SurfaceMessage(surfaceWidthMM: 141, surfaceHeightMM: 65, ppi: 460, trackingOverride: -1))
         XCTAssertEqual(try ControlMessage.decode(good.encode(sequence: 0, sentAt: 0)).message, good)
+        // L9 (contract C3, 2026-10-31): a zero or negative SURFACE size decodes; the Mac ignores it instead of
+        // answering BYE{incompatible}, which would end the phone's session for good.
+        let degenerateSizes: [(Float, Float)] = [(0, 65), (141, 0), (-1, 65), (141, -0.5)]
+        for (width, height) in degenerateSizes {
+            let degenerate = ControlMessage.surface(SurfaceMessage(surfaceWidthMM: width, surfaceHeightMM: height, ppi: 460, trackingOverride: 0))
+            XCTAssertEqual(try ControlMessage.decode(degenerate.encode(sequence: 0, sentAt: 0)).message, degenerate)
+        }
     }
 
     func testEveryTruncationIsTyped() throws {
@@ -82,6 +98,40 @@ final class ControlMessageTests: XCTestCase {
     func testUnknownType() throws {
         let data = try ControlMessage.unknown(type: 0xF0).encode(sequence: 0, sentAt: 0) + Data([1, 2, 3])
         XCTAssertEqual(try ControlMessage.decode(data).message, .unknown(type: 0xF0))
+        // The first type after the code-pairing messages (0x22…0x25) is still unknown.
+        let next = try ControlMessage.unknown(type: 0x26).encode(sequence: 0, sentAt: 0)
+        XCTAssertEqual(try ControlMessage.decode(next).message, .unknown(type: 0x26))
+        XCTAssertEqual(Set(MessageType.allCases.map(\.rawValue)).count, MessageType.allCases.count, "no two types share a value")
+    }
+
+    func testCodePairingWireLayout() throws {
+        // §4.5 (2026-10-31): PAIR_COMMIT = macPeerID 16, macName str, macEphemeralPublicKey 32, commitment 32.
+        let commit = try ControlMessage.pairCommit(PairCommitMessage(peerID: peer, name: "é", ephemeralPublicKey: Data(repeating: 0xAA, count: 32),
+                                                                     commitment: Data(repeating: 0xCC, count: 32))).encode(sequence: 7, sentAt: 9)
+        XCTAssertEqual(commit[3], 0x22)
+        XCTAssertEqual(Array(commit[16..<32]), [0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF])
+        XCTAssertEqual(Array(commit[32..<36]), [2, 0, 0xC3, 0xA9])
+        XCTAssertEqual(Array(commit[36..<68]), [UInt8](repeating: 0xAA, count: 32))
+        XCTAssertEqual(Array(commit[68..<100]), [UInt8](repeating: 0xCC, count: 32))
+        XCTAssertEqual(commit.count, 100)
+        // PAIR_NONCE / PAIR_REVEAL = nonce 32; PAIR_CONFIRM = header only.
+        let nonce = try ControlMessage.pairNonce(PairNonceMessage(nonce: Data(repeating: 0x11, count: 32))).encode(sequence: 0, sentAt: 0)
+        XCTAssertEqual(nonce[3], 0x23)
+        XCTAssertEqual(nonce.count, 48)
+        let reveal = try ControlMessage.pairReveal(PairNonceMessage(nonce: Data(repeating: 0x22, count: 32))).encode(sequence: 0, sentAt: 0)
+        XCTAssertEqual(reveal[3], 0x24)
+        XCTAssertEqual(Array(reveal.suffix(32)), [UInt8](repeating: 0x22, count: 32))
+        let confirm = try ControlMessage.pairConfirm.encode(sequence: 0, sentAt: 0)
+        XCTAssertEqual(confirm[3], 0x25)
+        XCTAssertEqual(confirm.count, 16)
+        // Wrong lengths cannot be sent.
+        for bad in [ControlMessage.pairNonce(PairNonceMessage(nonce: Data(count: 31))), .pairReveal(PairNonceMessage(nonce: Data(count: 33))),
+                    .pairCommit(PairCommitMessage(peerID: peer, name: "", ephemeralPublicKey: Data(count: 32), commitment: Data(count: 31))),
+                    .pairCommit(PairCommitMessage(peerID: peer, name: "", ephemeralPublicKey: Data(count: 31), commitment: Data(count: 32)))] {
+            XCTAssertThrowsError(try bad.encode(sequence: 0, sentAt: 0)) {
+                XCTAssertEqual($0 as? ControlCodecError, .invalidKeyLength)
+            }
+        }
     }
 
     func testScrollPreferenceWireLayoutInSettingsAndWelcome() throws {
