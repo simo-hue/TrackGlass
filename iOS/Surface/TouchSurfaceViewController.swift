@@ -64,7 +64,14 @@ final class TouchSurfaceViewController: UIViewController {
     private func sessionChanged() {
         updateIdleTimer()
         touchSurface?.accessibilityValue = connectionState.accessibilityStatus
+        // HELLO caps bit 1 (§4.5) is declared once per connection, so the coalesced-sample mode is read when a session
+        // starts and kept until the next one (the Diagnostics toggle says "Takes effect on the next connection").
+        if connectionState.isConnected, !sessionStarted {
+            touchSurface?.coalescedSamplesEnabled = Self.capabilities() & 2 != 0
+        }
+        sessionStarted = connectionState.isConnected
     }
+    private var sessionStarted = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -141,8 +148,11 @@ final class TouchSurfaceViewController: UIViewController {
         surface.applyTheme(themeStore.theme)
         themeStore.onChange = { [weak surface] theme in surface?.applyTheme(theme) }
         surface.geometryDidChange = { [weak self] geometry in
-            self?.geometry = geometry
-            guard let self, let hello = self.currentHello() else { return }
+            // C3 (L9): neither SURFACE nor HELLO ever carries a non-positive or non-finite size (the surface already
+            // drops such a geometry; `currentHello()` checks again).
+            guard let self, geometry.isValid else { return }
+            self.geometry = geometry
+            guard let hello = self.currentHello() else { return }
             let surface = SurfaceMessage(surfaceWidthMM: Float(geometry.widthMM), surfaceHeightMM: Float(geometry.heightMM),
                 ppi: Float(DevicePPI.lookup(modelIdentifier: PhoneIdentityStore.modelIdentifier())), trackingOverride: UserDefaults.standard.float(forKey: "trackingOverride"))
             Task { await self.connectionManager.updateSurface(surface, hello: hello) }
@@ -270,7 +280,7 @@ final class TouchSurfaceViewController: UIViewController {
     }
 
     private func currentHello() -> HelloMessage? {
-        guard let geometry, let screen = view.window?.screen else { return nil }
+        guard let geometry, geometry.isValid, let screen = view.window?.screen else { return nil }
         return HelloMessage(protocolVersion: 1, peerID: identity.peerID, name: identity.name,
             modelIdentifier: PhoneIdentityStore.modelIdentifier(), surfaceWidthMM: Float(geometry.widthMM),
             surfaceHeightMM: Float(geometry.heightMM), ppi: Float(DevicePPI.lookup(modelIdentifier: PhoneIdentityStore.modelIdentifier())),

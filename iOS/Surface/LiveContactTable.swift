@@ -1,13 +1,19 @@
-/// IDs are returned only after the frame carrying the terminal phase is emitted.
+/// IDs are returned only after the frame carrying the terminal phase is emitted. The free list is a FIFO ring
+/// (§4.4, §5.2): `release` appends at the tail and `acquire` takes from the head, so the least recently released ID
+/// is reused first and a just-lifted finger's ID comes back only after the 255 others. When the datagrams around a
+/// lift are lost, the next finger then arrives under a fresh ID and the Mac ends the old one (§4.7) instead of
+/// continuing it as a pointer jump. Fixed storage; never hands out a live ID.
 struct ContactIDPool {
-    private var available = Array((0...255).reversed().map(UInt8.init))
+    private var ring = Array((0...255).map(UInt8.init))
     private var allocated = Array(repeating: false, count: 256)
+    private var head = 0
     private var count = 256
 
     mutating func acquire() -> UInt8? {
         guard count > 0 else { return nil }
+        let id = ring[head]
+        head = (head + 1) & 255
         count -= 1
-        let id = available[count]
         allocated[Int(id)] = true
         return id
     }
@@ -15,7 +21,7 @@ struct ContactIDPool {
     mutating func release(_ id: UInt8) {
         guard allocated[Int(id)] else { return }
         allocated[Int(id)] = false
-        available[count] = id
+        ring[(head + count) & 255] = id   // count < 256 here: only an allocated ID gets this far
         count += 1
     }
 }

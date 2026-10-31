@@ -31,6 +31,31 @@ final class MacBrowserTests: XCTestCase {
         XCTAssertNil(DiscoveredMac(endpoint: endpoint("Mac"), txt: txt))
     }
 
+    /// §5.5 / M2: the input service is the `_trackglass._udp` record with the control instance's name. A record that
+    /// only claims the Mac's `id` (a decoy, or a Bonjour rename of one service type) is used only after the grace.
+    func testInputServiceIsTheControlInstancesOwn() {
+        let other = UUID()
+        let decoy = SessionClient.InputRecord(endpoint: udp(" Studio"), peerID: peerID)
+        let own = SessionClient.InputRecord(endpoint: udp("Studio"), peerID: peerID)
+        let otherMac = SessionClient.InputRecord(endpoint: udp("Studio"), peerID: other)
+        XCTAssertEqual(SessionClient.instanceName(of: udp("Studio")), "Studio")
+        XCTAssertNil(SessionClient.instanceName(of: .hostPort(host: "127.0.0.1", port: 4000)))
+        XCTAssertEqual(SessionClient.inputEndpoint(in: [decoy, otherMac, own], peerID: peerID, instanceName: "Studio",
+                                                   acceptOtherNames: false), udp("Studio"))
+        XCTAssertNil(SessionClient.inputEndpoint(in: [decoy, otherMac], peerID: peerID, instanceName: "Studio",
+                                                 acceptOtherNames: false), "another name waits for the Mac's own record")
+        XCTAssertEqual(SessionClient.inputEndpoint(in: [decoy, otherMac], peerID: peerID, instanceName: "Studio",
+                                                   acceptOtherNames: true), udp(" Studio"), "then a renamed record is used")
+        XCTAssertNil(SessionClient.inputEndpoint(in: [otherMac], peerID: peerID, instanceName: "Studio", acceptOtherNames: true),
+                     "never another Mac's")
+        XCTAssertEqual(SessionClient.inputEndpoint(in: [own], peerID: peerID, instanceName: nil, acceptOtherNames: false),
+                       udp("Studio"), "a host:port control endpoint has no name to match")
+    }
+
+    private func udp(_ name: String) -> NWEndpoint {
+        .service(name: name, type: "_trackglass._udp", domain: "local.", interface: nil)
+    }
+
     private func endpoint(_ name: String) -> NWEndpoint {
         .service(name: name, type: "_trackglass._tcp", domain: "local.", interface: nil)
     }

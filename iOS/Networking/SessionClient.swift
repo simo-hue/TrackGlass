@@ -4,8 +4,10 @@ import Network
 import Observation
 import TrackglassKit
 
+// Sendable stated here (main-actor isolated, so it holds): ConnectionManager.swift's `ConnectionSession` refines
+// Sendable, and a conformance made in another file may not add it retroactively.
 @MainActor @Observable
-final class SessionClient {
+final class SessionClient: Sendable {
     private(set) var isConnected = false
     private(set) var status = "No Mac connected"
     private(set) var macName = ""
@@ -28,8 +30,16 @@ final class SessionClient {
     private var inputBrowser: NWBrowser?
     private var inputConnection: NWConnection?
     private var inputDeadline: Task<Void, Never>?
+    /// The latest `_trackglass._udp` results with a TXT `id`, and whether a record with another instance name than the
+    /// control service's may be used yet (see `inputEndpoint`).
+    private var inputRecords: [InputRecord] = []
+    private var inputAcceptsOtherNames = false
+    private var inputNameGraceTask: Task<Void, Never>?
     /// How long the DTLS input path may take to come up before the session is ended (tests raise it).
     var inputPathTimeout: Duration = .seconds(5)
+    /// The current session's input path reached `.ready`; stays set after it closes, until the next `connect`. The
+    /// reconnect loop resets its backoff only after a session got this far (M1, 2026-10-31).
+    private(set) var inputPathWasReady = false
     private var connectContinuation: CheckedContinuation<Bool, Never>?
     /// The last session ended with a final answer (unpaired, incompatible): retrying cannot succeed.
     private(set) var lastCloseWasFinal = false
@@ -42,7 +52,8 @@ final class SessionClient {
     /// consumer can discard one that was taken earlier but delivered later (actor reentrancy).
     struct Snapshot: Sendable {
         let isConnected: Bool
-        let status: String
+        /// `var`: `ConnectionManager` may show a round's outcome instead of the last attempt's (M1, M2).
+        var status: String
         let macName: String
         let rttMicros: UInt32
         let settings: SettingsMessage?
@@ -52,13 +63,15 @@ final class SessionClient {
         var injectorMode: UInt8 = 0
         var connectedPeerID: UUID?
         var lastCloseWasFinal = false
+        var inputPathWasReady = false
     }
     private var snapshotSequence: UInt64 = 0
     func snapshot() -> Snapshot {
         snapshotSequence &+= 1
         return Snapshot(isConnected: isConnected, status: status, macName: macName, rttMicros: rttMicros, settings: settings,
                         diagnostics: diagnostics, diagnosticsSequence: diagnosticsSequence, sequence: snapshotSequence,
-                        injectorMode: injectorMode, connectedPeerID: connectedPeerID, lastCloseWasFinal: lastCloseWasFinal)
+                        injectorMode: injectorMode, connectedPeerID: connectedPeerID, lastCloseWasFinal: lastCloseWasFinal,
+                        inputPathWasReady: inputPathWasReady)
     }
 
     func setCallbacks(connectionChanged: (@MainActor @Sendable () -> Void)?,
@@ -92,8 +105,10 @@ final class SessionClient {
     #endif
         stopInput()
         isConnected = false; connectedPeerID = nil; rttMicros = 0; settings = nil; diagnostics = nil; lastCloseWasFinal = false
+        inputPathWasReady = false
         status = "Connecting to \(mac.name)…"
         macName = mac.name
+        let instanceName = Self.instanceName(of: endpoint)
         let options = TLSConfig.tlsOptions(psk: SymmetricKey(data: mac.ltk), identity: hello.peerID.uuidString.lowercased())
         let channel = ControlChannel(connection: NWConnection(to: endpoint, using: TLSConfig.parameters(control: options)))
         self.channel = channel
@@ -112,7 +127,7 @@ final class SessionClient {
     #endif
                     self.status = "Connected to \(welcome.macName)"
                     channel.startHeartbeat()
-                    self.startInput(mac: mac, phonePeerID: hello.peerID)
+                    self.startInput(mac: mac, phonePeerID: hello.peerID, instanceName: instanceName)
                     if let surface = self.surface { channel.send(.surface(surface)) }
                     self.connectionChanged?()
                     self.connectContinuation?.resume(returning: true)
@@ -205,7 +220,33 @@ final class SessionClient {
 
     private static func byeMessage(_ reason: UInt8) -> String { reason == 4 ? "The Mac went to sleep" : "Disconnected" }
 
-    private func startInput(mac: PairedPeer, phonePeerID: UUID) {
+    /// A `_trackglass._udp` browse result reduced to what choosing the input service needs.
+    struct InputRecord: Sendable {
+        let endpoint: NWEndpoint
+        let peerID: UUID
+    }
+
+    /// §5.5: the input service is the `_trackglass._udp` record with the control service's instance name and the
+    /// Mac's `id`. A record that only claims the `id` is used once `acceptOtherNames` (after `inputNameGrace` without
+    /// a same-name record: Bonjour renames each service type on its own when two Macs share a name). Names are not
+    /// authenticated (the DTLS key is), but a decoy record can no longer be picked over the Mac's own (M2).
+    /// Without an instance name (a host:port control endpoint) the `id` decides.
+    nonisolated static func inputEndpoint(in records: [InputRecord], peerID: UUID, instanceName: String?,
+                                          acceptOtherNames: Bool) -> NWEndpoint? {
+        let mine = records.filter { $0.peerID == peerID }
+        guard let instanceName else { return mine.first?.endpoint }
+        if let same = mine.first(where: { Self.instanceName(of: $0.endpoint) == instanceName }) { return same.endpoint }
+        return acceptOtherNames ? mine.first?.endpoint : nil
+    }
+
+    nonisolated static let inputNameGrace: Duration = .seconds(1)
+
+    nonisolated static func instanceName(of endpoint: NWEndpoint) -> String? {
+        guard case let .service(name, _, _, _) = endpoint else { return nil }
+        return name
+    }
+
+    private func startInput(mac: PairedPeer, phonePeerID: UUID, instanceName: String?) {
         stopInput()
         let parameters = NWParameters.udp
         parameters.includePeerToPeer = true
@@ -213,43 +254,60 @@ final class SessionClient {
         let browser = NWBrowser(for: .bonjourWithTXTRecord(type: "_trackglass._udp", domain: nil), using: parameters)
         inputBrowser = browser
         browser.browseResultsChangedHandler = { [weak self, weak browser] results, _ in
+            let records = results.compactMap { result -> InputRecord? in
+                guard case let .bonjour(txt) = result.metadata,
+                      let idData = txt.getEntry(for: "id")?.data,
+                      let idText = String(data: idData, encoding: .utf8),
+                      let id = UUID(uuidString: idText) else { return nil }
+                return InputRecord(endpoint: result.endpoint, peerID: id)
+            }
             Task { @MainActor in
-                guard let self, let browser, self.inputBrowser === browser,
-                      self.inputConnection == nil else { return }
-                for result in results {
-                    guard case let .bonjour(txt) = result.metadata,
-                          let idData = txt.getEntry(for: "id")?.data,
-                          let idText = String(data: idData, encoding: .utf8),
-                          UUID(uuidString: idText) == mac.peerID else { continue }
-                    let tls = TLSConfig.tlsOptions(psk: SymmetricKey(data: mac.ltk), identity: phonePeerID.uuidString.lowercased())
-                    let connection = NWConnection(to: result.endpoint, using: TLSConfig.parameters(input: tls))
-                    self.inputConnection = connection
-                    browser.cancel()
-                    self.inputBrowser = nil
-                    connection.stateUpdateHandler = { [weak self, weak connection] state in
-                        Task { @MainActor in
-                            guard let self, let connection, self.inputConnection === connection else { return }
-                            switch state {
-                            case .ready:
-                                self.inputSink.setConnection(connection)
-                                self.inputDeadline?.cancel(); self.inputDeadline = nil
-                            case .failed:
-                                // A session without an input path is useless: end it so the reconnect loop
-                                // re-establishes both channels instead of showing "Connected" with no frames.
-                                self.failInput("Input connection failed")
-                            case .waiting:
-                                self.armInputDeadline("Input connection stalled")
-                            default: break
-                            }
-                        }
-                    }
-                    connection.start(queue: .main)
-                    return
-                }
+                guard let self, let browser, self.inputBrowser === browser else { return }
+                self.inputRecords = records
+                self.connectInput(mac: mac, phonePeerID: phonePeerID, instanceName: instanceName)
             }
         }
         browser.start(queue: .main)
         armInputDeadline("Mac input service not found")
+        guard instanceName != nil else { return }
+        inputNameGraceTask = Task { [weak self, weak browser] in
+            do { try await Task.sleep(for: Self.inputNameGrace) } catch { return }
+            guard let self, let browser, self.inputBrowser === browser else { return }
+            self.inputAcceptsOtherNames = true
+            self.connectInput(mac: mac, phonePeerID: phonePeerID, instanceName: instanceName)
+        }
+    }
+
+    /// Opens the DTLS input path to the record `inputEndpoint` picks, once there is one.
+    private func connectInput(mac: PairedPeer, phonePeerID: UUID, instanceName: String?) {
+        guard inputConnection == nil, let browser = inputBrowser,
+              let endpoint = Self.inputEndpoint(in: inputRecords, peerID: mac.peerID, instanceName: instanceName,
+                                                acceptOtherNames: inputAcceptsOtherNames) else { return }
+        let tls = TLSConfig.tlsOptions(psk: SymmetricKey(data: mac.ltk), identity: phonePeerID.uuidString.lowercased())
+        let connection = NWConnection(to: endpoint, using: TLSConfig.parameters(input: tls))
+        inputConnection = connection
+        browser.cancel()
+        inputBrowser = nil
+        inputNameGraceTask?.cancel(); inputNameGraceTask = nil
+        connection.stateUpdateHandler = { [weak self, weak connection] state in
+            Task { @MainActor in
+                guard let self, let connection, self.inputConnection === connection else { return }
+                switch state {
+                case .ready:
+                    self.inputPathWasReady = true
+                    self.inputSink.setConnection(connection)
+                    self.inputDeadline?.cancel(); self.inputDeadline = nil
+                case .failed:
+                    // A session without an input path is useless: end it so the reconnect loop
+                    // re-establishes both channels instead of showing "Connected" with no frames.
+                    self.failInput("Input connection failed")
+                case .waiting:
+                    self.armInputDeadline("Input connection stalled")
+                default: break
+                }
+            }
+        }
+        connection.start(queue: .main)
     }
 
     /// Gives the DTLS path `inputPathTimeout` (service resolution, handshake retries) before the session is torn down.
@@ -263,18 +321,19 @@ final class SessionClient {
     }
 
     private func failInput(_ message: String) {
-        inputDeadline?.cancel(); inputDeadline = nil
-        inputSink.setConnection(nil)
-        inputConnection?.cancel(); inputConnection = nil
-        inputBrowser?.cancel(); inputBrowser = nil
+        stopInput()
         channel?.close(message)
     }
 
     private func stopInput() {
         inputDeadline?.cancel()
         inputDeadline = nil
+        inputNameGraceTask?.cancel()
+        inputNameGraceTask = nil
         inputBrowser?.cancel()
         inputBrowser = nil
+        inputRecords = []
+        inputAcceptsOtherNames = false
         inputSink.setConnection(nil)
         inputConnection?.cancel()
         inputConnection = nil

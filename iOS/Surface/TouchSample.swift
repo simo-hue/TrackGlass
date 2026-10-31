@@ -45,3 +45,10 @@ enum TouchSample {
 }
 
 extension UITouch: TouchLike {}
+
+/// A coalesced sample (`UIEvent.coalescedTouches(for:)`): the touch's values at one digitizer scan, plus its time.
+@MainActor @objc protocol TouchSampleLike: TouchLike {
+    var timestamp: TimeInterval { get }
+}
+
+extension UITouch: TouchSampleLike {}

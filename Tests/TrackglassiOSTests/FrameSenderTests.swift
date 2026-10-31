@@ -41,6 +41,7 @@ final class FrameSenderTests: XCTestCase {
         let release = DispatchSemaphore(value: 0)
         let sink = CapturingSink(first: first, finished: finished, release: release)
         let sender = FrameSender(sink: sink)
+        let before = MonotonicClock.wireNanoseconds()
         sender.enqueue(TouchFrame(sequence: 0))
         wait(for: [first], timeout: 5)
         for sequence in 1...20 {
@@ -59,7 +60,15 @@ final class FrameSenderTests: XCTestCase {
         XCTAssertEqual(captured.frames.last?.contactCount, 10)
         XCTAssertEqual(captured.frames.last?[9].y, 9)
         XCTAssertEqual(captured.frames.last?.frameTime, 20)
-        XCTAssertTrue(captured.frames.allSatisfy { $0.header.sentAt > 0 })
+        // M8 / C2: `sentAt` is the wire clock (time since this process's epoch), stamped when the frame is sent;
+        // device uptime would be later than `after` by the whole epoch.
+        let after = MonotonicClock.wireNanoseconds()
+        XCTAssertGreaterThan(MonotonicClock.wireEpochNanoseconds, 0)
+        for frame in captured.frames {
+            XCTAssertGreaterThanOrEqual(frame.header.sentAt, before)
+            XCTAssertLessThanOrEqual(frame.header.sentAt, after)
+        }
+        XCTAssertEqual(captured.frames.map(\.header.sentAt), captured.frames.map(\.header.sentAt).sorted())
         withExtendedLifetime(sender) {}
     }
 }

@@ -18,6 +18,20 @@ final class TouchSurfaceTests: XCTestCase {
         func preciseLocation(in view: UIView?) -> CGPoint { location }
     }
 
+    /// One coalesced sample, as `UIEvent.coalescedTouches(for:)` would return it.
+    @MainActor private final class FakeSample: NSObject, TouchSampleLike {
+        let phase: UITouch.Phase
+        let type: UITouch.TouchType = .direct
+        let location: CGPoint
+        let majorRadius: CGFloat = 4
+        let timestamp: TimeInterval
+        init(_ phase: UITouch.Phase = .moved, at location: CGPoint, time: TimeInterval) {
+            self.phase = phase; self.location = location; self.timestamp = time
+            super.init()
+        }
+        func preciseLocation(in view: UIView?) -> CGPoint { location }
+    }
+
     private final class CapturingSink: FrameSink, @unchecked Sendable {
         private let lock = NSLock()
         private var stored: [TouchFrame] = []
@@ -217,6 +231,138 @@ final class TouchSurfaceTests: XCTestCase {
         early.ingestBegan([FakeTouch(at: CGPoint(x: 5, y: 5))], at: 19.5)
         XCTAssertEqual(earlySink.settle(expecting: 1).first?.frameTime, 0)
         XCTAssertGreaterThan(TouchSurfaceView.launchEpochNs, 0)
+        XCTAssertEqual(TouchSurfaceView.launchEpochNs, MonotonicClock.wireEpochNanoseconds,
+                       "frameTime and every header's sentAt count from one epoch (M8)")
+    }
+
+    func testCoalescedSamplesHoldTheOtherContactsStationaryUntilTheEventsOwnFrame() {
+        // M7: only the moving touches take per-sample values. A finger lifting in the same UIEvent is `.stationary`
+        // in the intermediate frames and sends `.ended` once, in the event's own frame (not at the first sample).
+        let (surface, sink) = makeSurface()
+        let moving = FakeTouch(at: CGPoint(x: 100, y: 100)), lifting = FakeTouch(at: CGPoint(x: 200, y: 100))
+        surface.ingestBegan([moving, lifting], at: 20.0)
+        moving.phase = .moved; moving.location = CGPoint(x: 103, y: 100)
+        lifting.phase = .ended
+        let samples = [FakeSample(at: CGPoint(x: 101, y: 100), time: 20.0625),
+                       FakeSample(at: CGPoint(x: 102, y: 100), time: 20.125),
+                       FakeSample(at: CGPoint(x: 103, y: 100), time: 20.25)]
+        // UIKit's order for one event: touchesMoved (the coalesced samples, then the event's frame), touchesEnded.
+        surface.ingestCoalescedSamples(at: 20.25) { (touch: any TouchLike) -> [FakeSample]? in
+            touch === moving ? samples : nil   // only `moving` is in this event's `touchesMoved` set
+        }
+        surface.ingestMoved([moving], at: 20.25)
+        surface.ingestEnded([lifting], at: 20.25)
+        let frames = sink.settle(expecting: 4)
+        XCTAssertEqual(frames.count, 4, "began, two intermediate samples, the event's own frame; the lift is not repeated")
+        XCTAssertEqual(frames.map(\.frameTime), [20_000_000_000, 20_062_500_000, 20_125_000_000, 20_250_000_000])
+        XCTAssertTrue(frames.allSatisfy { $0.contactCount == 2 })
+        XCTAssertEqual(frames.map { $0[1].phase }, [.began, .stationary, .stationary, .ended])
+        XCTAssertEqual(frames.map { $0[0].phase }, [.began, .moved, .moved, .moved])
+        for (index, x) in [100.0, 101, 102, 103].enumerated() {
+            XCTAssertEqual(Double(frames[index][0].x), x * geometry.mmPerPoint, accuracy: 0.01)
+            XCTAssertEqual(Double(frames[index][1].x), 200 * geometry.mmPerPoint, accuracy: 0.01)
+        }
+        XCTAssertFalse(frames.contains { $0.isSyntheticLiftoff }, "the moving finger is still down")
+    }
+
+    func testCoalescedSamplesOfAnEventWhoseFrameAlreadyWentOutAreNotSent() {
+        // M7: a finger landing in the same UIEvent made `ingestBegan` send that event's frame with the live positions;
+        // older samples after it would move the contacts backwards, and the new finger's `.began` goes out once.
+        let (surface, sink) = makeSurface()
+        let moving = FakeTouch(at: CGPoint(x: 100, y: 100)), landing = FakeTouch(at: CGPoint(x: 200, y: 100))
+        surface.ingestBegan([moving], at: 30.0)
+        moving.phase = .moved; moving.location = CGPoint(x: 103, y: 100)
+        surface.ingestBegan([landing], at: 30.25)
+        let first = [FakeSample(at: CGPoint(x: 101, y: 100), time: 30.0625),
+                     FakeSample(at: CGPoint(x: 102, y: 100), time: 30.125),
+                     FakeSample(at: CGPoint(x: 103, y: 100), time: 30.25)]
+        surface.ingestCoalescedSamples(at: 30.25) { (touch: any TouchLike) -> [FakeSample]? in
+            touch === moving ? first : nil
+        }
+        surface.ingestMoved([moving], at: 30.25)
+        // The next event: the new finger holds still while the first keeps moving.
+        landing.phase = .stationary; moving.location = CGPoint(x: 106, y: 100)
+        let next = [FakeSample(at: CGPoint(x: 104, y: 100), time: 30.3125),
+                    FakeSample(at: CGPoint(x: 105, y: 100), time: 30.375),
+                    FakeSample(at: CGPoint(x: 106, y: 100), time: 30.5)]
+        surface.ingestCoalescedSamples(at: 30.5) { (touch: any TouchLike) -> [FakeSample]? in
+            touch === moving ? next : nil
+        }
+        surface.ingestMoved([moving], at: 30.5)
+        let frames = sink.settle(expecting: 5)
+        XCTAssertEqual(frames.count, 5)
+        XCTAssertEqual(frames.map(\.frameTime), [30_000_000_000, 30_250_000_000, 30_312_500_000, 30_375_000_000, 30_500_000_000])
+        XCTAssertEqual(frames[1][1].phase, .began)
+        XCTAssertEqual(frames[2...].map { $0[1].phase }, [.stationary, .stationary, .stationary])
+        let xs = frames.map { $0[0].x }
+        XCTAssertEqual(xs, xs.sorted(), "the moving finger never goes backwards")
+        XCTAssertEqual(Double(xs[1]), 103 * geometry.mmPerPoint, accuracy: 0.01)
+    }
+
+    func testRotatingWithFingersDownCancelsThemAndIgnoresThemUntilTheyLift() {
+        // L10: the Mac still has the old SURFACE, so the live contacts end as cancelled where they were last sent, in
+        // the old orientation; the rotated coordinates of those touches never leave the phone.
+        let (surface, sink) = makeSurface()
+        var reported: [SurfaceGeometry] = []
+        surface.geometryDidChange = { reported.append($0) }
+        let a = FakeTouch(at: CGPoint(x: 100, y: 200)), b = FakeTouch(at: CGPoint(x: 200, y: 200))
+        surface.ingestBegan([a, b], at: 40.0)
+        a.phase = .moved; a.location = CGPoint(x: 110, y: 200); b.phase = .stationary
+        surface.ingestMoved([a], at: 40.25)
+        surface.frame = CGRect(x: 0, y: 0, width: 852, height: 393)
+        a.location = CGPoint(x: 600, y: 90); b.location = CGPoint(x: 600, y: 190)
+        let landscape = SurfaceGeometry(ppi: 460, nativeScale: 3, boundsInPoints: SurfaceSize(width: 852, height: 393))
+        surface.updateGeometry(landscape, now: 40_500_000_000)
+        XCTAssertEqual(reported, [landscape])
+        a.location = CGPoint(x: 620, y: 90)
+        surface.ingestMoved([a], at: 40.75)
+        surface.emitStationaryKeepAliveIfNeeded(now: 41_500_000_000)
+        a.phase = .ended; b.phase = .ended
+        surface.ingestEnded([a, b], at: 42.0)
+        let c = FakeTouch(at: CGPoint(x: 300, y: 100))
+        surface.ingestBegan([c], at: 42.25)
+        let frames = sink.settle(expecting: 5)
+        XCTAssertEqual(frames.count, 5, "began, moved, cancelled, lift-off, then only the new finger")
+        let cancel = frames[2]
+        XCTAssertEqual(cancel.contactCount, 2)
+        XCTAssertEqual(Set((0..<2).map { cancel[$0].phase }), [.cancelled])
+        XCTAssertEqual(Double(cancel[0].x), 110 * geometry.mmPerPoint, accuracy: 0.01, "at the last sent position")
+        XCTAssertEqual(Double(cancel[1].x), 200 * geometry.mmPerPoint, accuracy: 0.01)
+        XCTAssertFalse(cancel.surfaceIsLandscape, "flagged with the orientation the Mac still has")
+        XCTAssertEqual(cancel.frameTime, 40_500_000_000)
+        XCTAssertTrue(frames[3].isSyntheticLiftoff)
+        XCTAssertFalse(frames[3].surfaceIsLandscape)
+        XCTAssertEqual(frames[4].contactCount, 1)
+        XCTAssertEqual(frames[4][0].phase, .began)
+        XCTAssertTrue(frames[4].surfaceIsLandscape)
+        XCTAssertFalse([frames[0][0].contactID, frames[0][1].contactID].contains(frames[4][0].contactID))
+    }
+
+    func testAZeroSizeGeometryIsNeverReported() {
+        // C3 (L9): a zero-size layout pass never becomes SURFACE or HELLO; frames keep the last valid geometry.
+        let (surface, sink) = makeSurface()
+        var reported: [SurfaceGeometry] = []
+        surface.geometryDidChange = { reported.append($0) }
+        surface.updateGeometry(SurfaceGeometry(ppi: 460, nativeScale: 3, boundsInPoints: SurfaceSize(width: 0, height: 852)))
+        XCTAssertTrue(reported.isEmpty)
+        let touch = FakeTouch(at: CGPoint(x: 100, y: 100))
+        surface.ingestBegan([touch], at: 50.0)
+        let frames = sink.settle(expecting: 1)
+        XCTAssertEqual(frames.count, 1)
+        XCTAssertEqual(Double(frames[0][0].x), 100 * geometry.mmPerPoint, accuracy: 0.01)
+    }
+
+    func testTheNextFingerAfterALiftGetsAFreshContactID() {
+        // M5: if the lift's datagrams are lost, the Mac must not see the next finger as the old one moving.
+        let (surface, sink) = makeSurface()
+        let first = FakeTouch(at: CGPoint(x: 10, y: 10))
+        surface.ingestBegan([first], at: 60.0)
+        first.phase = .ended
+        surface.ingestEnded([first], at: 60.25)
+        surface.ingestBegan([FakeTouch(at: CGPoint(x: 90, y: 90))], at: 60.5)
+        let frames = sink.settle(expecting: 4)
+        XCTAssertEqual(frames.count, 4)
+        XCTAssertNotEqual(frames[3][0].contactID, frames[0][0].contactID)
     }
 
     func testKeepAliveSendsAnUndeliveredEndOnceAndLiftsOff() {

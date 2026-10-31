@@ -16,6 +16,35 @@ final class TouchCaptureTests: XCTestCase {
         XCTAssertNil(pool.acquire(), "Duplicate release must not make a live ID available")
     }
 
+    func testReleasedIDsAreReusedLeastRecentlyReleasedFirst() {
+        // M5 (§4.4, §5.2): a FIFO ring, so a lifted finger's ID is not the next finger's (lost datagrams would make
+        // the Mac continue the old contact as a pointer jump).
+        var pool = ContactIDPool()
+        XCTAssertEqual(pool.acquire(), 0)
+        pool.release(0)
+        XCTAssertEqual(pool.acquire(), 1, "the ID just released goes to the back of the queue")
+        var order: [UInt8] = []
+        while let id = pool.acquire() { order.append(id) }
+        XCTAssertEqual(order, (2...255).map(UInt8.init) + [0])
+        pool.release(7); pool.release(3); pool.release(200); pool.release(3)
+        XCTAssertEqual(pool.acquire(), 7)
+        XCTAssertEqual(pool.acquire(), 3)
+        XCTAssertEqual(pool.acquire(), 200)
+        XCTAssertNil(pool.acquire(), "a duplicate release is not queued twice")
+    }
+
+    func testOneFingerTappingRepeatedlyGetsAFreshIDEachTime() {
+        let table = LiveContactTable<NSObject>()
+        var ids: [UInt8] = []
+        for _ in 0..<300 {
+            let touch = NSObject()
+            ids.append(table.insert(touch)!)
+            table.remove(touch)
+        }
+        XCTAssertEqual(Array(ids.prefix(256)), (0...255).map(UInt8.init), "every ID is used once before any comes back")
+        XCTAssertEqual(Array(ids.suffix(44)), (0..<44).map(UInt8.init))
+    }
+
     func testTenSlotsRetainTouchesAndRejectOverflow() {
         let table = LiveContactTable<NSObject>()
         let touches = (0..<10).map { _ in NSObject() }
@@ -28,7 +57,9 @@ final class TouchCaptureTests: XCTestCase {
         table.remove(touches[4])
         table.remove(touches[4])
         let replacement = NSObject()
-        XCTAssertEqual(table.insert(replacement), ids[4])
+        // The freed slot is reused; the freed ID waits behind the never-used ones (FIFO reuse, M5).
+        XCTAssertEqual(table.insert(replacement), 10)
+        XCTAssertTrue(table[4]?.touch === replacement)
         XCTAssertEqual(table.count, 10)
         for index in 0..<10 where index != 4 {
             XCTAssertTrue(table[index]?.touch === touches[index])

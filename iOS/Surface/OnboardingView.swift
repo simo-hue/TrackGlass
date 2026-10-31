@@ -12,9 +12,8 @@ struct OnboardingView: View {
             TabView(selection: $page) {
                 pageView(symbol: "hand.point.up.left", title: "Your Mac, at your fingertips",
                     detail: "Turn your iPhone or iPad into a wireless trackpad. Point, click and use familiar gestures.").tag(0)
-                VStack(spacing: 24) {
-                    pageView(symbol: "desktopcomputer", title: "Install Trackglass for Mac",
-                        detail: "Install the companion on your Mac and allow Accessibility when prompted. Keep both devices on the same network.")
+                pageView(symbol: "desktopcomputer", title: "Install Trackglass for Mac",
+                    detail: "Install the companion on your Mac and allow Accessibility when prompted. Keep both devices on the same network.") {
                     if let download {
                         Link("Download for Mac", destination: download)
                         Text(download.absoluteString).font(.footnote.monospaced()).foregroundStyle(.secondary)
@@ -24,7 +23,7 @@ struct OnboardingView: View {
                     }
                 }.tag(1)
                 pageView(symbol: "qrcode.viewfinder", title: "Pair your devices",
-                    detail: "Choose Pair a device in the Mac menu, then scan its code or enter the pairing code on this device.").tag(2)
+                    detail: "Choose Pair a device in the Mac menu, then scan its QR code — or choose Pair with a code here and check that both screens show the same six digits.").tag(2)
                 if lastPage == 3 {
                     pageView(symbol: "hand.draw", title: "Make room for gestures",
                         detail: "For four- and five-finger Mac gestures, turn off iPad multitasking gestures in Settings → Multitasking & Gestures → Gestures. Rotate or resize Trackglass whenever you need.").tag(3)
@@ -39,12 +38,19 @@ struct OnboardingView: View {
         .background(Color(uiColor: .systemBackground))
     }
     private func pageView(symbol: String, title: String, detail: String) -> some View {
-        // Scrolls at the largest accessibility text sizes (iPhone SE) instead of clipping.
+        pageView(symbol: symbol, title: title, detail: detail) { EmptyView() }
+    }
+
+    /// The whole page, footer (links, buttons) included, scrolls at the largest accessibility text sizes (iPhone SE)
+    /// instead of clipping.
+    private func pageView<Footer: View>(symbol: String, title: String, detail: String,
+                                        @ViewBuilder footer: () -> Footer) -> some View {
         ScrollView {
             VStack(spacing: 24) {
                 Image(systemName: symbol).font(.system(size: 64)).accessibilityHidden(true)
                 Text(title).font(.largeTitle.bold()).multilineTextAlignment(.center)
                 Text(detail).font(.body).multilineTextAlignment(.center).foregroundStyle(.secondary)
+                footer()
             }.padding()
         }
     }

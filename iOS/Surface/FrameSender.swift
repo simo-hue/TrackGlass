@@ -78,7 +78,7 @@ final class FrameSender: @unchecked Sendable {
 
     private func drain() {
         while var frame = nextFrame() {
-            frame.header.sentAt = MonotonicClock.nanoseconds()
+            frame.header.sentAt = MonotonicClock.wireNanoseconds()   // time since launch, never uptime (§4.2, §5.10)
             let sink = sink
             let count: Int
             do {

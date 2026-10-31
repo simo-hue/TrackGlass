@@ -42,8 +42,9 @@ struct DiscoveredMac: Identifiable, Sendable {
     }
 }
 
+// Sendable stated here (main-actor isolated): `MacDiscovery` (ConnectionManager.swift) refines Sendable.
 @MainActor @Observable
-final class MacBrowser {
+final class MacBrowser: Sendable {
     private(set) var macs: [DiscoveredMac] = []
     private(set) var status = "Looking for Macs…"
     /// The browser is blocked by the Local Network privacy setting (DNS-SD `kDNSServiceErr_PolicyDenied`).

@@ -31,7 +31,7 @@ final class UDPFrameSink: FrameSink, @unchecked Sendable {
         do {
             try bytes.withUnsafeMutableBytes { buffer in
                 _ = try MessageHeader(type: .inputHeartbeat, sequence: sequence,
-                                      sentAt: MonotonicClock.nanoseconds()).encode(into: buffer)
+                                      sentAt: MonotonicClock.wireNanoseconds()).encode(into: buffer)
             }
             connection.send(content: bytes, completion: .idempotent)
         } catch {
