@@ -28,3 +28,11 @@ output.txt
 *.cer
 *.mobileprovision
 *.provisionprofile
+# notarization API keys (App Store Connect AuthKey_<id>.p8), PEM keys and exported Sparkle EdDSA private keys
+*.p8
+AuthKey_*
+*.pem
+*sparkle*private*
+*_private_key*
+# local review and agent output
+Claude outputs/

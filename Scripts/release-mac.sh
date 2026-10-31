@@ -3,6 +3,9 @@
 #
 #   Scripts/release-mac.sh <version> [--pre-release] [--dry-run]
 #
+#   --pre-release only marks the GitHub release as a pre-release: Sparkle still offers the build to every
+#   installed copy (one update track until 1.0.0). --dry-run stops before notarization.
+#
 # Scripts/ci.sh → archive (build number = commit count) → Developer ID export → Info.plist checks → DMG
 # → notarytool submit --wait → stapler → appcast generated and committed locally → tag → GitHub release
 # → push. The appcast only goes live (push to main) after the DMG it points at is downloadable.
@@ -18,11 +21,13 @@
 # Guards: refuses a dirty working tree, a branch other than an up-to-date main, an existing tag (local or on
 # origin), a version mismatch, a Keychain Sparkle key that does not match TG_SPARKLE_PUBLIC_KEY, a build number
 # not above the appcast's newest, an exported app whose feed URL / key / versions differ from the tracked
-# configuration (a Config/Local.xcconfig override), an origin other than TG_REPO_URL, and a signing team that
+# configuration (a Config/Local.xcconfig override), an origin other than TG_REPO_URL, a signing team that
 # differs from the previously shipped app (SPEC §8.6, Scripts/assert-signing-team.sh; required once the appcast
-# has a release). The appcast is pushed only after its download link answers. --dry-run stops before notarization. TG_RELEASE_SKIP_CI=1
+# has a release), and a mounted volume named like the DMG's (an open DMG of an earlier release). The appcast is
+# pushed only after its download link answers. TG_RELEASE_SKIP_CI=1
 # skips the test run (only for re-running a release whose CI already passed on this commit).
 # Export options (Developer ID, automatic signing, the team ID from Config/Local.xcconfig) are written per run.
+# The xcodebuild logs stay in $TMPDIR/trackglass-release-<version>/*.log.
 set -euo pipefail
 
 usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -55,9 +60,31 @@ BUILD_DIR="${TMPDIR:-/tmp}/trackglass-release-$VERSION"
 ARCHIVE="$BUILD_DIR/TrackglassMac.xcarchive"
 EXPORT_DIR="$BUILD_DIR/export"
 STAGING="$BUILD_DIR/dmg-root"
+VOLUME_NAME="$PRODUCT_NAME for Mac"
+MOUNT_POINT="/Volumes/$VOLUME_NAME"
 
 step() { printf '\n==> %s\n' "$*"; }
 fail() { echo "error: $*" >&2; exit 1; }
+# hdiutil attaches the layout image at a fixed mount point and Finder lays it out by volume name, so an open DMG
+# of an earlier release (mounted as "<name>" or "<name> 1") would break the DMG step after a full archive.
+assert_volume_free() {
+  local volume mounted
+  mounted="$(/sbin/mount)"
+  for volume in "$MOUNT_POINT"*; do
+    # A leftover empty folder from an unclean unmount is not a mounted volume (hdiutil mounts over it).
+    [[ -d "$volume" ]] || continue
+    if [[ "$mounted" == *" on $volume ("* ]]; then fail "'$volume' is mounted (an open DMG of an earlier release?); eject it first"; fi
+  done
+}
+# xcodebuild prints its errors on stdout: keep the whole log, and show its tail and path on failure.
+xcodebuild_logged() {
+  local log="$1"; shift
+  if ! xcodebuild "$@" >"$log" 2>&1; then
+    tail -40 "$log" >&2
+    fail "xcodebuild failed; full log: $log"
+  fi
+  tail -3 "$log"
+}
 
 step "Checking prerequisites"
 [[ -z "$(git status --porcelain)" ]] || fail "working tree is dirty; commit or stash first"
@@ -77,6 +104,7 @@ fi
 for tool in xcodegen xcodebuild hdiutil gh generate_appcast generate_keys python3; do
   command -v "$tool" >/dev/null || fail "$tool is not on PATH"
 done
+assert_volume_free
 # An appcast signed with another key is refused by every installed copy: the Keychain's key must be the app's.
 KEYCHAIN_KEY="$(generate_keys -p 2>/dev/null | tr -d '[:space:]')" || true
 [[ -n "$KEYCHAIN_KEY" && "$KEYCHAIN_KEY" == "$SPARKLE_KEY" ]] \
@@ -130,13 +158,13 @@ PLIST
 step "Archiving $PRODUCT_NAME $VERSION (build $BUILD_NUMBER)"
 # -allowProvisioningUpdates: keychain-access-groups needs a Developer ID provisioning profile, which automatic
 # signing creates or refreshes on demand.
-xcodebuild -project Trackglass.xcodeproj -scheme TrackglassMac -configuration Release \
+xcodebuild_logged "$BUILD_DIR/archive.log" -project Trackglass.xcodeproj -scheme TrackglassMac -configuration Release \
   -destination 'generic/platform=macOS' -archivePath "$ARCHIVE" -allowProvisioningUpdates \
-  CURRENT_PROJECT_VERSION="$BUILD_NUMBER" archive | tail -3
+  CURRENT_PROJECT_VERSION="$BUILD_NUMBER" archive
 
 step "Exporting with Developer ID"
-xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist "$EXPORT_OPTIONS" \
-  -exportPath "$EXPORT_DIR" -allowProvisioningUpdates | tail -3
+xcodebuild_logged "$BUILD_DIR/export.log" -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist "$EXPORT_OPTIONS" \
+  -exportPath "$EXPORT_DIR" -allowProvisioningUpdates
 APP="$(find "$EXPORT_DIR" -maxdepth 1 -name '*.app' | head -1)"
 [[ -d "$APP" ]] || fail "export produced no .app"
 codesign --verify --deep --strict --verbose=2 "$APP"
@@ -162,9 +190,10 @@ else
 fi
 
 step "Building $DMG_NAME"
-VOLUME_NAME="$PRODUCT_NAME for Mac"
 cp -R "$APP" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
+# Third-party notices travel with the binary (Sparkle's BSD-2 parts require them; also in Settings → About).
+cp docs/THIRD-PARTY.md "$STAGING/Acknowledgements.md"
 if [[ -f Design/dmg-background.png ]]; then
   mkdir -p "$STAGING/.background"; cp Design/dmg-background.png "$STAGING/.background/background.png"
 fi
@@ -172,8 +201,18 @@ rm -f "Releases/$DMG_NAME"
 # 1. A read-write image that Finder can lay out (background, icon positions, window size)…
 RW_IMAGE="$BUILD_DIR/rw.dmg"
 hdiutil create -volname "$VOLUME_NAME" -srcfolder "$STAGING" -ov -format UDRW -fs HFS+ "$RW_IMAGE" >/dev/null
-MOUNT_POINT="/Volumes/$VOLUME_NAME"
+assert_volume_free   # again: an earlier DMG may have been opened during the archive
+# From the attach on, any exit (error, Ctrl-C) detaches the image, so no stale volume blocks the next run.
+DMG_ATTACHED=0
+detach_dmg() {
+  if [[ "$DMG_ATTACHED" == 1 ]]; then
+    hdiutil detach "$MOUNT_POINT" -force -quiet || echo "warning: could not detach $MOUNT_POINT; eject it in Finder" >&2
+    DMG_ATTACHED=0
+  fi
+}
+trap detach_dmg EXIT
 hdiutil attach "$RW_IMAGE" -mountpoint "$MOUNT_POINT" -nobrowse -noautoopen >/dev/null
+DMG_ATTACHED=1
 if [[ -f "$STAGING/.background/background.png" ]]; then
   # Finder writes the view options into the volume's .DS_Store; that is what the final image carries.
   osascript <<APPLESCRIPT || echo "note: Finder layout step failed; the DMG works but opens without the custom layout"
@@ -190,6 +229,7 @@ tell application "Finder"
     set background picture of viewOptions to file ".background:background.png"
     set position of item "$(basename "$APP")" of container window to {180, 190}
     set position of item "Applications" of container window to {480, 190}
+    set position of item "Acknowledgements.md" of container window to {330, 70}
     close
     open
     update without registering applications
@@ -201,6 +241,7 @@ APPLESCRIPT
 fi
 sync
 hdiutil detach "$MOUNT_POINT" -quiet || { sleep 2; hdiutil detach "$MOUNT_POINT" -force -quiet; }
+DMG_ATTACHED=0
 # 2. …converted to the compressed, read-only image that ships.
 hdiutil convert "$RW_IMAGE" -format UDZO -imagekey zlib-level=9 -o "Releases/$DMG_NAME" >/dev/null
 codesign --force --sign "$SIGNING_IDENTITY" --timestamp "Releases/$DMG_NAME"
@@ -212,7 +253,13 @@ fi
 
 step "Notarizing (this waits for Apple)"
 xcrun notarytool submit "Releases/$DMG_NAME" --keychain-profile "$NOTARY_PROFILE" --wait
-xcrun stapler staple "Releases/$DMG_NAME"
+# Right after --wait the ticket is sometimes not served yet (stapler error 65): retry before giving up.
+for attempt in 1 2 3; do
+  if xcrun stapler staple "Releases/$DMG_NAME"; then break; fi
+  (( attempt < 3 )) || fail "stapler failed 3 times; nothing is tagged or pushed yet, so re-run the release later"
+  echo "stapler failed (attempt $attempt of 3); retrying in 15 s" >&2
+  sleep 15
+done
 spctl -a -t open --context context:primary-signature -v "Releases/$DMG_NAME"
 
 step "Updating Releases/appcast.xml (committed locally; pushed last)"
@@ -226,15 +273,11 @@ cp "Releases/$DMG_NAME" "$APPCAST_DIR/"
 # embeds it as the item's description (a --release-notes-url-prefix would instead link to <prefix><name>.html,
 # which GitHub does not serve).
 python3 Scripts/release-notes-html.py "$NOTES" "$APPCAST_DIR/${DMG_NAME%.dmg}.html"
-# Signs with the EdDSA key from the Keychain. A pre-release goes to the "beta" channel so it is never offered
-# to the users of the stable releases. (No empty-array expansion: macOS ships bash 3.2, where that trips `set -u`.)
-if [[ "$PRERELEASE" == 1 ]]; then
-  generate_appcast --maximum-deltas 0 --channel beta --download-url-prefix "$REPO_URL/releases/download/$TAG/" \
-    --link "$REPO_URL/releases" -o "$APPCAST_DIR/appcast.xml" "$APPCAST_DIR"
-else
-  generate_appcast --maximum-deltas 0 --download-url-prefix "$REPO_URL/releases/download/$TAG/" \
-    --link "$REPO_URL/releases" -o "$APPCAST_DIR/appcast.xml" "$APPCAST_DIR"
-fi
+# Signs with the EdDSA key from the Keychain. Every item, pre-release or not, is on the default channel: there is
+# one update track until 1.0.0, and no build subscribes to another (UpdateController has no allowedChannels), so
+# a "beta" item would reach no one.
+generate_appcast --maximum-deltas 0 --download-url-prefix "$REPO_URL/releases/download/$TAG/" \
+  --link "$REPO_URL/releases" -o "$APPCAST_DIR/appcast.xml" "$APPCAST_DIR"
 # generate_appcast only warns when it cannot sign; an unsigned item would be refused by every installed copy.
 python3 -I - "$APPCAST_DIR/appcast.xml" "$BUILD_NUMBER" <<'PY' || fail "the new appcast item for build $BUILD_NUMBER carries no sparkle:edSignature"
 import re, sys
@@ -253,9 +296,12 @@ recover() {
   echo "error: the release stopped after the appcast commit and tag were made locally. Finish by hand:" >&2
   echo "  git push origin $TAG    # if the tag is not on origin yet" >&2
   echo "  gh release create $TAG 'Releases/$DMG_NAME' --repo '$REPO_SLUG' --title '$PRODUCT_NAME for Mac $VERSION' --notes-file '$NOTES'$([[ "$PRERELEASE" == 1 ]] && echo ' --prerelease')" >&2
-  echo "  curl -fsSIL '$REPO_URL/releases/download/$TAG/$DMG_NAME'    # must succeed before the next step" >&2
+  echo "  curl -fsSL -r 0-0 -o /dev/null --retry 5 --retry-delay 3 --retry-all-errors '$REPO_URL/releases/download/$TAG/$DMG_NAME'    # must succeed before the next step" >&2
   echo "  git push origin HEAD    # publishes the appcast commit (only once the DMG is downloadable)" >&2
-  echo "or undo the local steps: git tag -d $TAG && git reset --hard HEAD~1" >&2
+  echo "or undo everything, so that $VERSION can be released again:" >&2
+  echo "  gh release delete $TAG --repo '$REPO_SLUG' --yes --cleanup-tag    # if the GitHub release exists (also deletes the tag on origin)" >&2
+  echo "  git push --delete origin $TAG    # if the tag is still on origin" >&2
+  echo "  git tag -d $TAG && git reset --hard HEAD~1    # the local tag and appcast commit" >&2
 }
 trap recover ERR
 git tag -a "$TAG" -m "$PRODUCT_NAME for Mac $VERSION"
@@ -265,8 +311,9 @@ if [[ "$PRERELEASE" == 1 ]]; then
 else
   gh release create "$TAG" "Releases/$DMG_NAME" --repo "$REPO_SLUG" --title "$PRODUCT_NAME for Mac $VERSION" --notes-file "$NOTES"
 fi
-# The appcast goes live only once the link it carries answers (SPEC §6.11).
-curl -fsSIL --retry 5 --retry-delay 3 --retry-all-errors "$REPO_URL/releases/download/$TAG/$DMG_NAME" >/dev/null
+# The appcast goes live only once the link it carries answers (SPEC §6.11). A 1-byte GET, not HEAD: the link
+# redirects to a signed storage URL, which may refuse any method but GET.
+curl -fsSL -r 0-0 -o /dev/null --retry 5 --retry-delay 3 --retry-all-errors "$REPO_URL/releases/download/$TAG/$DMG_NAME"
 git push origin HEAD
 trap - ERR
 

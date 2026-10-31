@@ -13,7 +13,8 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # A deployment in progress is never killed mid-publish; the newest queued run deploys after it.
+  cancel-in-progress: false
 
 jobs:
   deploy:

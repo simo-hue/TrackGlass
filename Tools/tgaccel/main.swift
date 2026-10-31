@@ -1,13 +1,38 @@
 import Foundation
 import IOKit
 
-private let requestedKeys = [
+// Dumps the built-in trackpad's acceleration registry values as JSON (SPEC §6.6 "Where the numbers come from",
+// §6.8 G-SCR). A missing required key fails the dump; optional keys are written only when found.
+private let requiredKeys = [
     "HIDAccelCurves",
     "HIDPointerResolution",
-    "HIDPointerReportRate",
-    "HIDScrollAccelCurves",
-    "HIDPointerAccelerationTable"
+    "HIDPointerReportRate"
 ]
+
+private let optionalKeys = [
+    "HIDScrollAccelCurves",
+    "HIDPointerAccelerationTable",
+    // Scroll-specific resolution, rate and settings: the G-SCR curve units depend on them (SPEC §6.8).
+    "HIDScrollResolution",
+    "HIDScrollResolutionX",
+    "HIDScrollResolutionY",
+    "HIDScrollReportRate",
+    "HIDTrackpadScrollAcceleration",
+    "HIDTrackpadAcceleration",
+    "HIDScrollAccelerationType",
+    // The settings the HID event system applied to this service.
+    "HIDEventServiceProperties"
+]
+
+private let usageText = """
+usage: tgaccel
+
+Prints the built-in trackpad's pointer and scroll acceleration registry values as JSON on standard output.
+A key that is not on the trackpad service or below it is looked up on the service's parents;
+"tgaccelKeySources" records where each key was found. Takes no arguments.
+Exit status: 0 dumped, 1 no built-in trackpad or a required key missing, 2 usage.
+
+"""
 
 private enum AccelDumpError: Error, CustomStringConvertible {
     case noBuiltInTrackpad
@@ -30,10 +55,23 @@ private func isBuiltIn(_ service: io_service_t) -> Bool {
     return (value as? NSNumber)?.boolValue ?? false
 }
 
-private func value(for key: String, on service: io_service_t) -> Any? {
-    guard let value = IORegistryEntrySearchCFProperty(service, kIOServicePlane, key as CFString,
-        kCFAllocatorDefault, IOOptionBits(kIORegistryIterateRecursively)) else { return nil }
-    return jsonValue(value)
+/// Where a key was found: on the trackpad service or one of its children, or (fallback) on one of its parents.
+private enum KeySource: String {
+    case serviceOrChildren
+    case parents
+}
+
+private func value(for key: String, on service: io_service_t) -> (value: Any, source: KeySource)? {
+    let searches: [(options: IOOptionBits, source: KeySource)] = [
+        (IOOptionBits(kIORegistryIterateRecursively), .serviceOrChildren),
+        (IOOptionBits(kIORegistryIterateRecursively | kIORegistryIterateParents), .parents)
+    ]
+    for search in searches {
+        guard let property = IORegistryEntrySearchCFProperty(service, kIOServicePlane, key as CFString,
+            kCFAllocatorDefault, search.options), let value = jsonValue(property) else { continue }
+        return (value, search.source)
+    }
+    return nil
 }
 
 private func jsonValue(_ value: CFTypeRef) -> Any? {
@@ -75,21 +113,34 @@ private func readTrackpadProperties() throws -> [String: Any] {
         defer { IOObjectRelease(service) }
         guard isBuiltIn(service) else { continue }
         var result: [String: Any] = [:]
-        for key in requestedKeys {
-            guard let property = value(for: key, on: service) else {
-                if key == "HIDScrollAccelCurves" || key == "HIDPointerAccelerationTable" { continue }
-                throw AccelDumpError.missingProperty(key)
-            }
-            result[key] = property
+        var sources: [String: String] = [:]
+        for key in requiredKeys {
+            guard let found = value(for: key, on: service) else { throw AccelDumpError.missingProperty(key) }
+            result[key] = found.value
+            sources[key] = found.source.rawValue
+        }
+        // An optional value JSON cannot represent (e.g. a non-finite number) is left out instead of failing the dump.
+        for key in optionalKeys {
+            guard let found = value(for: key, on: service),
+                  JSONSerialization.isValidJSONObject([key: found.value] as [String: Any]) else { continue }
+            result[key] = found.value
+            sources[key] = found.source.rawValue
         }
         result["HIDPointerAccelerationTableEncoding"] = "lowercase hexadecimal bytes"
+        result["tgaccelKeySources"] = sources
         return result
     }
     throw AccelDumpError.noBuiltInTrackpad
 }
 
+if CommandLine.arguments.count > 1 {
+    let argument = CommandLine.arguments[1]
+    if argument != "--help" && argument != "-h" { fputs("tgaccel: unexpected argument '\(argument)'\n", stderr) }
+    fputs(usageText, stderr)
+    exit(2)
+}
+
 do {
-    guard CommandLine.arguments.count == 1 else { throw AccelDumpError.invalidJSON }
     let properties = try readTrackpadProperties()
     guard JSONSerialization.isValidJSONObject(properties) else { throw AccelDumpError.invalidJSON }
     let data = try JSONSerialization.data(withJSONObject: properties, options: [.prettyPrinted, .sortedKeys])
