@@ -53,7 +53,7 @@ Notation: `§x.y` = section of `docs/SPEC.md`. "Gate" steps branch; record the o
 - Commit: `kit: touch frame codec`
 
 ### M1.3 Control messages
-- Do: `ControlMessage` enum with every §4.5 TCP payload (HELLO, WELCOME + embedded SETTINGS, SETTINGS, PING, PONG, HAPTIC, STATUS with its six fields, SURFACE, BYE, PAIR_REQUEST, PAIR_RESPONSE); string encoding `u16` length + UTF-8; unknown types decode to `.unknown(type)`.
+- Do: `ControlMessage` enum with every §4.5 TCP payload (HELLO, WELCOME + embedded SETTINGS, SETTINGS, PING, PONG, HAPTIC, STATUS with its six fields, SURFACE, BYE, PAIR_REQUEST, PAIR_RESPONSE; since 2026-10-31 also PAIR_COMMIT, PAIR_NONCE, PAIR_REVEAL, PAIR_CONFIRM); string encoding `u16` length + UTF-8; unknown types decode to `.unknown(type)`.
 - Test (AUTO, `TrackglassKitTests`): round-trip each; truncated payload → typed error; unknown type → `.unknown`.
 - Commit: `kit: control messages`
 
@@ -63,7 +63,7 @@ Notation: `§x.y` = section of `docs/SPEC.md`. "Gate" steps branch; record the o
 - Commit: `kit: control framer`
 
 ### M1.5 Pairing crypto
-- Do: `PeerIdentity` (16-byte peerID + name), `PairingPayload` (QR URL format/parse, §3.4), `KeyDerivation.pinKey(pin:pairID:)` (HKDF-SHA256, info `trackglass-pair-v1`, 32 bytes), `TLSConfig.tlsOptions(psk:identity:)`, `TLSConfig.listenerOptions(keys: [(SymmetricKey, String)])` (registers every pair, §3.3) and `TLSConfig.parameters(control:)`/`.parameters(input:)` (`includePeerToPeer`, cellular prohibited).
+- Do: `PeerIdentity` (16-byte peerID + name), `PairingPayload` (QR URL format/parse, §3.4), `KeyDerivation` (HKDF-SHA256; *2026-10-31:* the PIN key `pinKey(pin:pairID:)` is replaced by the code-pairing derivations `codeChannelKey(pairID:)`, `commitment`, `comparisonCode` and `codePairingLTK`, §3.4), `TLSConfig.tlsOptions(psk:identity:)`, `TLSConfig.listenerOptions(keys: [(SymmetricKey, String)])` (registers every pair, §3.3) and `TLSConfig.parameters(control:)`/`.parameters(input:)` (`includePeerToPeer`, cellular prohibited).
 - Test (AUTO, `TrackglassKitTests`): URL round-trip with special characters in names; HKDF known-answer vector computed once with Python's `hashlib`/`hmac` and embedded; a loopback TLS-PSK handshake on 127.0.0.1 succeeds with the right key and fails with a wrong key (single registered key; the multi-key case is Gate G-TLS in M3.4).
 - Commit: `kit: pairing crypto`
 
@@ -125,9 +125,9 @@ Notation: `§x.y` = section of `docs/SPEC.md`. "Gate" steps branch; record the o
 - Test (MANUAL): pair via QR; both sides list each other with the names entered; scanning the same QR again is rejected; closing the window stops advertising `pr=1`.
 - Commit: `net: pairing via qr`
 
-### M3.3b Pairing via PIN, rotation, URL scheme
-- Do: PIN mode in `PairingWindow` ("Use a code instead"), HKDF key, `PINEntryView` listing `isPairing` entries, failure → rotate PIN + pairID + re-render QR + update TXT `pid`, 3-PIN limit per window; `CFBundleURLTypes` with the `trackglass` scheme and URL handling in `SceneDelegate` so the Camera app opens the app and pairs.
-- Test (MANUAL): pair via PIN; a wrong PIN rotates the PIN on the Mac; a 4th attempt in one window is impossible; scanning the QR with the Camera app opens Trackglass and pairs.
+### M3.3b Pairing via PIN, rotation, URL scheme (code comparison since 2026-10-31)
+- Do: code mode in `PairingWindow` ("Use a code instead"; *2026-10-31:* numeric code comparison replaces the PIN, §3.4): the public code-channel key, `CodePairingView` ("Pair with a code") listing `isPairing` entries, PAIR_COMMIT/NONCE/REVEAL/CONFIRM, the same six-digit code on both screens, Allow on the Mac + Matches on the phone, at most 3 code sessions per window, failed handshakes never counted (the former HKDF PIN key, `PINEntryView`, PIN rotation and 3-PIN limit are gone); `CFBundleURLTypes` with the `trackglass` scheme and URL handling in `SceneDelegate` so the Camera app opens the app and pairs.
+- Test (MANUAL): pair via code comparison (both screens show the same code; Allow, then Matches, and the reverse order); "Doesn't match" spends one session and a fourth session in one window is impossible; scanning the QR with the Camera app opens Trackglass and pairs. (Until 2026-10-31 this step paired via a PIN.)
 - Commit: `net: pairing via pin`
 
 ### M3.4 Control session — Gate G-TLS
@@ -146,7 +146,7 @@ Notation: `§x.y` = section of `docs/SPEC.md`. "Gate" steps branch; record the o
 - Commit: `net: reconnect and lifecycle`
 
 ### M3.7 Security tests
-- Do: `TrackglassMacTests`: wrong PSK fails the handshake; replayed `pairID` rejected; raw datagram ignored; PIN attempt counter; create `docs/QA-Robustness.md` with the Wireshark check procedure as its first section (M9.1 extends it).
+- Do: `TrackglassMacTests`: wrong PSK fails the handshake; replayed `pairID` rejected; raw datagram ignored; code-session counter (a PIN attempt counter until 2026-10-31); create `docs/QA-Robustness.md` with the Wireshark check procedure as its first section (M9.1 extends it).
 - Test (AUTO+MANUAL): the new tests pass; once, Wireshark on the Mac shows only TLS/DTLS records on the two ports.
 - Commit: `net: security tests`
 
@@ -209,7 +209,7 @@ Notation: `§x.y` = section of `docs/SPEC.md`. "Gate" steps branch; record the o
 ## M5 — Pointer acceleration
 
 ### M5.1 tgaccel and default curves — Gate G-ACC
-- Do: `tgaccel` dumps `HIDAccelCurves`, `HIDPointerResolution`, `HIDPointerReportRate`, `HIDScrollAccelCurves`, `HIDPointerAccelerationTable` of the built-in trackpad as JSON (§6.6 "Where the numbers come from"); commit the reference Mac's output as `Mac/Resources/DefaultAccelCurves.json`. Record in PROGRESS which representation (parametric curves or table) the reference Mac exposes.
+- Do: `tgaccel` dumps `HIDAccelCurves`, `HIDPointerResolution`, `HIDPointerReportRate`, `HIDScrollAccelCurves`, `HIDPointerAccelerationTable` of the built-in trackpad as JSON (§6.6 "Where the numbers come from"; *2026-10-31:* also the scroll resolution/rate/acceleration keys listed there, looked up on parents too, with `tgaccelKeySources`); commit the reference Mac's output as `Mac/Resources/DefaultAccelCurves.json`. Record in PROGRESS which representation (parametric curves or table) the reference Mac exposes.
 - Test (AUTO): `tgaccel` exits 0 on the reference Mac; the JSON parses and contains ≥ 2 curves (or a table).
 - Commit: `tools: tgaccel and default curves`
 
@@ -307,7 +307,7 @@ Notation: `§x.y` = section of `docs/SPEC.md`. "Gate" steps branch; record the o
 - Commit: `mac: notification center`
 
 ### M7.7 Force click — Gate G-FORCE
-- Do: `ForceClickRecognizer` (0.60 s stationary hold, consumed contact); injector type-29 Force event attempt; fallback click + Ctrl+Cmd+D; obeys `forceClick` setting (§6.5.9, §6.9.6). Fixture `force_click`.
+- Do: `ForceClickRecognizer` (0.60 s stationary hold, consumed contact); injector type-29 Force event attempt; fallback Ctrl+Cmd+D (Look Up) only, no click (2026-10-31); obeys `forceClick` setting (§6.5.9, §6.9.6). Fixture `force_click`.
 - Test (AUTO+MANUAL): fixture. Owner: hold on a word in TextEdit → Look Up; hold on a file in Finder → Quick Look (if the private path works) or Look Up fallback; with Force click disabled in System Settings nothing happens.
 - Commit: `mac: force click`
 

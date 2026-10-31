@@ -22,7 +22,7 @@ No code from Mac Mouse Fix (MMF License), VoodooInput (GPL-2.0), or Calf Trail's
 
 ## Sparkle 2 — MIT
 
-Sparkle 2.10.1 is linked into the Mac app through Swift Package Manager (`project.yml`, M11.1) and ships inside the app bundle with its own license. The following notices are from the [upstream Sparkle 2.x license](https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE), retrieved 2026-10-20. Preserve the notices for the selected release when integrating the framework, including its bundled components.
+Sparkle 2.10.1 is linked into the Mac app through Swift Package Manager (`project.yml`, M11.1) and ships inside the app bundle as `Sparkle.framework`. The MIT license and the BSD-2 licenses of its bundled bsdiff and `SUSignatureVerifier` code require these notices in every binary distribution, so Trackglass reproduces them: in Trackglass for Mac → Settings → About → Acknowledgements, and as `Acknowledgements.md` (a copy of this file) in the release DMG. The following notices are from the [upstream Sparkle 2.x license](https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE), retrieved 2026-10-20. When the pinned Sparkle version changes, check them against that release's license, including its bundled components, and update the in-app copy (`Mac/Settings/Acknowledgements.swift`) with them.
 
 ```text
 Copyright (c) 2006-2013 Andy Matuschak.

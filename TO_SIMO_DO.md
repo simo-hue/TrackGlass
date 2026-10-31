@@ -1,13 +1,74 @@
-# TO_SIMO_DO — manual actions still open (2026-10-29, updated after round 2)
+# TO_SIMO_DO — manual actions still open (2026-10-31, updated after round 4)
 
 Everything the agent can do without you is done; the two 2026-10-28 batches passed CI and are committed (section 0). This file lists only what needs your hands, your devices or your decision. Reply with results in the order you like; nothing here blocks the others. History of earlier requests is in git (`git log -p TO_SIMO_DO.md`).
+
+## 00000. Round 4 of 2026-10-31 — review fixes, CI green, committed
+
+Every finding of the round-4 review is fixed except those in item 5. CI passed on 2026-10-31 (Kit 67, Engine 115, Mac 146 and iOS 83 tests; 39 fixtures verified; invariants held for 780 replays) and the fixes are committed. Details: `docs/PROGRESS.md` (Decisions, 2026-10-31) and the dated SPEC amendments.
+
+1. ~~Run CI~~ — done (green).
+2. **Update both apps together before pairing anything new: the PIN is replaced by code comparison (both screens show 6 digits).** A new Mac still pairs an old phone by QR.
+3. **Don't install an older build over this one on the phone: the phone's identity moved to the Keychain; if you do, re-pair.**
+4. **Device checks** (when you have the devices; one line each):
+   - **Mac — gestures, with the phone:**
+     1. Force click: rest a finger still ~1 s on a Safari link — the page must not navigate (Look Up or nothing); over a word in TextEdit — Look Up, nothing selected or clicked.
+     2. Dragging on: tap, then tap-and-hold on a Finder icon — it is picked up ~0.1 s after the second touch (tell me if that feels late); tap, then tap-and-drag text — the selection starts where the second touch landed, no jump.
+     3. Dragging on, TextEdit: tap a word, then quickly two-finger scroll — nothing gets selected; with Drag Lock on, no click is needed afterwards to free the button.
+     4. Three-finger drag + Drag Lock on: drag a window with three fingers, quickly add a fourth and swipe for Spaces — the window drops at once, the Space switches, no drag-lock haptic.
+     5. Landscape iPhone held with a thumb still on the bottom edge: a three-finger swipe switches Spaces, and a tap with the index finger beside the thumb clicks.
+     6. Two-finger scroll with a thumb resting at the bottom that drifts ~5 mm mid-scroll — the scroll continues and coasts; afterwards the thumb alone moves the pointer.
+     7. Two-finger tap with one finger near the bottom edge (landscape iPhone) — a secondary click, not a left click.
+     8. Rotate the phone while two-finger scrolling — the scroll ends cleanly with no jump, no corner right-click or Notification Center swipe; fingers held through the rotation do nothing until lifted; a new touch works.
+     9. Smart zoom on: a slow two-finger double-tap (second tap held ~0.15 s) zooms, with no context menu.
+     10. Drag Lock on: lock a drag, then two-finger tap — the lock releases with its haptic, then the context menu opens.
+   - **Mac — app:**
+     1. Accessibility Inspector: the menu-bar clock's `AXIdentifier` is `com.apple.menuextra.clock` on macOS 14 and on the reference Mac (report it if not); then switch the system language to German or Italian, log out and in — the phone's two-finger swipe from the right edge opens Notification Center.
+     2. Tap-and-a-half drag a window, keep the finger down, close the lid; after wake the physical trackpad does not drag the window.
+     3. No phone connected: change System Settings → Trackpad → Tracking speed, open Trackglass Settings → General — "Mac tracking speed" shows it within ~1 s (reopen the window if it was open).
+     4. Phone A connected, phone B paired but away: Forget B on the Mac — A disconnects briefly and reconnects by itself within ~2 s, no "Pair again".
+     5. Settings → About → Acknowledgements… — the full text scrolls and is selectable; Done closes it.
+     6. Record session, flick-scroll, lift, stop recording (once more ending with a phone disconnect instead) — `tgreplay run <x>.tgrec --settings <x>.settings.json` includes `scrollMomentum` events.
+     7. Optional, test user account only (it re-pairs every phone): `defaults write app.trackglass.mac peerIDHardware -string x`, relaunch — phones see it as a new Mac.
+   - **Phone:**
+     1. Input path blocked: read the UDP port from the Mac's `net` log (`input listener ready udpPort=<port>`), `echo "block drop in proto udp to any port <port>" | sudo pfctl -ef -`, Disconnect then Reconnect on the phone — "Connected" at most 3 times with growing gaps, then "Touches couldn't reach <Mac>…" with Reconnect; `sudo pfctl -F all -d` (if you use pf, reload your rules with `sudo pfctl -f /etc/pf.conf`), tap Reconnect — touches work.
+     2. Decoy record: get the Mac's `id` with `dns-sd -L "<Mac name>" _trackglass._tcp`; from another Mac run `dns-sd -R " <Mac name>" _trackglass._tcp local 9 v=1 id=<id> nm=<Mac name> pr=0` — the phone still reaches the real Mac (Reconnect, relaunch, Mac sleep/wake), never offers "Pair again", and Settings → Mac → Connect works.
+     3. Install this build over the previous paired one — it reconnects without re-pairing, and Console (subsystem `app.trackglass`, category `identity`) shows no "not in the Keychain" error.
+     4. Optional: restore an encrypted backup of this phone onto a second iPhone/iPad — it is not connected as the first one and needs its own pairing.
+     5. Optional, two Macs with the same computer name both running Trackglass for Mac: touches work on each.
+     6. iPhone SE at the largest accessibility text size: onboarding page 2 scrolls to the Download link, the URL and "Copy download link", nothing clipped (D.5).
+     7. Settings → Diagnostics → "Coalesced touch samples" turned on while connected changes nothing until the next connection; then on the iPad a two-finger scroll with one finger already moving and a three-finger swipe do not stutter; re-run the M10.3 `tgreplay velocity-stats` comparison (D.10).
+     8. Network Link Conditioner at ~5 % loss: quick one-finger lift-and-reposition, repeated — no pointer jump from the old lift point (the debug `id0` now counts 0, 1, 2…).
+     9. Instruments Allocations (M2.3 procedure): coalesced off — 0 transient allocations per frame; on — only UIKit's `coalescedTouches` arrays.
+     10. A phone "Record session" export still replays with `tgreplay run`.
+   - **Pairing (both apps of this round):**
+     1. Mac: Pair a device… → **Use a code instead** (it says "On your iPhone or iPad, open Trackglass → Pair with a code and choose “<Mac>”"); phone: **Pair with a code** → tap the Mac — both show the same "123 456" and Allow stays greyed ~1 s; Allow then Matches pairs and connects; again with Matches first, then Allow.
+     2. **Doesn't match** on the phone → the Mac says "The codes didn't match — try again"; tap the Mac again → a new code, it pairs. **Don't Allow** on the Mac → the phone says the Mac did not allow pairing. Three failed sessions end the window ("Try again").
+     3. With the Mac window still showing the QR, tap the Mac under Pair with a code — the phone says to click "Use a code instead" first.
+     4. Phone already paired: scan the Mac's QR again — "Replace the pairing with “<Mac>”?"; Cancel keeps the old pairing working; Replace pairs again.
+     5. VoiceOver on both: the code is read digit by digit; the Mac's question is read as one sentence.
+     6. Screenshot or screen share of the pairing window: the QR does not appear (not guaranteed with ScreenCaptureKit on macOS 15+).
+     7. Phone names with an emoji, a very long name, and a pasted RIGHT-TO-LEFT OVERRIDE (U+202E): the Mac shows the name without reordering, at most 40 characters ending in "…".
+   - **Release:**
+     1. During M11.2 prep, after `MARKETING_VERSION = 0.9.0` is committed and pushed (C5): `Scripts/release-mac.sh 0.9.0 --pre-release --dry-run`, open `Releases/Trackglass-for-Mac-0.9.0.dmg` — app left, Applications right, `Acknowledgements.md` above the arrow, nothing overlapping; Quick Look on it shows the Sparkle notices; eject.
+     2. Optional, same prep: run the dry run again with that DMG still mounted — it stops at "Checking prerequisites" with "'/Volumes/Trackglass for Mac' is mounted …".
+     3. `tgaccel --help; echo $?` prints the usage and `2`.
+     4. C4 data run as `docs/Calibration.md` describes ("separate data-gathering run"); send `~/Desktop/tgaccel.json` — it should contain `tgaccelKeySources` and whichever scroll keys the Mac exposes (also the G-SCR data of 0000, item 3).
+     5. Next push to `main`: the CI "Select Xcode" step prints a GA Xcode, not a beta or RC.
+     6. Decide the EU trader status in App Store Connect → Business before submitting (`docs/APPSTORE.md` §3/§7).
+     7. Keep `generate_keys -x` exports and `AuthKey_*.p8` files outside the repository (C2/C3); `.gitignore` now ignores them, but only as a backstop.
+5. **Deferred (not done this round):**
+   - L6: another app can claim the `trackglass://` scheme; a Universal Link (secret in the fragment) would fix it.
+   - L23: scroll acceleration from `HIDScrollResolution`/`HIDScrollReportRate` waits for the `tgaccel` dump (B4 ii).
+   - A 180° rotation (iPhone landscape left ↔ right, any on iPad) with a finger down is not cancelled: that finger's next frame lands mirrored, so the pointer can jump.
+   - Release-script improvements not requested: lipo/arch and Sparkle CLI version checks, designated-requirement comparison in `assert-signing-team.sh`, pinned XcodeGen and action SHAs, website link check, meta CSP.
+6. **Decision 0000.4 (tap-and-a-half timing) is superseded** by this round's change: the press never goes out early on motion (the motion is held and follows as drag motion), and from the 8 ms tick it waits a 35 ms margin (`TAP_HALF_PRESS_MARGIN`) after the 60 ms window. Re-ratify it on the device (Mac gesture checks 2–3): reply "ok" or say what you prefer.
 
 ## 0000. Round 3 of 2026-10-29 — CI green, committed; four decisions
 
 1. ~~Run CI~~ — done (exit 0).
 2. **Decision — WELCOME forward compatibility (SPEC §4.5, before 1.0):** WELCOME embeds the SETTINGS fields in its middle, then `activePhoneName`. After 1.0 the Mac (Sparkle) and the phone (App Store) update separately; a newer Mac appending a field to SETTINGS makes every older phone fail to read WELCOME (BYE{1}, final) until it updates. Options: (a) a `u16 settingsLength` before the embedded settings (wire change now, both prerelease apps updated together — recommended); (b) a rule that new settings fields go to the *end* of WELCOME, after `activePhoneName`. Reply "a" or "b".
 3. **Decision — rotation during a straight scroll (SPEC §6.5.7):** with fingers 20 mm apart, a 2 mm lag over a 40 mm scroll crosses ROTATE_ACTIVATION (5°); rotation then joins and the scroll does not coast. Apply "bigger change wins" to rotation too (rotation needs more arc length than centroid travel before a scroll, a quarter of it during one)? Reply "yes" / "no".
-4. **Ratify — tap-and-a-half press timing (SPEC §6.5.6, amended):** the press now waits up to 60 ms (settle window) unless the finger moves or lifts first; that is what stops a tap followed by a quick two-finger scroll from drag-selecting. Reply "ok" or say what you prefer.
+4. *(Superseded 2026-10-31 by 00000.6 — do not ratify this version.)* **Ratify — tap-and-a-half press timing (SPEC §6.5.6, amended):** the press now waits up to 60 ms (settle window) unless the finger moves or lifts first; that is what stops a tap followed by a quick two-finger scroll from drag-selecting. Reply "ok" or say what you prefer.
 5. **Ratify — pairing QR size (SPEC §3.4 says 320 × 320 pt):** it is 260 pt plus a 16 pt white quiet zone (292 pt) so the status column still fits the 480 × 360 window and phones read it in Dark Mode. Reply "ok" or "make it 320" (the status column then gets narrow).
 
 

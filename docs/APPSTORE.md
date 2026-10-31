@@ -37,6 +37,7 @@ Everything to paste into App Store Connect for the iOS/iPadOS app. English (U.S.
 | Apple Vision Pro | **Off** (uncheck "Make this app available"). There is no touch surface to use as a trackpad. |
 | Pre-orders | Off |
 | Distribution | Public on the App Store; also available for Business/Education custom distribution: off |
+| EU trader status (Digital Services Act) | Required before the app can be distributed on the EU storefronts, which "All countries and regions" includes. Declared once for the account in App Store Connect → Business (Account Holder or Admin role). Declaring **trader** publishes your address, phone number and e-mail on the app's EU product pages; declaring **non-trader** publishes none of them. Which one applies to you is your own legal call; nothing in this file decides it. |
 
 ## 4. App Privacy
 
@@ -81,7 +82,7 @@ BUILT FOR PRECISION
 • Haptic clicks on iPhone, so a tap feels like a click.
 
 PRIVATE BY DESIGN
-• Pairing with a QR code or a one-time code, confirmed on your Mac; every session is encrypted.
+• Pairing with a QR code, or by checking that both screens show the same six-digit code, confirmed on your Mac; every session is encrypted.
 • Works over your Wi-Fi network: the phone and the Mac just need to be on the same one.
 • No account, no analytics, no ads, no data collection. Your touches never leave your network.
 
@@ -115,7 +116,7 @@ iPhone and iPad are trademarks of Apple Inc. Trackglass is an independent produc
 | What's New (first version) | `First release.` |
 
 ### Build
-Select the build uploaded from Xcode Organizer or `xcodebuild -exportArchive` with the App Store Connect method. Export compliance: Info.plist carries `ITSAppUsesNonExemptEncryption = NO` (the app uses only Apple's standard TLS), so no compliance questions appear at upload.
+Select the build uploaded from Xcode Organizer or `xcodebuild -exportArchive` with the App Store Connect method. Export compliance: Info.plist carries `ITSAppUsesNonExemptEncryption = NO` (the app uses only encryption built into Apple's operating systems: TLS/DTLS through Network.framework, and CryptoKit's X25519 and SHA-256 for pairing), so no compliance questions appear at upload.
 
 ### Game Center / In-App Purchases / Subscriptions
 None. Do not create any IAP records.
@@ -138,7 +139,7 @@ Trackglass turns an iPhone/iPad into a trackpad for a Mac. It requires our free 
 To test:
 1. On a Mac running macOS 14 or later, download Trackglass for Mac from the latest GitHub release: https://github.com/simo-hue/TrackGlass/releases/latest (DMG signed with Developer ID and notarized by Apple; the project is open source). Drag "Trackglass for Mac" to Applications and open it. Grant Accessibility when the Welcome window asks, and on macOS 15 or later allow Local Network access when macOS asks.
 2. The Mac app has no Dock icon; its icon is in the menu bar at the top right. On a MacBook with a notch and a full menu bar the icon can be hidden behind the notch; quit a few other menu bar apps if you do not see it. Click it and choose "Pair a device…". A QR code appears.
-3. Put the iPhone/iPad on the same Wi-Fi network as the Mac. Open Trackglass, go through onboarding, allow Local Network access when iOS asks, and tap "Scan Mac QR code" (or tap "Use a code instead" and type the 6-digit code shown on the Mac).
+3. Put the iPhone/iPad on the same Wi-Fi network as the Mac. Open Trackglass, go through onboarding, allow Local Network access when iOS asks, and tap "Scan Mac QR code". (To pair without the camera: click "Use a code instead" on the Mac, tap "Pair with a code" on the phone and choose the Mac, check that both screens show the same six digits, and tap "Matches" on the phone.)
 4. On the Mac, click "Allow" to accept the pairing request.
 5. The phone screen becomes the trackpad: one finger moves the pointer, tap clicks, two fingers scroll, pinch zooms, three/four-finger swipes follow the Mac's Trackpad settings.
 
@@ -154,6 +155,7 @@ The attached video shows the full flow. Privacy: no accounts, no analytics; the 
 - [ ] Build uploaded and processed; selected on the version page.
 - [ ] Screenshots for iPhone 6.9" and iPad 13" present (6 each).
 - [ ] "iPhone and iPad Apps on Apple Silicon Macs" and "Apple Vision Pro" availability are both off.
+- [ ] EU trader status declared in App Store Connect → Business (your legal call; "trader" publishes your address, phone number and e-mail on the EU product pages). Without it the app is not offered in the EU.
 - [ ] Privacy label = Data Not Collected; privacy policy URL loads.
 - [ ] The website is live on GitHub Pages; the privacy and support URLs load and the support page shows a contact e-mail.
 - [ ] The `releases/latest` link in the review notes resolves to a release with the DMG attached; the DMG passes Gatekeeper on a clean Mac.

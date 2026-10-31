@@ -2,7 +2,7 @@
 
 The procedures are SPEC §10.3; the constants they may change are the **Tunable** rows of SPEC Appendix A. This file holds the measurements and the final values. Only the owner can fill the result cells (they need the reference MacBook's built-in trackpad, the 120 Hz iPhone and the iPad); the agent keeps the tables, the arithmetic and Appendix A in sync once numbers arrive. Until a row is measured, the Appendix A starting value ships.
 
-Reference set-up for every procedure: the same Mac, the same display, Trackglass connected over Wi-Fi (not peer-to-peer), the phone's tracking override at 0, System Settings → Trackpad left at the values noted in the row. Log pointer travel with `log stream --predicate 'subsystem == "app.trackglass.mac" AND category == "inject"' --level debug` (pointer deltas are `.debug` and private; run the stream as the logged-in user) or with a small `CGEvent` location logger — the same logger for both devices.
+Reference set-up for every procedure: the same Mac, the same display, Trackglass connected over Wi-Fi (not peer-to-peer), the phone's tracking override at 0, System Settings → Trackpad left at the values noted in the row. Log pointer travel with a small `CGEvent` location logger — the same logger for both devices (the Mac app's logs carry no pointer deltas).
 
 ## C1–C3 Pointer (M5.4) — PLAN M5.4, owner-deferred on 2026-10-25
 
@@ -29,7 +29,14 @@ Pass when at least two testers are at chance. Result: — .
 
 ## C4–C6 Scroll, momentum, pinch (M6.8) — owner-deferred
 
-C4 drives `SCROLL_BASE_GAIN` / `SCROLL_ACCEL_GAIN` / `SCROLL_ACCEL_V0` **only if** Gate G-SCR selected the constant model; PROGRESS M6.4 records that the reference Mac exposes `HIDScrollAccelCurves`, so the Apple scroll curves are in use and C4 is a verification, not a tuning, unless it fails.
+C4 **tunes** `SCROLL_BASE_GAIN` / `SCROLL_ACCEL_GAIN` / `SCROLL_ACCEL_V0`. The SPEC §6.8 constant model ships by default (G-SCR status 2026-10-29, PROGRESS M6.4: the Apple scroll-curve port is opt-in until its units are verified), so these three constants decide how far Trackglass scrolls, and a C4 miss is fixed by moving them: `SCROLL_BASE_GAIN` for slow scrolls, then `SCROLL_ACCEL_GAIN` / `SCROLL_ACCEL_V0` for flicks. They are the literals `3.8`, `0.5` and `350` in `ScrollFallbackAcceleration.accelerate` (`Packages/TrackglassEngine/Sources/TrackglassEngine/Acceleration/ScrollAccelerator.swift`). Run C4 with the opt-in off: `defaults read app.trackglass.mac TGUseAppleScrollCurves` must report that the key does not exist (or 0).
+
+**Separate data-gathering run (not part of C4): the Apple scroll curves.** It collects what the curve units need (SPEC §6.8, G-SCR); nothing is tuned from it.
+
+1. Build and run `tgaccel` on the reference Mac and keep its JSON outside the repository: `xcodebuild -project Trackglass.xcodeproj -scheme tgaccel -configuration Debug -destination 'platform=macOS' -derivedDataPath /tmp/tgaccel build && /tmp/tgaccel/Build/Products/Debug/tgaccel > ~/Desktop/tgaccel.json`. Besides the pointer curves it now dumps, when the Mac exposes them, `HIDScrollResolution` (and `…X`/`…Y`), `HIDScrollReportRate`, `HIDTrackpadScrollAcceleration`, `HIDTrackpadAcceleration`, `HIDScrollAccelerationType` and `HIDEventServiceProperties`; `tgaccelKeySources` says whether each came from the trackpad service or a parent.
+2. `defaults write app.trackglass.mac TGUseAppleScrollCurves -bool YES`, quit and reopen Trackglass, repeat the C4 scroll three times and note the rows in the table below.
+3. `defaults delete app.trackglass.mac TGUseAppleScrollCurves`, quit and reopen Trackglass.
+4. Send the JSON and the row counts to the agent.
 
 | Procedure | Trackpad | Trackglass | Tolerance | Pass |
 |---|---|---|---|---|
@@ -37,8 +44,9 @@ C4 drives `SCROLL_BASE_GAIN` / `SCROLL_ACCEL_GAIN` / `SCROLL_ACCEL_V0` **only if
 | C5 momentum — same flick: time until the list stops (s) | | | ±25 % | |
 | C5 momentum — same flick: rows travelled during momentum | | | ±25 % | |
 | C6 pinch — 20 mm spread in Preview on a PDF at 100 % (resulting zoom %) | | | ±10 % | |
+| Data run only — C4 scroll with `TGUseAppleScrollCurves` = YES (rows scrolled) | (C4 value) | | none: data for the curve units | — |
 
-Final values: `SCROLL_BASE_GAIN` = 3.8 pt/mm, `SCROLL_ACCEL_GAIN` = 0.5, `SCROLL_ACCEL_V0` = 350 mm/s (fallback model only), `MOMENTUM_MIN_START` = 60 pt/s, `MOMENTUM_DECAY_PER_MS` = 0.998 — all still the Appendix A starting values. Date: — .
+Final values: `SCROLL_BASE_GAIN` = 3.8 pt/mm, `SCROLL_ACCEL_GAIN` = 0.5, `SCROLL_ACCEL_V0` = 350 mm/s (the shipped scroll model; C4 tunes these), `MOMENTUM_MIN_START` = 60 pt/s, `MOMENTUM_DECAY_PER_MS` = 0.998 — all still the Appendix A starting values. Date: — .
 
 ## C7 Spaces (M7.9)
 

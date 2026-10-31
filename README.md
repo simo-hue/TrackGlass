@@ -16,7 +16,7 @@ The iPhone/iPad app is distributed through the App Store (link on the website on
 
 1. Install Trackglass for Mac from the download above, open it and allow **Accessibility** when the Welcome window asks (it is what lets the app move the pointer). On macOS 15 or later, also allow **Local Network** access when macOS asks.
 2. Install Trackglass on your iPhone or iPad, follow the onboarding and allow **Local Network** access when iOS asks.
-3. In the Mac's menu bar icon choose **Pair a device…** and scan the QR code in Trackglass on the phone (or tap *Use a code instead* and type the six-digit code).
+3. In the Mac's menu bar icon choose **Pair a device…** and scan the QR code in Trackglass on the phone (or click *Use a code instead* on the Mac, tap *Pair with a code* on the phone, choose the Mac and check that both screens show the same six digits, then tap *Matches*).
 4. Click **Allow** on the Mac to accept the pairing.
 5. Touch the surface: your Mac's pointer follows. Clicks, drags, scrolling and gestures work like they do on the Mac's trackpad, using the settings in System Settings → Trackpad (on macOS 27, Spaces, Mission Control and the other Dock gestures switch when you lift your fingers instead of following them live).
 
